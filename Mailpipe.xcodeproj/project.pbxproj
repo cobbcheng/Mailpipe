@@ -1,0 +1,321 @@
+// !$*UTF8*$!
+{
+  "archiveVersion" = "1";
+  "classes" = {
+  };
+  "objectVersion" = "56";
+  "objects" = {
+    "681C948D238C526E9E3424E0" = {
+      "isa" = "PBXFileReference";
+      "explicitFileType" = "wrapper.application";
+      "path" = "Mailpipe.app";
+      "sourceTree" = "BUILT_PRODUCTS_DIR";
+      "includeInIndex" = "0";
+    };
+    "DC176E8AF1DD34CEAAE8410B" = {
+      "isa" = "PBXFileReference";
+      "explicitFileType" = "wrapper.app-extension";
+      "path" = "MailpipeMailExtension.appex";
+      "sourceTree" = "BUILT_PRODUCTS_DIR";
+      "includeInIndex" = "0";
+    };
+    "BC4A71180870F7945155FBB0" = {
+      "isa" = "XCLocalSwiftPackageReference";
+      "relativePath" = ".";
+    };
+    "B5E04800D30BF586C503FB20" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/MailExtension/Info.plist";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "text.plist.xml";
+    };
+    "D9E711C91C1B8004ACAF7C30" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/MailExtension/MailExtension.entitlements";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "text.plist.xml";
+    };
+    "2C9E78C6F820793347A53E46" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/MailExtension/MailExtension.swift";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "sourcecode.swift";
+    };
+    "8C398892AF4012072E4A6F7E" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "2C9E78C6F820793347A53E46";
+    };
+    "182AA5E0764EA153D55CA5BD" = {
+      "isa" = "PBXGroup";
+      "children" = ("B5E04800D30BF586C503FB20", "D9E711C91C1B8004ACAF7C30", "2C9E78C6F820793347A53E46");
+      "name" = "MailpipeMailExtension";
+      "sourceTree" = "<group>";
+    };
+    "B0EB3AAB8E8C3F5D90D04A04" = {
+      "isa" = "PBXSourcesBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ("8C398892AF4012072E4A6F7E");
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "28B203BDF30AE1F6094EA699" = {
+      "isa" = "PBXFrameworksBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ();
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "76CA1C5312F83AB140566B24" = {
+      "isa" = "XCBuildConfiguration";
+      "name" = "Debug";
+      "buildSettings" = {
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "com.mailpipe.app.MailExtension";
+        "INFOPLIST_FILE" = "Mailpipe/MailExtension/Info.plist";
+        "GENERATE_INFOPLIST_FILE" = "NO";
+        "SWIFT_VERSION" = "6.0";
+        "MACOSX_DEPLOYMENT_TARGET" = "13.0";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "ENABLE_HARDENED_RUNTIME" = "YES";
+        "LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
+        "SKIP_INSTALL" = "YES";
+        "APPLICATION_EXTENSION_API_ONLY" = "YES";
+        "ENABLE_APP_SANDBOX" = "YES";
+        "CODE_SIGN_ENTITLEMENTS" = "Mailpipe/MailExtension/MailExtension.entitlements";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+        "SWIFT_COMPILATION_MODE" = "singlefile";
+      };
+    };
+    "CAE8583EEBC86F22296AA4CD" = {
+      "isa" = "XCBuildConfiguration";
+      "name" = "Release";
+      "buildSettings" = {
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "com.mailpipe.app.MailExtension";
+        "INFOPLIST_FILE" = "Mailpipe/MailExtension/Info.plist";
+        "GENERATE_INFOPLIST_FILE" = "NO";
+        "SWIFT_VERSION" = "6.0";
+        "MACOSX_DEPLOYMENT_TARGET" = "13.0";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "ENABLE_HARDENED_RUNTIME" = "YES";
+        "LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
+        "SKIP_INSTALL" = "YES";
+        "APPLICATION_EXTENSION_API_ONLY" = "YES";
+        "ENABLE_APP_SANDBOX" = "YES";
+        "CODE_SIGN_ENTITLEMENTS" = "Mailpipe/MailExtension/MailExtension.entitlements";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-O";
+        "SWIFT_COMPILATION_MODE" = "wholemodule";
+      };
+    };
+    "2E33099B7C897F655AEF6597" = {
+      "isa" = "XCConfigurationList";
+      "buildConfigurations" = ("76CA1C5312F83AB140566B24", "CAE8583EEBC86F22296AA4CD");
+      "defaultConfigurationIsVisible" = "0";
+      "defaultConfigurationName" = "Release";
+    };
+    "59053CDEB164E7B3942501AF" = {
+      "isa" = "PBXNativeTarget";
+      "buildConfigurationList" = "2E33099B7C897F655AEF6597";
+      "buildPhases" = ("B0EB3AAB8E8C3F5D90D04A04", "28B203BDF30AE1F6094EA699");
+      "buildRules" = ();
+      "dependencies" = ();
+      "name" = "MailpipeMailExtension";
+      "productName" = "MailpipeMailExtension";
+      "productReference" = "DC176E8AF1DD34CEAAE8410B";
+      "productType" = "com.apple.product-type.app-extension";
+      "packageProductDependencies" = ();
+    };
+    "BE6C3526711AF609BA8B87E3" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/App/Info.plist";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "text.plist.xml";
+    };
+    "6F98382B7D4C41D42DFD157E" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/App/MailpipeApp.swift";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "sourcecode.swift";
+    };
+    "6FAA2DDE8AC4ADB741CB733A" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "6F98382B7D4C41D42DFD157E";
+    };
+    "AEA12B8A9F795C2B7DA6CA67" = {
+      "isa" = "PBXGroup";
+      "children" = ("BE6C3526711AF609BA8B87E3", "6F98382B7D4C41D42DFD157E");
+      "name" = "Mailpipe";
+      "sourceTree" = "<group>";
+    };
+    "FB8CDB3834FB005F1094940F" = {
+      "isa" = "PBXSourcesBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ("6FAA2DDE8AC4ADB741CB733A");
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "BC1BA8EF0BEC788197FF5255" = {
+      "isa" = "XCSwiftPackageProductDependency";
+      "package" = "BC4A71180870F7945155FBB0";
+      "productName" = "HarnessAdapters";
+    };
+    "2C34D42D4717C801B84E0D43" = {
+      "isa" = "PBXBuildFile";
+      "productRef" = "BC1BA8EF0BEC788197FF5255";
+    };
+    "217E1812C094C9F080BF047B" = {
+      "isa" = "XCSwiftPackageProductDependency";
+      "package" = "BC4A71180870F7945155FBB0";
+      "productName" = "MailpipeCore";
+    };
+    "25CA545622A684B149BF28F8" = {
+      "isa" = "PBXBuildFile";
+      "productRef" = "217E1812C094C9F080BF047B";
+    };
+    "4495950929277D4003B00283" = {
+      "isa" = "PBXFrameworksBuildPhase";
+      "buildActionMask" = "2147483647";
+      "files" = ("2C34D42D4717C801B84E0D43", "25CA545622A684B149BF28F8");
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "DBEB21021DA7690EF23A1762" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "DC176E8AF1DD34CEAAE8410B";
+      "settings" = {
+        "ATTRIBUTES" = ("RemoveHeadersOnCopy");
+      };
+    };
+    "AFC32963E7959E7A34264826" = {
+      "isa" = "PBXCopyFilesBuildPhase";
+      "buildActionMask" = "2147483647";
+      "dstPath" = "";
+      "dstSubfolderSpec" = "13";
+      "files" = ("DBEB21021DA7690EF23A1762");
+      "name" = "Embed App Extensions";
+      "runOnlyForDeploymentPostprocessing" = "0";
+    };
+    "EBB30C28FB56077190499346" = {
+      "isa" = "PBXContainerItemProxy";
+      "containerPortal" = "244210E48437B6556980A702";
+      "proxyType" = "1";
+      "remoteGlobalIDString" = "59053CDEB164E7B3942501AF";
+      "remoteInfo" = "MailpipeMailExtension";
+    };
+    "965FF32F58B180754D654307" = {
+      "isa" = "PBXTargetDependency";
+      "target" = "59053CDEB164E7B3942501AF";
+      "targetProxy" = "EBB30C28FB56077190499346";
+    };
+    "D1ACEAFEEEFF87385F19AE29" = {
+      "isa" = "XCBuildConfiguration";
+      "name" = "Debug";
+      "buildSettings" = {
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "com.mailpipe.app";
+        "INFOPLIST_FILE" = "Mailpipe/App/Info.plist";
+        "GENERATE_INFOPLIST_FILE" = "NO";
+        "SWIFT_VERSION" = "6.0";
+        "MACOSX_DEPLOYMENT_TARGET" = "13.0";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "ENABLE_HARDENED_RUNTIME" = "YES";
+        "LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
+        "SKIP_INSTALL" = "NO";
+        "ENABLE_APP_SANDBOX" = "NO";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+        "SWIFT_COMPILATION_MODE" = "singlefile";
+      };
+    };
+    "C48833160C26BA9D4B0D6E70" = {
+      "isa" = "XCBuildConfiguration";
+      "name" = "Release";
+      "buildSettings" = {
+        "PRODUCT_NAME" = "$(TARGET_NAME)";
+        "PRODUCT_BUNDLE_IDENTIFIER" = "com.mailpipe.app";
+        "INFOPLIST_FILE" = "Mailpipe/App/Info.plist";
+        "GENERATE_INFOPLIST_FILE" = "NO";
+        "SWIFT_VERSION" = "6.0";
+        "MACOSX_DEPLOYMENT_TARGET" = "13.0";
+        "CODE_SIGN_STYLE" = "Automatic";
+        "ENABLE_HARDENED_RUNTIME" = "YES";
+        "LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
+        "SKIP_INSTALL" = "NO";
+        "ENABLE_APP_SANDBOX" = "NO";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-O";
+        "SWIFT_COMPILATION_MODE" = "wholemodule";
+      };
+    };
+    "0288270EC9B440847064863E" = {
+      "isa" = "XCConfigurationList";
+      "buildConfigurations" = ("D1ACEAFEEEFF87385F19AE29", "C48833160C26BA9D4B0D6E70");
+      "defaultConfigurationIsVisible" = "0";
+      "defaultConfigurationName" = "Release";
+    };
+    "294030B578C75720636E0F4B" = {
+      "isa" = "PBXNativeTarget";
+      "buildConfigurationList" = "0288270EC9B440847064863E";
+      "buildPhases" = ("FB8CDB3834FB005F1094940F", "4495950929277D4003B00283", "AFC32963E7959E7A34264826");
+      "buildRules" = ();
+      "dependencies" = ("965FF32F58B180754D654307");
+      "name" = "Mailpipe";
+      "productName" = "Mailpipe";
+      "productReference" = "681C948D238C526E9E3424E0";
+      "productType" = "com.apple.product-type.application";
+      "packageProductDependencies" = ("BC1BA8EF0BEC788197FF5255", "217E1812C094C9F080BF047B");
+    };
+    "0A3E27B8CA818264D75C8D81" = {
+      "isa" = "PBXGroup";
+      "children" = ("681C948D238C526E9E3424E0", "DC176E8AF1DD34CEAAE8410B");
+      "name" = "Products";
+      "sourceTree" = "<group>";
+    };
+    "0D6E4079E36703EBD37C0072" = {
+      "isa" = "PBXGroup";
+      "children" = ("182AA5E0764EA153D55CA5BD", "AEA12B8A9F795C2B7DA6CA67", "0A3E27B8CA818264D75C8D81");
+      "sourceTree" = "<group>";
+    };
+    "73EBF6644258C120893E685D" = {
+      "isa" = "XCBuildConfiguration";
+      "name" = "Debug";
+      "buildSettings" = {
+        "SDKROOT" = "macosx";
+        "CLANG_ENABLE_MODULES" = "YES";
+        "SWIFT_VERSION" = "6.0";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+        "SWIFT_COMPILATION_MODE" = "singlefile";
+      };
+    };
+    "0B0C687DF8B6B8DC790B519C" = {
+      "isa" = "XCBuildConfiguration";
+      "name" = "Release";
+      "buildSettings" = {
+        "SDKROOT" = "macosx";
+        "CLANG_ENABLE_MODULES" = "YES";
+        "SWIFT_VERSION" = "6.0";
+        "SWIFT_OPTIMIZATION_LEVEL" = "-O";
+        "SWIFT_COMPILATION_MODE" = "wholemodule";
+      };
+    };
+    "76F8DEC3DFE0BDB465198890" = {
+      "isa" = "XCConfigurationList";
+      "buildConfigurations" = ("73EBF6644258C120893E685D", "0B0C687DF8B6B8DC790B519C");
+      "defaultConfigurationIsVisible" = "0";
+      "defaultConfigurationName" = "Release";
+    };
+    "244210E48437B6556980A702" = {
+      "isa" = "PBXProject";
+      "attributes" = {
+        "LastUpgradeCheck" = "1600";
+        "BuildIndependentTargetsInParallel" = "YES";
+      };
+      "buildConfigurationList" = "76F8DEC3DFE0BDB465198890";
+      "compatibilityVersion" = "Xcode 14.0";
+      "developmentRegion" = "en";
+      "hasScannedForEncodings" = "0";
+      "knownRegions" = ("en", "Base");
+      "mainGroup" = "0D6E4079E36703EBD37C0072";
+      "productRefGroup" = "0A3E27B8CA818264D75C8D81";
+      "projectDirPath" = "";
+      "projectRoot" = "";
+      "packageReferences" = ("BC4A71180870F7945155FBB0");
+      "targets" = ("59053CDEB164E7B3942501AF", "294030B578C75720636E0F4B");
+    };
+  };
+  "rootObject" = "244210E48437B6556980A702";
+}

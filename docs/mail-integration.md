@@ -3,6 +3,17 @@
 状态：API 核查 + 推荐方案，未做实机集成。
 核查日期：2026-11-15。证据索引见 [来源](sources.md)。
 
+## 当前工程状态
+
+扩展入口已编译并嵌入宿主。
+回调只调用 `completionHandler(nil)`。
+它不读取正文、不设置动作、不请求正文重入。
+尚未在 Mail 中启用或验证扩展发现。
+
+MailBridge 已有定位、快照和歧义结果类型。
+`UnavailableMailBridge` 始终返回不可用错误。
+尚未实现 Apple Events、采集、App Group 或动作回执。
+
 ## 1. 核心结论
 
 MailKit 能在下载邮件时返回动作。

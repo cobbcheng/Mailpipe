@@ -27,3 +27,11 @@
 
 以上是工程化设计建议，仍受 M0 门槛约束。
 没有改动原 Notion 文档，没有运行真实模型或 Mail 操作。
+
+## 2026-11-15：M0 工程骨架与 Adapter
+
+建立 Swift Package 与双 target Xcode 工程。
+新增 Claude Code / Codex CLI Adapter 和严格输出校验。
+进程使用 stdin、输出上限、超时与取消清理。
+真实邮件调用保持阻断，MailBridge 尚未连接 Mail。
+验证范围和未完成项见 [工程记录](../validation/2026-11-15-m0-scaffold.md)。

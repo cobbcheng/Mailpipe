@@ -1,7 +1,7 @@
 # Mailpipe 设计
 
 状态：设计草案。更新：2026-11-15。
-尚无实现；推荐方案须通过 M0 验证。
+已有 M0 工程骨架；完整链路仍须通过 M0 验证。
 原始材料及差异见 [产品方案](docs/product.md)。
 
 ## 1. 要解决的问题
@@ -115,19 +115,19 @@ Message-ID 是线索，不是跨账户唯一主键。
 执行器不接受任意脚本或自由格式动作。
 详见 [安全设计](docs/security.md)。
 
-## 8. 规划源码边界
+## 8. 源码边界
 
-以下目录尚未创建。工程落地后再更新索引。
+目录已建立；下表区分当前实现与后续职责。
 
-| 规划目录 | 职责 |
-|---|---|
-| `Mailpipe/App/` | 菜单栏、窗口、引导和生命周期 |
-| `Mailpipe/MailExtension/` | Action handler 和入站暂存 |
-| `Packages/MailpipeCore/` | 身份、规则、队列与数据契约 |
-| `Packages/MailBridge/` | 有类型的 Mail 操作与回执 |
-| `Packages/HarnessAdapters/` | Harness 能力矩阵和受限调用 |
-| `Tests/` | 合成样本、fake、单元及集成测试 |
-| `scripts/` | 后续构建、检查和签名流程 |
+| 目录 | 当前实现 | 后续职责 |
+|---|---|---|
+| `Mailpipe/App/` | 工作台、菜单栏、工具检测、离线样例 | 引导、队列与回执 |
+| `Mailpipe/MailExtension/` | Action handler 返回 nil | 采集与入站暂存 |
+| `Packages/MailpipeCore/` | 分类契约、严格校验、账户路由 | 规则、队列与持久状态 |
+| `Packages/MailBridge/` | 类型与不可用实现 | 定位、动作与读回 |
+| `Packages/HarnessAdapters/` | 两种 CLI、进程管理、输出解析 | 真实模型受限验收 |
+| `Tests/` | 24 项合成 / fake 测试 | 实机集成验收 |
+| `scripts/` | 构建、隔离测试、工程生成 | 签名与发布 |
 
 不同进程是扩展边界的理由。
 不同权限与可替换 fake 是桥接层的理由。
