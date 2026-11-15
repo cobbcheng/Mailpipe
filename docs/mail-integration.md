@@ -2,6 +2,7 @@
 
 状态：API 核查 + 推荐方案，未做实机集成。
 核查日期：2026-11-15。证据索引见 [来源](sources.md)。
+同日补充 Mailbutler 安装观察，见第 9 节。
 
 ## 当前工程状态
 
@@ -113,6 +114,9 @@ Mail 的数值 ID 仅作本地 locator，不作永久身份。
 不得用全邮箱逐封扫描作为每次回调的默认路径。
 M0 要测候选查询数量、延迟与准确率。
 若定位成本不可接受，重评采集路径。
+私有库映射是未验证候选。
+见第 9 节与 [Q-17](known-issues.md)。
+对照实验没有结论前，不用它定位。
 
 ## 6. 动作与回执
 
@@ -148,12 +152,152 @@ P1 bridge 不暴露 `send` 操作。
 ## 8. 不采用的替代
 
 不读取 Mail 私有 SQLite 或磁盘目录。
+第 9 节的竞品观察不构成例外。
 不借 Message Security 解码回调展示 AI 摘要。
 不以 `reloadVisibleMessages` 重放指定邮件动作。
 官方仅提供可见邮件刷新接口，SDK 注明会节流。[A5]
 不依赖旧 `.mailbundle` 注入。
 
-## 9. 来源与重评
+## 9. 竞品观察：Mailbutler 安装权限
+
+状态：一手观察转写，不是实现审计。
+日期：2026-11-15。来源编号 O1，见 [来源](sources.md)。
+截图未入库。下文只保留转写中的可见文字与路径。
+用户目录写成 `<user>`。
+第 8 节仍然有效。本节只增加观察和候选。
+[产品方案](product.md) 的“不读取 Mail 私有数据库”不变。
+[安全设计](security.md) 的权限矩阵不变。
+[数据契约](data-contracts.md) 不变。
+
+### 9.1 本次看到的流程
+
+主程序列出四种安装项。
+本次记录继续的是 Mail Extension。
+
+| 安装项 | 本次记录 |
+|---|---|
+| Mail Extension | 继续安装 |
+| Outlook Add-in | 未记录后续安装 |
+| Gmail Safari 扩展 | 未记录后续安装 |
+| Gmail Chrome 扩展 | 未记录后续安装 |
+
+选择 Mail Extension 后，界面显示 “Downloading remaining components”。
+随后打开 .pkg，名称是 “Mailbutler for Mail”。
+安装器要求管理员密码或 Touch ID。
+提示原文是 “安装器”正在尝试安装新软件。
+转写没有 Mailbutler 版本。
+转写也没有该 Mac 的系统版本。
+
+接着出现 “Privacy & Security Setup” 向导。
+清单有四项：Accessibility、Mail Data、AppleScript、Mail Extension。
+可见步骤是 Welcome → Accessibility → Mail Data → Automation。
+清单中的 AppleScript 与步骤名 Automation，转写视为同一项。
+Mail Extension 在清单里，并要在 Mail 中启用。
+转写没有把它写成向导里的独立步骤页。
+启用是否成功，本次没有核验。
+
+```mermaid
+flowchart LR
+  A[选择 Mail Extension] --> B[下载剩余组件]
+  B --> C[打开 Mailbutler for Mail.pkg]
+  C --> D[管理员密码或 Touch ID]
+  D --> E[Privacy and Security Setup]
+  E --> F[Accessibility]
+  F --> G[Mail Data 三项]
+  G --> H[Automation]
+```
+
+启用 Mail Extension 的先后，转写没有单独标出。
+因此上图在 Automation 处结束。
+
+### 9.2 向导中的权限
+
+| 项 | 转写中的可见内容 | 附注 |
+|---|---|---|
+| Accessibility | 见下方原文 | 记录者附注：系统层面不限定目标 App。本次未复测系统设置 |
+| Mail Data | 三项 Grant Access，说明文字相同 | 此页使用文件选择框。转写未出现完全磁盘访问开关 |
+| AppleScript | 向导步骤名为 Automation | 记录者归纳为 Apple Events 控制 Mail。未见脚本正文 |
+| Mail Extension | 在 Mail 中启用 | 记录中记为 MailKit。未核对扩展点标识符 |
+
+Accessibility 原文：
+
+> This permission lets Mailbutler interact with the Apple Mail user interface which is required for features such as the sidebar or the integrated email tracking indicators.
+
+上表附注来自记录者，不是面板原文。
+该授权在系统层面不限定目标 App。
+本次没有打开系统设置核对授权列表。
+原文声称该权限用于侧栏和邮件跟踪指示。
+本次没有使用这些功能。
+
+Mail Data 三项的说明原文相同：
+
+> Required to read email messages and Mail data used by Mailbutler features.
+
+| 标签 | 预选路径 | 转写中可见的名称 | 弹窗标题 |
+|---|---|---|---|
+| Mail Library | `/Users/<user>/Library/Mail` | `PersistenceInfo.plist`、`V10` | grant Mailbutler access to Mail's database |
+| Mail Settings | `/Users/<user>/Library/Containers/com.apple.mail` | 未列出内部文件 | access to Mail's preferences |
+| Mail Account Settings | `/Users/<user>/Library/Accounts` | `Accounts4.sqlite`、`-shm`、`-wal`、`persona.cache`、`VerifiedBackup` | access to Mail's account management |
+
+弹窗标题按转写保留原大小写。
+Mail Library 的目录用途是归纳：本地邮件、附件和 Envelope Index。
+本次没有打开这些文件。
+也没有核对 schema。
+
+`-shm` 与 `-wal` 按转写原文保留。
+转写没有展开这两个后缀的完整文件名。
+
+推断，待验证：`Library/Accounts` 是系统互联网账户库。
+其中不只有 Mail 账户。
+账户凭据一般在钥匙串，不在这个库里。
+本次没有查询钥匙串。
+不能把凭据位置写成事实。
+
+### 9.3 文件选择上的引导
+
+三项都通过系统文件选择框授权。
+选择框预选了上表中的目标文件夹。
+界面写明 “has been pre-selected for you, there is no need to navigate away”。
+引导清单是 “1. Folder Selected ✓ / 2. Allow Access Button Clicked !”。
+用户要点 “Allow Access”。
+其他安装阶段是否另要完全磁盘访问，转写没有涉及。
+
+推断，待验证：这是沙盒的用户选择授权。
+持久化手段被记为 security-scoped bookmark。
+文件选择框被记为可能的 `NSOpenPanel`。
+本次没有检查沙盒、entitlement 或书签文件。
+不能把这三项写成已证实实现。
+
+### 9.4 对 Mailpipe 的启示
+
+下表是分析，不是已验证事实。
+现行引导仍是 Mail 扩展加自动化。
+流程见 [交互设计](interaction-design.md)。
+
+| 启示 | 定性 | 建议 |
+|---|---|---|
+| Mailbutler 用读库、辅助功能改界面、AppleScript 回写，补 MailKit 的缺口 | 单一产品的旁证。未复现其侧栏或跟踪指示 | 继续用 MailKit 采集、Apple Events 回写。不把辅助功能改 UI 列入当前方案 |
+| `Accounts4.sqlite` 与 Envelope Index 可能帮助 Q-02 的邮件到账户映射 | 候选路径，未验证。不声称解决唯一对象定位 | 建议作为 M0 身份实验的只读对照。未排入当前顺序。见 Q-17 |
+| 预选文件夹，再由用户点允许 | 将来若读库，可参考的授权体验 | 仅在单独立项后使用。不加入当前首次引导 |
+| 默认只保留扩展与自动化；读库作为可选高级授权，并写明对应功能 | 产品与安全设计候选 | 未采纳。不替换现行权限矩阵 |
+
+若将来单独立项读取这些文件，至少先处理下表。
+
+| 风险 | 当前不能当作可用手段的原因 |
+|---|---|
+| Envelope Index 是私有格式 | schema 未核对。跨 macOS 版本可能变化 |
+| 数据目录名 `V10` | 分析：该名称可能表示数据版本。未对照 Apple 文档 |
+| `-wal` 中尚未合并的写入 | 只读主库可能漏掉未落盘记录。一致性未验证 |
+| `Library/Accounts` 超出 Mail | 可能含其他互联网账户的元数据。范围未验证 |
+| 辅助功能不限定目标 App | 一旦授予，控制面不限于 Mail。当前方案不申请 |
+
+Q-02 的解除条件不变。
+仍要求重复和缺失的 Message-ID 不误写。
+私有库对照没有结论前，定位继续走有界查询。
+歧义仍转人工确认。
+未决项编号见 [已知限制](known-issues.md) 的 Q-17。
+
+## 10. 来源与重评
 
 [A2] [Action 回调](https://developer.apple.com/documentation/mailkit/memessageactionhandler/decideaction(for:completionhandler:))。
 [A3] [MEMessageAction](https://developer.apple.com/documentation/mailkit/memessageaction)。

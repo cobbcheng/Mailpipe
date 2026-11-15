@@ -35,3 +35,12 @@
 进程使用 stdin、输出上限、超时与取消清理。
 真实邮件调用保持阻断，MailBridge 尚未连接 Mail。
 验证范围和未完成项见 [工程记录](../validation/2026-11-15-m0-scaffold.md)。
+
+## 2026-11-15：Mailbutler 安装权限观察
+
+记录 Mail Extension 安装时可见的权限、路径和弹窗标题。
+材料是文字转写，截图未入库。
+详见 [邮件集成](../mail-integration.md) 第 9 节与 [来源](../sources.md) 的 O1。
+不改变“不读 Mail 私有库、不申请辅助功能”的现行决定。
+`Accounts4.sqlite` 与 Envelope Index 只作为 Q-17 候选。
+未排入当前 M0 实施顺序。
