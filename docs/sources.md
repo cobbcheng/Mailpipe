@@ -67,7 +67,9 @@ Context7 只返回同名 .NET MailKit 库。
 
 尚未独立验证：竞品价格、市场规模、订阅条款。
 竞品安装界面另有一条一手转写，见第 6 节。
-该转写不覆盖价格、条款或程序实现。
+该转写不覆盖价格、条款、库表结构或 Spotlight 行为。
+后续 P1 读库决定见 [邮件集成](mail-integration.md) 第 10 节。
+O1 不是该决定的实机证据。
 尚未实测：共享容器、自动化桥接、模型受限模式。
 P1 的共享服务附件、线程与发件账户也未实测。
 
@@ -114,8 +116,9 @@ P1 的共享服务附件、线程与发件账户也未实测。
 | 未记录 | Mailbutler 版本、该 Mac 的系统版本、扩展是否启用成功 |
 | 归纳 | Mail Library 指本地邮件、附件和 Envelope Index。未做格式审计 |
 | 推断，待验证 | `Library/Accounts` 的账户范围、钥匙串凭据位置、`NSOpenPanel`、沙盒用户选择授权、security-scoped bookmark |
-| 不证明 | 竞品功能可用、Mailpipe 应读取私有库、辅助功能授权范围已经复测 |
+| 不证明 | 竞品功能可用、Envelope Index 的表结构、Spotlight 覆盖、辅助功能范围 |
 
 详细拆解见 [邮件集成](mail-integration.md) 第 9 节。
 未决项编号为 [Q-17](known-issues.md)。
-O1 不改变现行权限决定。
+O1 本身不是权限决定。
+后来的只读搜索决定见同文第 10 节。
