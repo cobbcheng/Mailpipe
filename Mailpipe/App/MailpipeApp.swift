@@ -45,6 +45,7 @@ struct MailpipeApp: App {
             WorkbenchView(model: model).frame(minWidth: 680, minHeight: 480)
         }
         .defaultSize(width: 820, height: 620)
+        WindowGroup("M0 身份验证", id: "identity-probe") { IdentityProbeView() }
         MenuBarExtra("Mailpipe", systemImage: "envelope.badge.shield.half.filled") {
             MenuContent()
         }
@@ -61,6 +62,7 @@ private struct MenuContent: View {
             openWindow(id: "workbench")
             NSApp.activate(ignoringOtherApps: true)
         }
+        Button("M0 身份验证") { openWindow(id: "identity-probe"); NSApp.activate(ignoringOtherApps: true) }
         Button("退出 Mailpipe") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 }

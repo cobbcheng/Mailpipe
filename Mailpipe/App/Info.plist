@@ -15,12 +15,16 @@
 	<key>CFBundleShortVersionString</key>
 	<string>0.0.1</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>MailpipeAppGroup</key>
+	<string>$(MAILPIPE_APP_GROUP)</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>只在你指定的测试账户与邮箱中只读定位合成邮件，不修改或发送邮件。</string>
 </dict>
 </plist>

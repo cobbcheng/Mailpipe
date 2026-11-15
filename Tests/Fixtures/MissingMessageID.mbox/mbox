@@ -1,0 +1,9 @@
+From fixture@example.com Sun Nov 15 16:10:00 2026
+From: Mailpipe Fixture <fixture@example.com>
+To: recipient@example.com
+Date: Sun, 15 Nov 2026 16:10:00 +0800
+Subject: Mailpipe M0 Missing-ID 20261115-A
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Synthetic missing Message-ID fixture. No action required.
