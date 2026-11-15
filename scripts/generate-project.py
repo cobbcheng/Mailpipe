@@ -49,11 +49,10 @@ for label, source_dir, product, product_type in (
     sources = obj(label + '-sources', 'PBXSourcesBuildPhase', buildActionMask='2147483647', files=builds,
                   runOnlyForDeploymentPostprocessing='0')
     package_products, framework_files = [], []
-    if label == 'Mailpipe':
-        for library in ('HarnessAdapters', 'MailpipeCore'):
-            dep = obj('product-' + library, 'XCSwiftPackageProductDependency', package=package, productName=library)
-            package_products.append(dep)
-            framework_files.append(obj('link-' + library, 'PBXBuildFile', productRef=dep))
+    for library in (('HarnessAdapters', 'MailpipeCore', 'MailBridge') if label == 'Mailpipe' else ('MailpipeCore',)):
+        dep = obj(label + '-product-' + library, 'XCSwiftPackageProductDependency', package=package, productName=library)
+        package_products.append(dep)
+        framework_files.append(obj(label + '-link-' + library, 'PBXBuildFile', productRef=dep))
     frameworks = obj(label + '-frameworks', 'PBXFrameworksBuildPhase', buildActionMask='2147483647',
                      files=framework_files, runOnlyForDeploymentPostprocessing='0')
     phases, dependencies = [sources, frameworks], []
@@ -67,13 +66,15 @@ for label, source_dir, product, product_type in (
     settings = dict(PRODUCT_NAME='$(TARGET_NAME)', PRODUCT_BUNDLE_IDENTIFIER='com.mailpipe.app' + ('.MailExtension' if label != 'Mailpipe' else ''),
                     INFOPLIST_FILE=source_dir + '/Info.plist', GENERATE_INFOPLIST_FILE='NO',
                     SWIFT_VERSION='6.0', MACOSX_DEPLOYMENT_TARGET='13.0', CODE_SIGN_STYLE='Automatic',
-                    ENABLE_HARDENED_RUNTIME='YES', LD_RUNPATH_SEARCH_PATHS=['$(inherited)', '@executable_path/../Frameworks'],
+                    ENABLE_HARDENED_RUNTIME='YES', MAILPIPE_APP_GROUP='$(DEVELOPMENT_TEAM).com.mailpipe.validation', LD_RUNPATH_SEARCH_PATHS=['$(inherited)', '@executable_path/../Frameworks'],
                     SKIP_INSTALL='YES' if label != 'Mailpipe' else 'NO')
     if label != 'Mailpipe':
-        settings.update(APPLICATION_EXTENSION_API_ONLY='YES', ENABLE_APP_SANDBOX='YES',
+        settings.update(APPLICATION_EXTENSION_API_ONLY='YES', ENABLE_APP_SANDBOX='YES', ENABLE_DEBUG_DYLIB='NO',
+                        OTHER_LDFLAGS=['$(inherited)', '-Wl,-needed_framework,MailKit'],
                         CODE_SIGN_ENTITLEMENTS=source_dir + '/MailExtension.entitlements')
     else:
         settings['ENABLE_APP_SANDBOX'] = 'NO'
+        settings['CODE_SIGN_ENTITLEMENTS'] = source_dir + '/Mailpipe.entitlements'
     target_ids.append(obj('target-' + label, 'PBXNativeTarget', buildConfigurationList=configs(label, settings),
                           buildPhases=phases, buildRules=[], dependencies=dependencies, name=label, productName=label,
                           productReference=product, productType=product_type, packageProductDependencies=package_products))

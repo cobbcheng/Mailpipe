@@ -1,13 +1,18 @@
 # 安装、签名与发布
 
-状态：已有未签名构建；尚无安装包。
+状态：支持本地开发签名；尚无发布安装包。
 更新：2026-11-15。
 
 ## 1. 当前限制
 
 运行 `./scripts/build-app.sh` 构建宿主与嵌入扩展。
-脚本显式关闭签名；不安装或启用扩展。
-当前仅声明扩展沙盒权限，未配置 App Group。
+脚本默认关闭签名；不安装或启用扩展。
+设置 `MAILPIPE_DEVELOPMENT_TEAM` 后使用 Apple Development。
+例如：`MAILPIPE_DEVELOPMENT_TEAM="$TEAM_ID" ./scripts/build-app.sh`。
+本机需已有对应开发签名证书。
+宿主与扩展使用同一团队前缀的 App Group。
+扩展声明沙盒，宿主声明 Apple Events 权限。
+开发签名与实机进展见 [验收记录](validation/2026-11-15-m0-signed-identity.md)。
 工程 Bundle ID 为开发占位，签名前须确定团队和标识。
 没有安装或发布命令。
 MailKit API 下限是 macOS 12，不等于产品支持下限。

@@ -57,10 +57,19 @@
       "files" = ("8C398892AF4012072E4A6F7E");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
+    "674BEEC04144907590A6D996" = {
+      "isa" = "XCSwiftPackageProductDependency";
+      "package" = "BC4A71180870F7945155FBB0";
+      "productName" = "MailpipeCore";
+    };
+    "1DD742E7E3E070FC1CC7CCD8" = {
+      "isa" = "PBXBuildFile";
+      "productRef" = "674BEEC04144907590A6D996";
+    };
     "28B203BDF30AE1F6094EA699" = {
       "isa" = "PBXFrameworksBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ();
+      "files" = ("1DD742E7E3E070FC1CC7CCD8");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "76CA1C5312F83AB140566B24" = {
@@ -75,10 +84,13 @@
         "MACOSX_DEPLOYMENT_TARGET" = "13.0";
         "CODE_SIGN_STYLE" = "Automatic";
         "ENABLE_HARDENED_RUNTIME" = "YES";
+        "MAILPIPE_APP_GROUP" = "$(DEVELOPMENT_TEAM).com.mailpipe.validation";
         "LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
         "SKIP_INSTALL" = "YES";
         "APPLICATION_EXTENSION_API_ONLY" = "YES";
         "ENABLE_APP_SANDBOX" = "YES";
+        "ENABLE_DEBUG_DYLIB" = "NO";
+        "OTHER_LDFLAGS" = ("$(inherited)", "-Wl,-needed_framework,MailKit");
         "CODE_SIGN_ENTITLEMENTS" = "Mailpipe/MailExtension/MailExtension.entitlements";
         "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
         "SWIFT_COMPILATION_MODE" = "singlefile";
@@ -96,10 +108,13 @@
         "MACOSX_DEPLOYMENT_TARGET" = "13.0";
         "CODE_SIGN_STYLE" = "Automatic";
         "ENABLE_HARDENED_RUNTIME" = "YES";
+        "MAILPIPE_APP_GROUP" = "$(DEVELOPMENT_TEAM).com.mailpipe.validation";
         "LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
         "SKIP_INSTALL" = "YES";
         "APPLICATION_EXTENSION_API_ONLY" = "YES";
         "ENABLE_APP_SANDBOX" = "YES";
+        "ENABLE_DEBUG_DYLIB" = "NO";
+        "OTHER_LDFLAGS" = ("$(inherited)", "-Wl,-needed_framework,MailKit");
         "CODE_SIGN_ENTITLEMENTS" = "Mailpipe/MailExtension/MailExtension.entitlements";
         "SWIFT_OPTIMIZATION_LEVEL" = "-O";
         "SWIFT_COMPILATION_MODE" = "wholemodule";
@@ -121,11 +136,27 @@
       "productName" = "MailpipeMailExtension";
       "productReference" = "DC176E8AF1DD34CEAAE8410B";
       "productType" = "com.apple.product-type.app-extension";
-      "packageProductDependencies" = ();
+      "packageProductDependencies" = ("674BEEC04144907590A6D996");
+    };
+    "8B706747C40EA5AD71834CDB" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/App/IdentityProbeView.swift";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "sourcecode.swift";
+    };
+    "755064C8A8E2123035E449A3" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "8B706747C40EA5AD71834CDB";
     };
     "BE6C3526711AF609BA8B87E3" = {
       "isa" = "PBXFileReference";
       "path" = "Mailpipe/App/Info.plist";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "text.plist.xml";
+    };
+    "ECAA2C2BEF3B9127FEAB90B8" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/App/Mailpipe.entitlements";
       "sourceTree" = "SOURCE_ROOT";
       "lastKnownFileType" = "text.plist.xml";
     };
@@ -141,38 +172,47 @@
     };
     "AEA12B8A9F795C2B7DA6CA67" = {
       "isa" = "PBXGroup";
-      "children" = ("BE6C3526711AF609BA8B87E3", "6F98382B7D4C41D42DFD157E");
+      "children" = ("8B706747C40EA5AD71834CDB", "BE6C3526711AF609BA8B87E3", "ECAA2C2BEF3B9127FEAB90B8", "6F98382B7D4C41D42DFD157E");
       "name" = "Mailpipe";
       "sourceTree" = "<group>";
     };
     "FB8CDB3834FB005F1094940F" = {
       "isa" = "PBXSourcesBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("6FAA2DDE8AC4ADB741CB733A");
+      "files" = ("755064C8A8E2123035E449A3", "6FAA2DDE8AC4ADB741CB733A");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
-    "BC1BA8EF0BEC788197FF5255" = {
+    "2927EA4D7998778FB78BF683" = {
       "isa" = "XCSwiftPackageProductDependency";
       "package" = "BC4A71180870F7945155FBB0";
       "productName" = "HarnessAdapters";
     };
-    "2C34D42D4717C801B84E0D43" = {
+    "DFC03C57789D058C2111FFEB" = {
       "isa" = "PBXBuildFile";
-      "productRef" = "BC1BA8EF0BEC788197FF5255";
+      "productRef" = "2927EA4D7998778FB78BF683";
     };
-    "217E1812C094C9F080BF047B" = {
+    "76C7A77379E76B712E09C24A" = {
       "isa" = "XCSwiftPackageProductDependency";
       "package" = "BC4A71180870F7945155FBB0";
       "productName" = "MailpipeCore";
     };
-    "25CA545622A684B149BF28F8" = {
+    "76DB58043316AE66296FEA42" = {
       "isa" = "PBXBuildFile";
-      "productRef" = "217E1812C094C9F080BF047B";
+      "productRef" = "76C7A77379E76B712E09C24A";
+    };
+    "A27F2187C3A089835F424CF1" = {
+      "isa" = "XCSwiftPackageProductDependency";
+      "package" = "BC4A71180870F7945155FBB0";
+      "productName" = "MailBridge";
+    };
+    "757B52605B5CD035F1E86015" = {
+      "isa" = "PBXBuildFile";
+      "productRef" = "A27F2187C3A089835F424CF1";
     };
     "4495950929277D4003B00283" = {
       "isa" = "PBXFrameworksBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("2C34D42D4717C801B84E0D43", "25CA545622A684B149BF28F8");
+      "files" = ("DFC03C57789D058C2111FFEB", "76DB58043316AE66296FEA42", "757B52605B5CD035F1E86015");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "DBEB21021DA7690EF23A1762" = {
@@ -215,9 +255,11 @@
         "MACOSX_DEPLOYMENT_TARGET" = "13.0";
         "CODE_SIGN_STYLE" = "Automatic";
         "ENABLE_HARDENED_RUNTIME" = "YES";
+        "MAILPIPE_APP_GROUP" = "$(DEVELOPMENT_TEAM).com.mailpipe.validation";
         "LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
         "SKIP_INSTALL" = "NO";
         "ENABLE_APP_SANDBOX" = "NO";
+        "CODE_SIGN_ENTITLEMENTS" = "Mailpipe/App/Mailpipe.entitlements";
         "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
         "SWIFT_COMPILATION_MODE" = "singlefile";
       };
@@ -234,9 +276,11 @@
         "MACOSX_DEPLOYMENT_TARGET" = "13.0";
         "CODE_SIGN_STYLE" = "Automatic";
         "ENABLE_HARDENED_RUNTIME" = "YES";
+        "MAILPIPE_APP_GROUP" = "$(DEVELOPMENT_TEAM).com.mailpipe.validation";
         "LD_RUNPATH_SEARCH_PATHS" = ("$(inherited)", "@executable_path/../Frameworks");
         "SKIP_INSTALL" = "NO";
         "ENABLE_APP_SANDBOX" = "NO";
+        "CODE_SIGN_ENTITLEMENTS" = "Mailpipe/App/Mailpipe.entitlements";
         "SWIFT_OPTIMIZATION_LEVEL" = "-O";
         "SWIFT_COMPILATION_MODE" = "wholemodule";
       };
@@ -257,7 +301,7 @@
       "productName" = "Mailpipe";
       "productReference" = "681C948D238C526E9E3424E0";
       "productType" = "com.apple.product-type.application";
-      "packageProductDependencies" = ("BC1BA8EF0BEC788197FF5255", "217E1812C094C9F080BF047B");
+      "packageProductDependencies" = ("2927EA4D7998778FB78BF683", "76C7A77379E76B712E09C24A", "A27F2187C3A089835F424CF1");
     };
     "0A3E27B8CA818264D75C8D81" = {
       "isa" = "PBXGroup";
