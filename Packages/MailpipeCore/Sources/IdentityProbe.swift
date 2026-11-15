@@ -1,10 +1,12 @@
 import Foundation
 
-/// A short-lived, explicit consent scope for synthetic metadata only.
+/// A short-lived, explicit consent scope for synthetic mail experiments.
 public struct IdentityProbeScope: Codable, Sendable, Equatable {
     public let nonce: UUID
     public let expiresAt: Date
-    public init(now: Date = Date()) {
+    public let requestsBody: Bool?
+    public init(now: Date = Date(), requestsBody: Bool = false) {
+        self.requestsBody = requestsBody
         nonce = UUID(); expiresAt = now.addingTimeInterval(900)
     }
     public var subject: String { "Mailpipe M0 \(nonce.uuidString)" }
@@ -28,10 +30,10 @@ public struct IdentityProbeReceipt: Codable, Sendable {
 public struct IdentityProbeStore: Sendable {
     public let directory: URL
     public init(directory: URL) { self.directory = directory }
-    public func begin(now: Date = Date()) throws -> IdentityProbeScope {
+    public func begin(now: Date = Date(), requestsBody: Bool = false) throws -> IdentityProbeScope {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                attributes: [.posixPermissions: 0o700])
-        let scope = IdentityProbeScope(now: now)
+        let scope = IdentityProbeScope(now: now, requestsBody: requestsBody)
         try JSONEncoder().encode(scope).write(to: directory.appendingPathComponent("scope.json"), options: .atomic)
         return scope
     }

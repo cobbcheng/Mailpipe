@@ -17,7 +17,8 @@ nonisolated final class MailExtension: NSObject, MEExtension {
 nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
     private let logger = Logger(subsystem: "com.mailpipe.app", category: "identity-probe")
     func decideAction(for message: MEMessage, completionHandler: @escaping (MEMessageActionDecision?) -> Void) {
-        defer { completionHandler(nil) }
+        var decision: MEMessageActionDecision?
+        defer { completionHandler(decision) }
         // Fixed stage names only: no subject, ID, address, body, path or raw error text.
         logger.info("probe_v2 callback_entered")
         guard message.state == .received else { logger.info("probe_v2 state_not_received"); return }
@@ -48,6 +49,14 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
             let receipt = try store.diagnosedReceipt()
             guard receipt.nonce == scope.nonce else { logger.notice("probe_v2 scope_changed"); return }
             logger.notice("probe_v2 receipt_verified")
+            if scope.requestsBody == true {
+                if try store.observeBody(subject: message.subject, rawData: message.rawData) {
+                    decision = .invokeAgainWithBody
+                    logger.notice("probe_v3 body_requested")
+                } else {
+                    logger.notice("probe_v3 body_observed_or_request_suppressed")
+                }
+            }
         } catch let failure as ProbeReadFailure {
             logger.error("probe_v2 receipt_verify_failed code=\(failure.rawValue, privacy: .public)")
         } catch { logger.error("probe_v2 capture_failed") }
