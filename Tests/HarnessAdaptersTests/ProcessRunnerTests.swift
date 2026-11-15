@@ -1,0 +1,117 @@
+import XCTest
+import Darwin
+@testable import HarnessAdapters
+import MailpipeCore
+
+@MainActor
+final class ProcessRunnerTests: XCTestCase {
+    func testLargeInputAndBothOutputsDoNotDeadlock() async throws {
+        let root = try TemporaryDirectory()
+        let file = try root.script("/usr/bin/head -c 200000 /dev/zero >&2\n/bin/cat")
+        let input = Data(repeating: 65, count: 200_000)
+        let output = try await POSIXProcessRunner().run(ProcessInvocation(executable: file, arguments: [], stdin: input,
+            workingDirectory: root.url, environment: [:], timeout: 5))
+        XCTAssertEqual(output.stdout, input); XCTAssertEqual(output.stderr.count, 200_000); XCTAssertEqual(output.exitCode, 0)
+    }
+    func testArgumentsAreLiteralAndInputDoesNotRunAsShell() async throws {
+        let root = try TemporaryDirectory()
+        let file = try root.script("/usr/bin/printf '%s' \"$1\"\n/bin/cat")
+        let injection = "$(touch \(root.url.path)/should-not-exist); `echo bad`\n'\""
+        let result = try await POSIXProcessRunner().run(ProcessInvocation(executable: file, arguments: [injection], stdin: Data(injection.utf8),
+            workingDirectory: root.url, environment: [:]))
+        XCTAssertEqual(result.stdout, Data((injection + injection).utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.url.appendingPathComponent("should-not-exist").path))
+    }
+    func testOutputLimitStopsNoisyChild() async throws {
+        let root = try TemporaryDirectory(), file = try root.script("exec /usr/bin/yes noisy")
+        do {
+            _ = try await POSIXProcessRunner().run(ProcessInvocation(executable: file, arguments: [], workingDirectory: root.url,
+                environment: [:], timeout: 5, outputLimit: 1_024))
+            XCTFail("must stop")
+        } catch { XCTAssertEqual(error as? MailpipeError, .outputLimit) }
+    }
+    func testTimeoutKillsProcessGroup() async throws {
+        let root = try TemporaryDirectory()
+        let file = try root.script("/bin/sleep 30 &\necho $! > child.pid\nwait")
+        do {
+            _ = try await POSIXProcessRunner().run(ProcessInvocation(executable: file, arguments: [], workingDirectory: root.url,
+                environment: [:], timeout: 1.5))
+            XCTFail("must time out")
+        } catch { XCTAssertEqual(error as? MailpipeError, .timedOut) }
+        try await assertChildStopped(root)
+    }
+    func testCancellationKillsProcessGroup() async throws {
+        let root = try TemporaryDirectory()
+        let file = try root.script("/bin/sleep 30 &\necho $! > child.pid\nwait")
+        let task = Task { try await POSIXProcessRunner().run(ProcessInvocation(executable: file, arguments: [],
+            workingDirectory: root.url, environment: [:], timeout: 10)) }
+        for _ in 0..<100 {
+            if FileManager.default.fileExists(atPath: root.url.appendingPathComponent("child.pid").path) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("must cancel") }
+        catch { XCTAssertTrue(error is CancellationError || error as? MailpipeError == .cancelled) }
+        try await assertChildStopped(root)
+    }
+    private func assertChildStopped(_ root: TemporaryDirectory) async throws {
+        let text = try String(contentsOf: root.url.appendingPathComponent("child.pid"), encoding: .utf8)
+        let pid = try XCTUnwrap(Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)))
+        for _ in 0..<100 {
+            if kill(pid, 0) == -1 && errno == ESRCH { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("child must not survive termination")
+    }
+    func testSpawnFailureAndNonZeroExit() async throws {
+        let root = try TemporaryDirectory()
+        do {
+            _ = try await POSIXProcessRunner().run(ProcessInvocation(executable: root.url.appendingPathComponent("absent"), arguments: [],
+                workingDirectory: root.url, environment: [:]))
+            XCTFail("missing")
+        } catch { XCTAssertEqual(error as? MailpipeError, .notInstalled) }
+        let file = try root.script("echo diagnostic >&2\nexit 7")
+        let output = try await POSIXProcessRunner().run(ProcessInvocation(executable: file, arguments: [], workingDirectory: root.url, environment: [:]))
+        XCTAssertEqual(output.exitCode, 7); XCTAssertTrue(String(decoding: output.stderr, as: UTF8.self).contains("diagnostic"))
+    }
+    func testCodexAdapterAgainstFakeExecutable() async throws {
+        let root = try TemporaryDirectory(), dialect = CodexCLIDialect()
+        let response = String(decoding: try codexEvents(), as: UTF8.self)
+        let file = try root.script("""
+        case "$1" in
+          --version) echo 'fake-codex 1.2.3'; exit 0;;
+        esac
+        if [ "$2" = '--help' ]; then
+          echo '\(dialect.requiredFlags.joined(separator: " "))'
+          exit 0
+        fi
+        /bin/cat >/dev/null
+        /bin/cat <<'MAILPIPE_SYNTHETIC_OUTPUT'
+        \(response)
+        MAILPIPE_SYNTHETIC_OUTPUT
+        """)
+        let adapter = CodexCLIAdapter(executable: file, dialect: dialect, temporaryRoot: root.url, environment: [:])
+        let output = try await adapter.runSyntheticProbe()
+        XCTAssertEqual(output.response.results.first?.category, .billing)
+        XCTAssertEqual(output.inputTokens, 12)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
+    }
+    func testCompleteAdapterAgainstFakeExecutable() async throws {
+        let root = try TemporaryDirectory(), dialect = ClaudeCodeDialect()
+        let response = String(decoding: try claudeEnvelope(), as: UTF8.self)
+        let file = try root.script("""
+        case "$1" in
+          --version) echo 'fake-claude 1.2.3'; exit 0;;
+          --help) echo '\(dialect.requiredFlags.joined(separator: " "))'; exit 0;;
+        esac
+        /bin/cat >/dev/null
+        /bin/cat <<'MAILPIPE_SYNTHETIC_OUTPUT'
+        \(response)
+        MAILPIPE_SYNTHETIC_OUTPUT
+        """)
+        let adapter = ClaudeCodeAdapter(executable: file, dialect: dialect, temporaryRoot: root.url, environment: [:])
+        let output = try await adapter.runSyntheticProbe()
+        XCTAssertEqual(output.response.results.first?.category, .billing)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
+    }
+}

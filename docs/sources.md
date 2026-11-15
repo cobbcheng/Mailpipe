@@ -74,3 +74,20 @@ P1 的共享服务附件、线程与发件账户也未实测。
 `AGENTS.md` → `README.md` / `DESIGN.md` → 按需专题索引。
 维护历史保存在 `docs/history/agent-history.md`。
 没有移植其业务逻辑、私有账本或部署配置。
+
+## M0 Adapter 工程核查补充
+
+核查：2026-11-15。
+
+| 来源 | 用途 | 证据边界 |
+|---|---|---|
+| [Claude CLI reference](https://code.claude.com/docs/en/cli-reference) | print、JSON、工具和会话参数 | CLI 声明，不是实机受限验收 |
+| [Claude settings](https://code.claude.com/docs/en/settings) | hooks 与 managed policy 限制 | 生产策略仍需 canary |
+| [Codex config reference](https://developers.openai.com/codex/config-reference/) | shell、图片、搜索配置 | read-only 不等于禁止全部工具 |
+| 本机 Claude 2.1.296 帮助 | 核对完整参数名 | 只执行元数据命令 |
+| 本机 Codex 0.169.0-alpha.11.1 帮助 | 核对 exec 参数名 | 只执行元数据命令 |
+| Xcode 27.2 Mail Extension 模板 | extension point 与 principal class | 构建通过，未在 Mail 启用 |
+
+此前 SDK 路径查询失败已解决。
+构建脚本清除继承的 SDKROOT，再解析所选 Xcode SDK。
+当前证据见 [M0 工程记录](validation/2026-11-15-m0-scaffold.md)。

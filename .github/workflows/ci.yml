@@ -1,0 +1,27 @@
+name: M0 checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          ./scripts/swift.sh --version
+      - name: Generated project consistency
+        run: |
+          python3 scripts/generate-project.py
+          git diff --exit-code -- Mailpipe.xcodeproj
+      - name: Isolated tests
+        run: ./scripts/test.sh
+      - name: Offline CLI smoke
+        run: ./scripts/swift.sh run mailpipe-m0 offline
+      - name: Unsigned host and extension
+        run: ./scripts/build-app.sh

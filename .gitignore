@@ -3,7 +3,7 @@
 *.xcuserstate
 xcuserdata/
 
-# Build artifacts (future app)
+# Build artifacts
 .build/
 DerivedData/
 build/

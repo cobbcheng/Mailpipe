@@ -1,7 +1,7 @@
 # Agent 维护参考
 
 本页只索引入口，不重复详细契约。
-更新：2026-11-15。当前仓库只有文档。
+更新：2026-11-15。已有 M0 工程骨架。
 
 ## 文档分工
 
@@ -27,6 +27,22 @@
 | 安装 / 更新 / 发布 | [部署方法](deployment.md) | README 中的真实命令 |
 | 排期 / 接手 | [里程碑](roadmap.md)、[已知限制](known-issues.md) | 已完成证据与未决项 |
 | 核对外部事实 | [来源](sources.md) | 核查日期和证据等级 |
+
+## 源码与检查入口
+
+| 任务 | 入口 |
+|---|---|
+| UI 与离线样例 | `Mailpipe/App/MailpipeApp.swift` |
+| 扩展生命周期 | `Mailpipe/MailExtension/MailExtension.swift` |
+| 输入、输出与路由校验 | `Packages/MailpipeCore/Sources/Classification.swift` |
+| CLI 探测和调用 | `Packages/HarnessAdapters/Sources/CLIAdapter.swift` |
+| CLI 参数与包装解析 | 同目录 `ClaudeCodeAdapter.swift`、`CodexCLIAdapter.swift` |
+| 进程生命周期 | 同目录 `POSIXProcessRunner.swift` |
+| Bridge 边界 | `Packages/MailBridge/Sources/MailBridge.swift` |
+| 无模型命令行检查 | `Tools/MailpipeM0/MailpipeM0.swift` |
+| 回归 | `Tests/`、`scripts/test.sh` |
+| 工程配置 | `scripts/generate-project.py`、`Package.swift` |
+| 当前验证 | [M0 工程记录](validation/2026-11-15-m0-scaffold.md) |
 
 ## 数据与诊断入口（规划）
 
