@@ -28,12 +28,25 @@ extension IdentityProbeStore {
             }
             return try scope() == current && current.accepts(subject: subject, now: Date())
         }
-        // M0 fixture: plain UTF-8 MIME only, capped at 64 KiB. Not a production MIME decoder.
+        // M0 fixture: single-part UTF-8 MIME (identity or base64), capped at 64 KiB.
+        // Not a production MIME decoder; unsupported transfer encodings fail closed.
         var body: Data?
         if rawData.count <= 65_536 {
             for separator in [Data("\r\n\r\n".utf8), Data("\n\n".utf8)] {
                 if let range = rawData.range(of: separator) {
-                    body = rawData.subdata(in: range.upperBound..<rawData.endIndex)
+                    let headers = String(data: rawData.prefix(upTo: range.lowerBound), encoding: .utf8) ?? ""
+                    let encodings = headers.components(separatedBy: .newlines).compactMap { line -> String? in
+                        let parts = line.split(separator: ":", maxSplits: 1)
+                        guard parts.count == 2, parts[0].lowercased() == "content-transfer-encoding" else { return nil }
+                        return parts[1].trimmingCharacters(in: .whitespaces).lowercased()
+                    }
+                    let payload = rawData.subdata(in: range.upperBound..<rawData.endIndex)
+                    if encodings.isEmpty || (encodings.count == 1 && ["7bit", "8bit", "binary"].contains(encodings[0])) {
+                        body = payload
+                    } else if encodings == ["base64"], let encoded = String(data: payload, encoding: .ascii) {
+                        let compact = encoded.filter { !$0.isWhitespace }
+                        body = Data(base64Encoded: compact)
+                    }
                     break
                 }
             }

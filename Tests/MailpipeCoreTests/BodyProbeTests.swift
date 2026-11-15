@@ -60,4 +60,20 @@ final class BodyProbeTests: XCTestCase {
         let old = try JSONDecoder().decode(IdentityProbeScope.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertNil(old.requestsBody)
     }
+    func testBase64BodyAndUnsupportedEncoding() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = IdentityProbeStore(directory: root)
+        let scope = try store.begin(requestsBody: true)
+        let payload = Data(scope.bodyMarker.utf8).base64EncodedString(options: .lineLength64Characters)
+        _ = try store.observeBody(subject: scope.subject, rawData: Data("Content-Transfer-Encoding: base64\r\n\r\n\(payload)".utf8))
+        XCTAssertTrue(try XCTUnwrap(store.bodyReceipt()).markerFound)
+        XCTAssertEqual(try XCTUnwrap(store.bodyReceipt()).bodyByteCount, scope.bodyMarker.utf8.count)
+        for (encoding, payload) in [("base64", "!!invalid!!"), ("quoted-printable", scope.bodyMarker)] {
+            _ = try store.observeBody(subject: scope.subject, rawData: Data("Content-Transfer-Encoding: \(encoding)\r\n\r\n\(payload)".utf8))
+            XCTAssertFalse(try XCTUnwrap(store.bodyReceipt()).markerFound)
+            XCTAssertNil(try XCTUnwrap(store.bodyReceipt()).bodyByteCount)
+        }
+    }
+
 }
