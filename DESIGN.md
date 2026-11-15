@@ -7,7 +7,7 @@
 ## 1. 要解决的问题
 
 1. 如何让 AI 分类结果可靠地落到 Mail？
-2. 如何复用 Harness，且不扩大邮件数据权限？
+2. 如何在 Agent 中查找历史邮件，且只把命中交给模型？
 3. 如何让用户看懂结果，并纠正误操作？
 
 ## 2. 架构与责任边界
@@ -33,8 +33,9 @@ flowchart LR
 |---|---|---|
 | Action Extension | 读取可用元数据、暂存输入、及时返回 | 调用 CLI、长时间等 AI、事后回写 |
 | 伴随 App | 调度、界面、策略、生命周期 | 取代邮件客户端 |
-| MailBridge | 账户枚举、定位、读取、授权动作、读回 | 模型决策、任意脚本执行 |
-| Harness Adapter | 检测、受限调用、输出解析、计量 | 直接发送邮件、代用户更换模型配置 |
+| MailBridge | 账户枚举、定位、选择与状态读取、授权动作、读回 | 模型决策、直接改私有库 |
+| 历史读取 | 只读查询已授权邮件库，并截断命中 | 写库、自建索引、把全库交给模型 |
+| Harness Adapter | 检测、调用 Mailpipe 工具、输出解析、计量 | 直接操作 Mail、Shell 或文件系统 |
 | Rule Engine | 解释结构化条件、确定动作和冲突 | 执行模型生成的程序 |
 | Store | 任务状态、规则版本、意图与回执 | 保存 Harness 认证凭据 |
 
@@ -51,9 +52,29 @@ App Group 共享与宿主访问权限须签名原型验证。
 | MailKit + Apple Events | 事件采集 | 桥接执行 | 脚本字典支持 | 自动化权限、定位成本 | 推荐 M0 验证 |
 | 仅 Apple Events 轮询 | 需自行扫描 | 桥接执行 | 同上 | 扫描负担、后台时机 | 只作失败后的重评选项 |
 | IMAP / 服务商 API | 自建同步 | 可设计 | 可设计 | 新认证与同步栈 | 当前不做 |
+| 只读邮件库 + Spotlight | 不代替新邮件回调 | 不负责回写 | 不负责移动 | 可选读库权限；格式未验证 | P1 历史查找 |
 
 这里的“支持”仅指 API 或字典声明。
+邮件库方案是已确认的设计，不是已验证的行为。
 MailBridge 跨账户、跨版本行为尚未实测。
+
+历史查找的只读路径：
+
+```mermaid
+flowchart LR
+  User[用户查询] --> App[伴随 App]
+  App --> Index[只读 Envelope Index]
+  App --> Spot[Spotlight]
+  Spot --> Emlx[命中的 .emlx]
+  App --> Cap[截断后的命中]
+  Cap --> Harness[Harness]
+  Harness --> Intent[动作意图]
+  Intent --> Bridge[MailBridge]
+  Bridge --> Mail[Apple Mail]
+```
+
+写操作不进入 Envelope Index 或 `.emlx`。
+索引与 Spotlight 的实际覆盖尚未验证。
 
 ## 4. 两条处理路径
 
@@ -66,7 +87,8 @@ MailBridge 跨账户、跨版本行为尚未实测。
 不能枚举账户时，不依据 To/Cc 推断所属账户。
 用户可逐封确认展示的内容和目标 Harness。
 不能建立可靠来源或取得正文时，停留在待确认。
-不自动启动历史全量扫描。
+首次引导不把历史邮件交给模型。
+历史搜索只在用户查询时读取，不预建索引。
 
 扩展不写“待处理”旗标。
 待处理状态只显示在 Mailpipe。

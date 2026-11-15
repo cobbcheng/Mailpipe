@@ -18,12 +18,14 @@
 | 交互 | 菜单栏入口、独立工作台、系统通知 |
 | 整理 | MailKit 采集；Apple Events 定位、执行与核验 |
 | 数据去向 | 由用户 Harness 配置决定；不宣称完全本地推理 |
-| P1 | Daily Digest、AI 起草、更多 Adapter |
+| P1 | 历史搜索、Agent 增删改查、Daily Digest、AI 起草 |
 | P2 | 白名单自动发送；未实现，不属于当前开发授权 |
 
 App 不直连模型 API，不保管模型凭据。
 用户继续在 Apple Mail 收发邮件。
-P1 仅打开草稿，由用户在 Mail 中发送。
+P1 历史搜索是单独授权的只读能力，方案尚未实机验证。
+P1 的增删改只产生意图，由 Mailpipe 经 Apple Events 执行。
+P1 只打开草稿，不调用发送。
 
 ## 文档入口
 
