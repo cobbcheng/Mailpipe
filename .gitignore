@@ -1,0 +1,31 @@
+# macOS / editor
+.DS_Store
+*.xcuserstate
+xcuserdata/
+
+# Build artifacts (future app)
+.build/
+DerivedData/
+build/
+dist/
+*.xcresult/
+
+# Private runtime data and local configuration
+.runtime/
+.private/
+.env
+.env.*
+!.env.example
+*.local.json
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.eml
+*.mbox
+
+# Signing and credentials
+*.p12
+*.mobileprovision
+*.provisionprofile
+*.key
