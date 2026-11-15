@@ -2,10 +2,14 @@
 
 当前已有工程与签名验证记录，尚无完整功能验收。
 
+- [正文重入与退出重启实机复测](2026-11-15-m0-live-body-lifecycle.md)
+- [M0 正文、移动与生命周期验证进展](2026-11-15-m0-body-move-lifecycle.md)
 - [M0 工程骨架验证](2026-11-15-m0-scaffold.md)
 - [M0 签名与账户定位进展](2026-11-15-m0-signed-identity.md)
 
 单封合成邮件的 Mail 扩展交接与账户定位已实测通过。
+正文两阶段回调及宿主退出、Mail 重启后单样本采集已通过。
+移动实测尚未执行，受 Mail UI 无响应阻塞。
 同邮箱重复 ID 拒绝和 Google / iCloud 范围隔离已实测通过。
 原始缺失 ID 的 mbox 导入已实测，Mail 源代码仍无该头。
 SMTP / MailKit 缺失头入站、完整 Mail 门槛仍未通过。

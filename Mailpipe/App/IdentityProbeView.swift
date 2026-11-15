@@ -7,6 +7,7 @@ struct IdentityProbeView: View {
     @State private var mailbox = "INBOX"
     @State private var messageID = ""
     @State private var subject = ""
+    @State private var bodyMarker = ""
     @State private var status = "尚未授权测试会话"
     @State private var querying = false
 
@@ -20,19 +21,33 @@ struct IdentityProbeView: View {
     }
     var body: some View {
         Form {
-            Text("M0 合成邮件验证 · 诊断版 2").font(.title2)
-            Text("开始后 15 分钟内，扩展仅记录下列精确主题的 Message-ID。未知账户材料只留本机；不读取正文、不调用模型、不修改邮件。")
+            Text("M0 合成邮件验证 · 诊断版 3").font(.title2)
+            Text("开始后 15 分钟内，扩展仅记录下列精确主题的 Message-ID。正文实验另行授权；只检查合成正文标记与字节数。材料只留本机，不调用模型、不修改邮件。")
             HStack {
                 Button("授权 15 分钟合成采集") {
-                    do { subject = try store().begin().subject; status = "等待 Mail 新邮件回调" }
+                    do { subject = try store().begin().subject; bodyMarker = ""; status = "等待 Mail 新邮件回调" }
                     catch { status = "无法打开共享容器；请核对签名与 App Group" }
                 }
                 Button("停止采集") {
-                    do { try store().stop(); subject = ""; messageID = ""; status = "已撤销采集授权" }
+                    do { try store().stop(); subject = ""; bodyMarker = ""; messageID = ""; status = "已撤销采集授权" }
                     catch { status = "撤销失败；请在 Mail 中禁用扩展" }
                 }
             }
+            Button("授权 15 分钟合成正文实验") {
+                do {
+                    let scope = try store().begin(requestsBody: true)
+                    subject = scope.subject; bodyMarker = scope.bodyMarker
+                    status = "请用精确主题与正文标记投递合成测试邮件；每会话最多请求一次正文"
+                } catch { status = "无法创建正文实验会话" }
+            }
             Text(subject).textSelection(.enabled)
+            Text(bodyMarker).textSelection(.enabled)
+            Button("读取正文实验回执") {
+                do {
+                    guard let receipt = try store().bodyReceipt() else { status = "正文会话已失效或回执不匹配"; return }
+                    status = "原始字节：\(receipt.rawByteCount)，正文标记：\(receipt.markerFound ? "命中" : "未命中")；不代表摘要或分类验收"
+                } catch { status = "尚无可读取的正文回执" }
+            }
             Button("读取扩展回执") {
                 do {
                     messageID = ""
