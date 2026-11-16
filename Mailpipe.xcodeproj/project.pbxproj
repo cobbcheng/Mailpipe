@@ -170,6 +170,16 @@
       "isa" = "PBXBuildFile";
       "fileRef" = "6F98382B7D4C41D42DFD157E";
     };
+    "826BF9E31B4074890C867EF5" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/App/OnboardingView.swift";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "sourcecode.swift";
+    };
+    "32B4C72C7DF73735B7C20DF1" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "826BF9E31B4074890C867EF5";
+    };
     "3B649129F066DA726BB7CED4" = {
       "isa" = "PBXFileReference";
       "path" = "Mailpipe/App/PendingWorkbench.swift";
@@ -182,14 +192,14 @@
     };
     "AEA12B8A9F795C2B7DA6CA67" = {
       "isa" = "PBXGroup";
-      "children" = ("8B706747C40EA5AD71834CDB", "BE6C3526711AF609BA8B87E3", "ECAA2C2BEF3B9127FEAB90B8", "6F98382B7D4C41D42DFD157E", "3B649129F066DA726BB7CED4");
+      "children" = ("8B706747C40EA5AD71834CDB", "BE6C3526711AF609BA8B87E3", "ECAA2C2BEF3B9127FEAB90B8", "6F98382B7D4C41D42DFD157E", "826BF9E31B4074890C867EF5", "3B649129F066DA726BB7CED4");
       "name" = "Mailpipe";
       "sourceTree" = "<group>";
     };
     "FB8CDB3834FB005F1094940F" = {
       "isa" = "PBXSourcesBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("755064C8A8E2123035E449A3", "6FAA2DDE8AC4ADB741CB733A", "A276EA678EC9094CEEE21E10");
+      "files" = ("755064C8A8E2123035E449A3", "6FAA2DDE8AC4ADB741CB733A", "32B4C72C7DF73735B7C20DF1", "A276EA678EC9094CEEE21E10");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "2927EA4D7998778FB78BF683" = {

@@ -11,12 +11,14 @@ final class PendingModel: ObservableObject {
     @Published var settings = PipelineSettings()
     @Published var issue: String?
     @Published var selectedID: String?
-    @Published var accountName = ""
-    @Published var mailboxName = "INBOX"
-    @Published var executable = ""
-    @Published var level: ServiceLevel = .default
-    @Published var exactSubject = ""
     @Published var installations: [HarnessInstallation] = []
+    @Published var onboarding = OnboardingDraft()
+    @Published var onboardingResult: StoredReply?
+    @Published var onboardingBusy = false
+    @Published var onboardingIssue: String?
+    var offeredOnboarding = false
+    private var onboardingSession: OnboardingSession?
+    private var onboardingTask: Task<Void, Never>?
     private var pipeline: ReplyPipeline?
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
@@ -47,14 +49,13 @@ final class PendingModel: ObservableObject {
                       mailSourceDigest(Data(match.source.utf8)) == expected else { return nil }
                 return VerifiedMail(accountID: match.accountID, localID: match.localID)
             })
+            onboardingSession = try OnboardingSession(store: store)
+            onboarding = try store.onboarding()
+            onboardingResult = try onboardingSession?.testResult()
             settings = try store.settings()
             // Reconcile a crash between authoritative policy and extension snapshot updates.
             try pipeline?.inbox.setPermission(settings.paused ? nil : settings.permission)
-            accountName = settings.scope?.accountName ?? ""; mailboxName = settings.scope?.mailboxName ?? "INBOX"
             installations = HarnessDiscovery.find().filter { $0.kind == .deepseek }
-            executable = settings.executable ?? installations.first?.executable.path ?? ""
-            level = settings.level
-            exactSubject = settings.permission?.exactSubject ?? ""
             refresh(); start()
             display = Task { [weak self] in
                 while !Task.isCancelled {
@@ -64,6 +65,71 @@ final class PendingModel: ObservableObject {
             }
         } catch { issue = "无法打开持久化队列：\(Self.code(error))" }
     }
+    func saveOnboarding() {
+        do {
+            try onboardingSession?.save(onboarding)
+            if let session = onboardingSession {
+                onboarding = try session.store.onboarding()
+                onboardingResult = try session.testResult()
+            }
+        } catch { onboardingIssue = Self.code(error) }
+    }
+    func editOnboarding() {
+        if onboarding.completed {
+            onboarding.id = UUID(); onboarding.completed = false; onboarding.step = 1
+            saveOnboarding()
+        }
+    }
+    func testOnboarding() {
+        guard !onboardingBusy, let session = onboardingSession,
+              installations.contains(where: { $0.executable.path == onboarding.executable }) else { return }
+        onboardingBusy = true; onboardingIssue = nil
+        saveOnboarding()
+        onboardingTask = Task {
+            defer {
+                onboardingBusy = false
+                onboarding = (try? session.store.onboarding()) ?? onboarding
+                onboardingResult = try? session.testResult()
+            }
+            do {
+                _ = try session.beginTest()
+                onboarding = try session.store.onboarding()
+                try await session.testPipeline.pump()
+            } catch { onboardingIssue = "测试未完成：\(Self.code(error))" }
+        }
+    }
+    func cancelOnboardingTest() {
+        onboardingTask?.cancel()
+        if let id = onboarding.testID { try? onboardingSession?.testPipeline.cancel(id) }
+    }
+    func resetOnboardingTest() {
+        guard let session = onboardingSession else { return }
+        do { try session.resetTest(); onboarding = try session.store.onboarding(); onboardingResult = nil }
+        catch { onboardingIssue = Self.code(error) }
+    }
+    func finishOnboarding() {
+        guard !onboardingBusy, hasSharedInbox, let session = onboardingSession, let pipeline else {
+            onboardingIssue = "共享容器不可用；可保存草案，不能授权采集。"; return
+        }
+        guard !onboarding.completed else { return }
+        onboardingIssue = nil; onboardingBusy = true
+        let snapshot = onboarding
+        Task {
+            defer { onboardingBusy = false }
+            do {
+                let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
+                guard report.supportsSyntheticProbe, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
+                let id = try AppleMailReplyIdentity.accountID(named: snapshot.accountName, mailbox: snapshot.mailboxName)
+                let scope = try AccountScope(accountID: id, accountName: snapshot.accountName, mailboxName: snapshot.mailboxName)
+                try session.activate(scope: scope)
+                let active = try session.store.settings()
+                try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
+                onboarding = try session.store.onboarding(); refresh()
+                onboardingIssue = active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
+            } catch { onboardingIssue = "授权未完成，原设置保留或等待同步：\(Self.code(error))" }
+        }
+    }
+
     func refresh() {
         guard let pipeline else { return }
         do {
@@ -93,28 +159,9 @@ final class PendingModel: ObservableObject {
         do { try change { $0.paused.toggle() } }
         catch { issue = Self.code(error) }
     }
-    func grantCapture() {
-        guard hasSharedInbox else { issue = "共享容器不可用；请使用签名 App 启用 Mail 扩展。"; return }
-        do {
-            guard installations.contains(where: { $0.executable.path == executable }) else { throw MailpipeError.notInstalled }
-            let id = try AppleMailReplyIdentity.accountID(named: accountName, mailbox: mailboxName)
-            let scope = try AccountScope(accountID: id, accountName: accountName, mailboxName: mailboxName)
-            let permission = CapturePermission(exactSubject: exactSubject.isEmpty ? nil : exactSubject)
-            try change { $0.scope = scope; $0.permission = permission; $0.executable = executable; $0.level = level }
-            issue = "已保存账户授权；只接收未来的新回调。"
-        } catch { issue = "授权未完成：\(Self.code(error))" }
-    }
     func revoke() {
         do { try change { $0.permission = nil; $0.scope = nil } }
         catch { issue = Self.code(error) }
-    }
-    func synthetic() {
-        do {
-            guard let pipeline, !settings.paused,
-                  installations.contains(where: { $0.executable.path == executable }) else { throw MailpipeError.notInstalled }
-            if settings.executable != executable { try change { $0.executable = executable } }
-            selectedID = try pipeline.enqueueSynthetic(); refresh()
-        } catch { issue = "合成验证未开始：\(Self.code(error))" }
     }
     func recheck(_ id: String) {
         do { try pipeline?.recheckIdentity(id); refresh() }
@@ -155,6 +202,7 @@ struct PendingMenu: View {
             HStack {
                 Button("打开工作台") { openWindow(id: "workbench"); NSApp.activate(ignoringOtherApps: true) }
                 Button(model.settings.paused ? "恢复" : "暂停", action: model.togglePause)
+                Button("新手引导") { openWindow(id: "onboarding"); NSApp.activate(ignoringOtherApps: true) }
                 Button("退出") { NSApp.terminate(nil) }
             }
         }.padding(16).frame(width: 370)
@@ -176,10 +224,13 @@ struct PendingWorkbench: View {
                 Spacer()
                 Text(model.settings.paused ? "已暂停" : "运行中")
                 Button(model.settings.paused ? "恢复处理" : "暂停处理", action: model.togglePause)
+                Button("新手引导") { model.editOnboarding(); openWindow(id: "onboarding") }
                 Button("账户与设置") { showSettings.toggle() }
             }
             if let issue = model.issue { Text(issue).font(.callout).foregroundStyle(.secondary) }
-            if model.settings.permission == nil { Text("尚未授权新邮件采集。可在账户与设置中配置，或运行合成验证。").font(.callout) }
+            if !model.onboarding.completed {
+                Button("继续设置 · 第 \(model.onboarding.step) 步，共 5 步") { openWindow(id: "onboarding") }
+            }
             HStack {
                 Picker("视图", selection: $onlyPending) {
                     Text("待处理 \(model.pending.count)").tag(true)
@@ -235,32 +286,18 @@ struct PendingWorkbench: View {
                     } else { Text("选择一封邮件查看分拣、草稿和数据去向").foregroundStyle(.secondary).padding(32) }
                 }.frame(minWidth: 420)
             }
-        }.padding(20).sheet(isPresented: $showSettings) {
+        }.padding(20).onAppear {
+            if !model.onboarding.completed && !model.offeredOnboarding {
+                model.offeredOnboarding = true; openWindow(id: "onboarding")
+            }
+        }.sheet(isPresented: $showSettings) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("账户与处理范围").font(.title2)
                 Text("新邮件先在本机暂存；只有在所选账户与邮箱中唯一核验后，才交给 DeepSeek 官方模型。正文最长 16 KiB，仅支持单段纯文本；其他格式会显示待核对。")
                     .font(.callout).foregroundStyle(.secondary)
-                TextField("Apple Mail 账户名称", text: $model.accountName)
-                TextField("邮箱名称", text: $model.mailboxName)
-                TextField("仅采集此主题（可选，用于缩小范围）", text: $model.exactSubject)
-                Picker("DeepSeek Harness", selection: $model.executable) {
-                    Text("请选择").tag("")
-                    ForEach(model.installations) { Text($0.executable.path).tag($0.executable.path) }
-                }
-                Picker("服务级别", selection: $model.level) {
-                    Text("L0 · 不准备回复").tag(ServiceLevel.l0)
-                    Text("L1 · 提示需要回复").tag(ServiceLevel.l1)
-                    Text("L2 · 备好草稿（默认）").tag(ServiceLevel.l2)
-                }
-                Text("当前只提供回复链路。L0 的 Mail 整理动作尚未接入。内容会发给模型厂商，消耗自己的 Harness 额度；不经过 Mailpipe 服务器。")
-                    .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Button("授权范围并接收未来新邮件", action: model.grantCapture)
-                    Button("撤销采集和账户授权", action: model.revoke)
-                }
-                Divider()
-                Text("合成验证：最多两次模型调用，无邮箱访问或 Mail 动作。")
-                Button("运行合成端到端验证", action: model.synthetic).disabled(model.settings.paused)
+                Text("处理范围请通过五步向导修改。保存草案不会改变当前授权。")
+                Button("打开新手引导") { showSettings = false; model.editOnboarding(); openWindow(id: "onboarding") }
+                Button("撤销采集和账户授权", action: model.revoke)
                 HStack {
                     Button("工具诊断") { openWindow(id: "diagnostics") }
                     Button("M0 身份验证") { openWindow(id: "identity-probe") }

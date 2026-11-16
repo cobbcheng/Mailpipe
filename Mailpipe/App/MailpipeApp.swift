@@ -46,6 +46,8 @@ struct MailpipeApp: App {
             PendingWorkbench(model: pending).frame(minWidth: 820, minHeight: 580)
         }
         .defaultSize(width: 820, height: 620)
+        Window("新手引导", id: "onboarding") { OnboardingView(model: pending) }
+            .defaultSize(width: 720, height: 640)
         WindowGroup("工具诊断", id: "diagnostics") { WorkbenchView(model: model) }
         WindowGroup("M0 身份验证", id: "identity-probe") { IdentityProbeView() }
         MenuBarExtra("Mailpipe", systemImage: "envelope.badge.shield.half.filled") {

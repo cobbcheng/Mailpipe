@@ -150,6 +150,22 @@ public final class PipelineStore {
     }
     public func settings() throws -> PipelineSettings { try values(PipelineSettings.self, table: "metadata", id: "settings").first ?? PipelineSettings() }
     public func saveSettings(_ value: PipelineSettings) throws { try put(value, id: "settings", table: "metadata") }
+    public func onboarding() throws -> OnboardingDraft {
+        try values(OnboardingDraft.self, table: "metadata", id: "onboarding").first ?? OnboardingDraft()
+    }
+    public func saveOnboarding(_ draft: OnboardingDraft) throws { try put(draft, id: "onboarding", table: "metadata") }
+    public func activateOnboarding(_ draft: OnboardingDraft, scope: AccountScope) throws {
+        try execute("BEGIN IMMEDIATE")
+        do {
+            var settings = try settings()
+            var completed = draft; completed.completed = true
+            settings.scope = scope; settings.executable = draft.executable; settings.level = draft.level
+            settings.permission = CapturePermission(exactSubject: draft.exactSubject.isEmpty ? nil : draft.exactSubject)
+            settings.revision = UUID() // Preserve existing pause; never resume implicitly.
+            try saveSettings(settings); try saveOnboarding(completed)
+            try execute("COMMIT")
+        } catch { try? execute("ROLLBACK"); throw error }
+    }
     public func records() throws -> [StoredReply] { try values(StoredReply.self, table: "records").sorted { $0.capturedAt < $1.capturedAt } }
     public func record(_ id: String) throws -> StoredReply? { try values(StoredReply.self, table: "records", id: id).first }
     public func save(_ item: StoredReply) throws { try put(item, id: item.id, table: "records") }

@@ -14,6 +14,20 @@ struct MailpipeM0 {
                 print("PASS: \(results.count) adapter decoders; synthetic data; no model or Mail calls")
             case "discover":
                 for item in HarnessDiscovery.find() { print("\(item.kind.rawValue)\t\(item.executable.path)") }
+            case "onboarding-probe":
+                guard args.count == 3, args[1].hasPrefix("/"), args[2].hasPrefix("/"),
+                      !FileManager.default.fileExists(atPath: args[2]) else { throw MailpipeError.invalidInput }
+                let store = try PipelineStore(directory: URL(fileURLWithPath: args[2]))
+                let session = try OnboardingSession(store: store)
+                var draft = OnboardingDraft(); draft.step = 2; draft.executable = args[1]
+                try session.save(draft)
+                _ = try session.beginTest(); try await session.testPipeline.pump()
+                guard let result = try session.testResult(), result.state == .draftReady,
+                      try store.settings().permission == nil else { throw MailpipeError.invalidInput }
+                print("PASS: onboarding synthetic test; calls=\(result.runs.count); draft persisted; active policy unchanged; no Mail access")
+                for run in result.runs {
+                    print("\(run.destination.taskKind.rawValue): inputTokens=\(run.inputTokens.map(String.init) ?? "unknown") outputTokens=\(run.outputTokens.map(String.init) ?? "unknown") inputCharacters=\(run.inputCharacters.map(String.init) ?? "unknown") outputCharacters=\(run.outputCharacters.map(String.init) ?? "unknown") actualCost=unknown")
+                }
             case "pipeline-seed":
                 guard args.count == 3, args[1].hasPrefix("/"), args[2].hasPrefix("/"),
                       !FileManager.default.fileExists(atPath: args[2]) else { throw MailpipeError.invalidInput }

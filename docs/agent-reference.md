@@ -33,6 +33,7 @@
 
 | 任务 | 入口 |
 |---|---|
+| 五步向导、草案和恢复 | `Mailpipe/App/OnboardingView.swift`、`Packages/MailpipeRuntime/Sources/Onboarding.swift` |
 | 待处理 UI 与账户设置 | `Mailpipe/App/PendingWorkbench.swift` |
 | 离线诊断 | `Mailpipe/App/MailpipeApp.swift` |
 | 持久化队列与调度 | `Packages/MailpipeRuntime/Sources/` |
