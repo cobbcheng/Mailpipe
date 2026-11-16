@@ -98,35 +98,23 @@ public enum AppleMailReplyIdentity {
     """
     public static let catalogScript = """
     \(mailboxPathScript)
-    on collectBoxes(parentObject, accountID, accountName, parentPath, depth)
-        if depth > 32 then error "Mailbox hierarchy too deep" number -2700
-        set rows to {}
-        tell application id "com.apple.mail"
-            set children to every mailbox of parentObject
-            repeat with box in children
-                set boxName to name of box as text
-                set boxPath to my pathForBox(box)
-                set end of rows to {accountID, accountName, boxPath}
-                set rows to rows & my collectBoxes(box, accountID, accountName, boxPath, depth + 1)
-                if (count of rows) > 2000 then error "Too many mailboxes" number -2700
-            end repeat
-        end tell
-        return rows
-    end collectBoxes
     on listMailboxes()
         set rows to {}
         with timeout of 15 seconds
             tell application id "com.apple.mail"
-                repeat with acct in every account
-                    set rows to rows & my collectBoxes(acct, id of acct as text, name of acct as text, {}, 0)
-                    if (count of rows) > 2000 then error "Too many mailboxes" number -2700
+                set inboxes to every mailbox of inbox
+                repeat with box in inboxes
+                    set acct to account of box
+                    if acct is not missing value then
+                        set end of rows to {id of acct as text, name of acct as text, my pathForBox(box)}
+                    end if
                 end repeat
             end tell
         end timeout
         return rows
     end listMailboxes
     """
-    public static func mailboxes() throws -> [MailboxChoice] {
+    public static func inboxes() throws -> [MailboxChoice] {
         let result = try call(source: catalogScript, handler: "listMailboxes", arguments: [])
         var choices: [MailboxChoice] = []
         guard result.numberOfItems <= 2000 else { throw IdentityQueryError.invalidResult }

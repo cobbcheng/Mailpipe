@@ -105,3 +105,6 @@ Apple 配置来源见 [来源](sources.md)。
 本地构建可用 `MAILPIPE_DERIVED_DATA_PATH` 指定独立产物目录。
 不设置时仍使用 `.build/xcode`，不改变应用数据位置。
 邮箱多选测试包为 build 5，见 [验收记录](validation/2026-11-16-mailbox-multiselect.md)。
+
+build 6 修正为账户多选、自动关联各账户收件箱。
+替代 build 5 的文件夹选择交互，见 [验证记录](validation/2026-11-16-account-inboxes.md)。

@@ -91,32 +91,30 @@ struct OnboardingView: View {
             Toggle("我已手动启用扩展（运行状态仍待验证）", isOn: $model.onboarding.extensionAcknowledged)
             Text("没有新邮件不等于扩展失效。找不到扩展时，核对 App 安装位置与签名；必要时保存 Mail 草稿后手动重启 Mail。")
         case 4:
-            Text("选择要处理的邮箱，可跨账户多选。未勾选的邮箱不会交给模型。")
-            Text("只读发现账户与邮箱名称，不读取邮件内容、不授权外发。系统可能请求 Mail 自动化权限。")
+            Text("选择邮箱账户，可多选。选中后自动处理对应收件箱的新邮件。")
+            Text("只读发现账户与对应收件箱，不读取邮件内容、不授权外发。系统可能请求 Mail 自动化权限。")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
-                Text("已选择 \(model.onboarding.selections.count) 个邮箱")
+                Text("已选择 \(model.onboarding.selections.count) 个账户")
                 Spacer()
-                Button("重新读取邮箱", action: model.loadMailboxes).disabled(model.mailboxLoading)
+                Button("刷新账户", action: model.loadMailboxes).disabled(model.mailboxLoading)
             }
-            if model.mailboxLoading { ProgressView("正在读取 Apple Mail 邮箱…") }
+            if model.mailboxLoading { ProgressView("正在读取 Apple Mail 账户…") }
             if let issue = model.mailboxIssue { Text(issue).foregroundStyle(.secondary) }
-            ForEach(Array(Set(model.mailboxChoices.map(\.accountID))).sorted(), id: \.self) { accountID in
-                let boxes = model.mailboxChoices.filter { $0.accountID == accountID }
-                GroupBox(boxes.first?.accountName ?? "账户") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(boxes) { box in
-                            Toggle(box.displayMailbox, isOn: Binding(
-                                get: { model.onboarding.selections.contains { $0.id == box.id } },
-                                set: { model.selectMailbox(box, selected: $0) }
-                            )).toggleStyle(.checkbox)
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
-                }
+            ForEach(model.mailboxChoices) { account in
+                Toggle(isOn: Binding(
+                    get: { model.onboarding.selections.contains { $0.accountID == account.accountID && $0.id == account.id } },
+                    set: { model.selectMailbox(account, selected: $0) }
+                )) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(account.accountName).font(.headline)
+                        Text("自动处理收件箱").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.toggleStyle(.checkbox).padding(.vertical, 5)
             }
             ForEach(model.onboarding.selections.filter { !model.mailboxChoices.contains($0) }) { box in
                 HStack {
-                    Text("待重新核验：\(box.accountName) / \(box.displayMailbox)")
+                    Text("旧选择不在账户收件箱范围内，请移除：\(box.accountName) / \(box.displayMailbox)")
                     Button("移除") { model.selectMailbox(box, selected: false) }
                 }
             }
@@ -126,14 +124,14 @@ struct OnboardingView: View {
                 Text("L1 · 只提示需要回复").tag(ServiceLevel.l1)
                 Text("L0 · 不准备回复；整理尚未接入").tag(ServiceLevel.l0)
             }
-            Text("最终确认前会再次核验全部所选邮箱。读取列表与勾选只保存草案；最终确认才授权未来新邮件处理，不授权移动、标记或发送。")
+            Text("最终确认前会再次核验所选账户的收件箱。读取列表与勾选只保存草案；最终确认才授权未来新邮件处理，不授权移动、标记或发送。")
             Text("Mail 整理单独授权，目前不可用。逐封建议替代路径尚未实现。")
         default:
-            Text("已选择 \(model.onboarding.selections.count) 个邮箱 · \(model.onboarding.level.rawValue)")
+            Text("已选择 \(model.onboarding.selections.count) 个账户 · \(model.onboarding.level.rawValue)")
             ForEach(model.onboarding.selections) { box in
-                Text("\(box.accountName) / \(box.displayMailbox)")
+                Text("\(box.accountName) · 收件箱")
             }
-            Text("主题范围：\(model.onboarding.exactSubject.isEmpty ? "所选邮箱未来新邮件" : model.onboarding.exactSubject)")
+            Text("主题范围：\(model.onboarding.exactSubject.isEmpty ? "所选账户收件箱的未来新邮件" : model.onboarding.exactSubject)")
             Text("发送字段：主题和有界单段纯文本正文（最多 16 KiB）；复杂 MIME 与附件不处理。交给所选 DeepSeek Harness，再到 DeepSeek 官方模型。")
             Text("备稿测试：\(model.onboardingResult?.state == .draftReady ? "通过" : "未通过")；扩展收信链路待新邮件验证。")
             Text("不移动、不标记、不发送。确认只作用于未来新邮件，不补处理未授权积压。已有暂停保持有效。")

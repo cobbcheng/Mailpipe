@@ -70,17 +70,15 @@ final class PendingModel: ObservableObject {
         } catch { issue = "无法打开持久化队列：\(Self.code(error))" }
     }
     private func discoverMailboxChoices() throws -> [AccountScope] {
-        let choices = try AppleMailReplyIdentity.mailboxes().map {
+        let choices = try AppleMailReplyIdentity.inboxes().map {
             try AccountScope(accountID: $0.accountID, accountName: $0.accountName,
                              mailboxName: $0.path.last!, mailboxPath: $0.path)
         }
-        // Mail can enumerate descendants both at account level and under containers.
-        let unique = Dictionary(choices.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return unique.values.sorted {
-            ($0.accountName, ($0.mailboxPath ?? [$0.mailboxName]).joined(separator: " / ")) <
-            ($1.accountName, ($1.mailboxPath ?? [$1.mailboxName]).joined(separator: " / "))
-        }
+        // One selectable account maps to exactly one system-designated inbox.
+        guard Set(choices.map(\.accountID)).count == choices.count else { throw IdentityQueryError.invalidResult }
+        return choices.sorted { ($0.accountName, $0.accountID) < ($1.accountName, $1.accountID) }
     }
+
     func loadMailboxes() {
         guard !mailboxLoading else { return }
         attemptedMailboxDiscovery = true; mailboxLoading = true; mailboxIssue = nil
@@ -89,19 +87,19 @@ final class PendingModel: ObservableObject {
             defer { mailboxLoading = false }
             do {
                 mailboxChoices = try discoverMailboxChoices()
-                if mailboxChoices.isEmpty { mailboxIssue = "Apple Mail 尚未发现账户邮箱。请先在 Mail 添加账户，再刷新。" }
+                if mailboxChoices.isEmpty { mailboxIssue = "Apple Mail 尚未发现可用账户的收件箱。请先在 Mail 添加账户，再刷新。" }
             } catch {
                 mailboxChoices = []
                 if case IdentityQueryError.automation(-1743) = error {
                     mailboxIssue = "Mail 自动化权限被拒绝。请在系统设置允许 Mailpipe 访问邮件后，主动点击重新读取。草案保留，不会外发邮件。"
                 } else if case IdentityQueryError.automation(let code) = error {
-                    mailboxIssue = "无法读取邮箱列表（\(code)），请确认 Mail 可用后重新读取。"
-                } else { mailboxIssue = "无法读取邮箱列表，请确认 Mail 可用后重新读取。" }
+                    mailboxIssue = "无法读取账户列表（\(code)），请确认 Mail 可用后重新读取。"
+                } else { mailboxIssue = "无法读取账户列表，请确认 Mail 可用后重新读取。" }
             }
         }
     }
     func selectMailbox(_ scope: AccountScope, selected: Bool) {
-        var scopes = onboarding.selections.filter { $0.id != scope.id }
+        var scopes = onboarding.selections.filter { $0.accountID != scope.accountID }
         if selected { scopes.append(scope) }
         onboarding.selectedScopes = scopes.sorted { $0.id < $1.id }
         saveOnboarding()

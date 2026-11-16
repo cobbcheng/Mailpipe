@@ -69,7 +69,8 @@ public final class OnboardingSession {
         let draft = try store.onboarding()
         if draft.completed { return }
         guard draft.extensionAcknowledged, !scopes.isEmpty, scopes == draft.selections,
-              Set(scopes.map(\.id)).count == scopes.count, draft.testedExecutable == draft.executable,
+              Set(scopes.map(\.id)).count == scopes.count,
+              Set(scopes.map(\.accountID)).count == scopes.count, draft.testedExecutable == draft.executable,
               draft.evidenceVersion == Self.evidenceVersion, try testResult()?.state == .draftReady else { throw MailpipeError.invalidInput }
         try store.activateOnboarding(draft, scopes: scopes)
     }

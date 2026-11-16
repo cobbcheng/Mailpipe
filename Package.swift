@@ -16,7 +16,7 @@ let package = Package(
         .target(name: "HarnessAdapters", dependencies: ["MailpipeCore"], path: "Packages/HarnessAdapters/Sources", resources: [.copy("Resources")]),
         .target(name: "MailBridge", dependencies: ["MailpipeCore"], path: "Packages/MailBridge/Sources"),
         .target(name: "MailpipeRuntime", dependencies: ["MailpipeCore", "HarnessAdapters"], path: "Packages/MailpipeRuntime/Sources"),
-        .executableTarget(name: "MailpipeM0", dependencies: ["HarnessAdapters", "MailpipeRuntime"], path: "Tools/MailpipeM0"),
+        .executableTarget(name: "MailpipeM0", dependencies: ["HarnessAdapters", "MailpipeRuntime", "MailBridge"], path: "Tools/MailpipeM0"),
         .testTarget(name: "MailpipeCoreTests", dependencies: ["MailpipeCore"]),
         .testTarget(name: "HarnessAdaptersTests", dependencies: ["HarnessAdapters", "MailpipeCore"]),
         .testTarget(name: "MailpipeRuntimeTests", dependencies: ["MailpipeRuntime", "HarnessAdapters", "MailpipeCore"]),

@@ -46,6 +46,16 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(try store.settings().permission, permission)
         let count = await fake.calls; XCTAssertEqual(count, 2)
     }
+    func testOneInboxPerAccountAtConfirmation() async throws {
+        let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
+        let session = try OnboardingSession(store: store, model: { _ in fake })
+        var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.extensionAcknowledged = true
+        let scopes = try ["INBOX", "Archive"].map { try AccountScope(accountID: "same-account", accountName: "Synthetic", mailboxName: $0) }
+        draft.selectedScopes = scopes; try session.save(draft)
+        _ = try session.beginTest(); try await session.testPipeline.pump()
+        XCTAssertThrowsError(try session.activate(scopes: scopes))
+        XCTAssertNil(try store.settings().permission)
+    }
     func testChangingToolInvalidatesEvidence() async throws {
         let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
         let session = try OnboardingSession(store: store, model: { _ in fake })

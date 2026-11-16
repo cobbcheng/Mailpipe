@@ -2,6 +2,7 @@ import Foundation
 import HarnessAdapters
 import MailpipeCore
 import MailpipeRuntime
+import MailBridge
 
 @main
 struct MailpipeM0 {
@@ -9,6 +10,11 @@ struct MailpipeM0 {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
             switch args.first {
+            case "inbox-probe":
+                guard args.count == 1 else { throw MailpipeError.invalidInput }
+                let inboxes = try AppleMailReplyIdentity.inboxes()
+                guard !inboxes.isEmpty, Set(inboxes.map(\.accountID)).count == inboxes.count else { throw MailpipeError.invalidInput }
+                print("PASS: \(inboxes.count) accounts map to unique system inboxes; no messages read or model calls")
             case "offline":
                 let results = try OfflineProbe.run()
                 print("PASS: \(results.count) adapter decoders; synthetic data; no model or Mail calls")
