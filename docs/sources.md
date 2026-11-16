@@ -8,11 +8,14 @@
 
 | ID | 材料 | 使用范围 |
 |---|---|---|
-| P1 | [产品 PRD v0.3](https://app.notion.com/p/PRD-Apple-Mail-AI-v0-3-418632b374f5810e8813f604addec32a) | 目标、范围、Harness 前提与商业假设 |
+| P1 | [产品 PRD v0.3](https://app.notion.com/p/PRD-Apple-Mail-AI-v0-3-418632b374f5810e8813f604addec32a) | 2026-11-15 读过的目标、范围与商业假设 |
 | P2 | [MailKit API 汇总](https://app.notion.com/p/MailKit-API-418632b374f581f7838fce48e9c5926c) | 四类扩展、数据模型与需求映射 |
+| P3 | PRD v0.5 | 2026-11-16 产品负责人确认的版本。本轮未重新打开 Notion。产品方案按此版本对齐 |
 
-两份材料均通过已登录浏览器阅读。
+P1 与 P2 通过已登录浏览器阅读。
 P1 日期为 2026-11-14，文中未标来源的数字是其假设。
+P3 是产品负责人确认的版本号。
+本轮没有重新打开 Notion，也没有新的页面链接。
 P2 自述遍历 193 个页面；本轮未复做该遍历。
 不将该自述写成 Mailpipe 的独立验证结果。
 

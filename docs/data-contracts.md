@@ -1,7 +1,7 @@
 # 数据与执行契约
 
 状态：逻辑模型草案，无数据库实现。
-更新：2026-11-15。
+更新：2026-11-16。增加单封数据去向标签。
 
 ## 1. 问题与存储选择
 
@@ -44,7 +44,8 @@ App Group 权限与原子文件行为需 M0 验证。
 | `Rule` | rule_id、version、scope、predicate、actions、priority | 生效版本不可原地改写 |
 | `Task` | task_id、message_refs、policy_version、state | 取消与暂停独立于模型结果 |
 | `Run` | run_id、adapter_version、attempt、usage、error | 每次调用都记录，包括失败 |
-| `Decision` | message_ref、run_id、category、evidence | 无外部效果，不等于整理完成 |
+| `DataDestination` | message_ref、run_id、harness_id、vendor、model、evidence | 一次模型调用一条；未知不写成留在本机 |
+| `Decision` | message_ref、run_id、category、should_reply、evidence | 无外部效果，不等于草稿已备好 |
 | `ActionIntent` | action_id、target、before、desired、rule_version | 写 Mail 前必须持久化 |
 | `ActionReceipt` | action_id、observed、outcome、verified_at | 仅记录观察结果 |
 | `UndoIntent` | source_action_id、expected_current、restore_fields | 不覆盖不相关字段 |
@@ -105,8 +106,9 @@ stateDiagram-v2
 该许可绑定内容摘要和单一 Harness，不能生成 Mail 动作。
 
 `completed` 必须带 `completion_kind`。
-取值 `advice_only` 或 `mail_verified`。
-界面分别显示“建议已生成”和“已整理”。
+取值 `advice_only`、`draft_ready` 或 `mail_verified`。
+界面分别显示“建议已生成”、“草稿已备好”和“已整理”。
+`draft_ready` 不表示撰写窗口已打开，也不表示已发送。
 全局暂停是派发门，不改写全部 Task 历史状态。
 `applying` 不能因取消而假装动作未发生。
 此时停止后续动作，并核对已发出的操作。
@@ -230,3 +232,25 @@ Harness 只看见入参校验后的出参。
 
 写工具没有直接修改 Envelope Index 或 `.emlx` 的字段。
 读工具以只读方式查询，查询失败不产生意图。
+入站分拣和草稿不调用本节工具。
+
+## 11. 数据去向标签
+
+P0。每封交给 Harness 的邮件都要能回答发给了谁。
+创建 `Run` 时写入一条 `DataDestination`。
+分拣和草稿各记一次，不合并成含糊的“已处理”。
+
+| 字段 | 含义 |
+|---|---|
+| `harness_id` | 本次实际调用的 Harness |
+| `vendor` | 模型厂商。不可检测则为未知 |
+| `model` | 模型名。不可检测则为未知 |
+| `evidence` | `detected`、`declared` 或 `unknown` |
+| `message_ref` + `run_id` | 绑定这一次调用，不跨账户合并 |
+
+`vendor` 不是“本机”这个结论。
+界面按 `message_ref` 汇总这些记录。
+检测失败时显示未知，不回填成端侧推理。
+用户声明不能覆盖相反的检测结果。
+清除本地库会删掉标签，不会删掉厂商侧副本。
+标签不授权放宽账户路由，也不授权发送。

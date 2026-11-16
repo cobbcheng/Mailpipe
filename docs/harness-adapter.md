@@ -3,7 +3,7 @@
 状态：一期支持 DeepSeek Harness 与 Codex CLI。
 两个 Adapter 已通过隔离回归和真实合成探测。
 真实邮件与 Mailpipe 工具挂载仍未开放。
-更新：2026-11-16。
+更新：2026-11-16。入站调用改为无工具的分拣和草稿。
 证据见 [DeepSeek 实测](validation/2026-11-16-deepseek-harness.md)。
 Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 
@@ -92,7 +92,8 @@ Claude 已移出一期，不迁移其账户授权。
 | 能力 | 自动处理的要求 |
 |---|---|
 | 内置 shell、文件工具、任意 MCP | 必须可禁用，并由隔离测试证明 |
-| Mailpipe 工具 | 只附加搜索、读取和产生意图的工具。接入方式未验证，见 Q-04 与 Q-23 |
+| 入站调用 | 不附加任何工具，包括 Mailpipe 工具 |
+| 用户主动的 Agent | 只附加搜索、读取和产生意图的工具。接入方式未验证，见 Q-04 与 Q-23 |
 | 文件访问 | Harness 自己不能读写邮件库或工作目录外的文件 |
 | hooks / skills / 全局指令 | 明确是否加载；不能产生额外执行 |
 | 空工作目录 | 每次独立；仅是环境隔离，不等于沙盒 |
@@ -113,16 +114,19 @@ DeepSeek 使用 `approval-policy never` 且工具全禁用。
 输入包含 `request_id`、`task_kind`、`schema_version`。
 每批绑定 `account_scope`、`route_policy_version`。
 每封邮件以内部 `message_ref` 引用。
-`task_kind` 为 classify、summarize、parse_rule、draft。
+`task_kind` 为 triage、draft、parse_rule。
+`triage` 用类别和摘要回答“要不要回复”。
+`draft` 只在分拣通过后调用，输出只有草稿。
+classify 与 summarize 不再作为独立交付，只作为 triage 的输入字段。
 历史搜索和写意图不走这些批次。
-它们走第 8 节的 Mailpipe 工具。
+它们走第 8 节的 Mailpipe 工具，并且只能由用户主动发起。
 
 模型可见内容仅含完成任务所需字段。
 不传数据库路径、可执行路径或自动化控制参数。
 正文清洗、截断和附件排除发生在调用之前。
 显示截断事实；不把片段当完整线程。
 
-合成分类响应：
+合成分拣响应：
 
 ```json
 {
@@ -132,6 +136,7 @@ DeepSeek 使用 `approval-policy never` 且工具全禁用。
     "message_ref": "msg-demo",
     "category": "billing",
     "needs_action": "no",
+    "should_reply": "no",
     "summary": ["这是一封合成账单通知。"],
     "evidence": [{"field": "subject", "text": "示例账单"}]
   }]
@@ -139,15 +144,19 @@ DeepSeek 使用 `approval-policy never` 且工具全禁用。
 ```
 
 `category` 枚举为 customer、billing、notification、newsletter、other、unknown。
-`needs_action` 枚举为 yes、no、unknown。
+`needs_action` 与 `should_reply` 的枚举都是 yes、no、unknown。
+只有 `should_reply` 为 yes 才进入 draft。
 摘要最多 3 项，每项长度受限。
+draft 响应只包含 `message_ref`、收件人、主题和正文。
 证据必须能在输入对应字段中找到。
+入站的 triage 与 draft 不授予工具权限。
 输出不得包含脚本、任意动作或文件访问请求。
+draft 结果不能被解释成发送、移动或打开撰写窗口。
 
 拒绝重复、缺失或批次外的 `message_ref`。
 未知字段与枚举按严格 schema 拒绝。
 批次不完整时先隔离失败项，不重复执行已核验动作。
-schema 合法不代表分类正确；质量单独评估。
+schema 合法不代表分拣正确；质量单独评估。
 
 ## 5. 路由、批处理与预算
 
@@ -202,8 +211,9 @@ Mail 动作未知时，不以重新推理绕过核对。
 ## 8. Mailpipe 工具边界
 
 状态：用户已确认，代码尚未实现。
-P0 分类可以继续只交换固定 JSON，不调用这些工具。
-历史查找和 Agent 增删改必须走这些工具。
+入站分拣和草稿继续只交换固定 JSON，不调用这些工具。
+来信不能触发工具。
+历史查找和 Agent 增删改必须走这些工具，且只能由用户主动发起。
 
 | 工具 | 执行者 | 结果 |
 |---|---|---|
