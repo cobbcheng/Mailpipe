@@ -254,3 +254,41 @@ P0。每封交给 Harness 的邮件都要能回答发给了谁。
 用户声明不能覆盖相反的检测结果。
 清除本地库会删掉标签，不会删掉厂商侧副本。
 标签不授权放宽账户路由，也不授权发送。
+
+## 12. 已实现的回复契约
+
+2026-11-16：以下类型已有源码和隔离回归。
+入口：`Packages/MailpipeCore/Sources/ReplyContracts.swift`。
+数据库、生产调度和菜单栏待处理尚未实现。
+
+| 类型 | 约束 |
+|---|---|
+| `ReplyTriageRequest` | 单封输入；任务为 `reply_triage` |
+| `ReplyDecision` | 独立 `should_reply`；保留分类、行动判断、摘要和原文证据 |
+| `ReplyDraftRequest` | 仅接受已校验的 yes 决策和 L2；绑定原始内容 |
+| `ReplyDraft` | 只含关联 ID、主题和正文；无收件人或动作 |
+| `ServiceLevel` | L0、L1、L2；默认 L2；不含 L3 |
+| `DataDestination` | 绑定邮件、调用、任务和 Harness；独立保存证据 |
+
+分拣与草稿使用独立 schema，版本均为 1。
+它们不替换 M0 分类探针的旧 schema。
+未知字段、错误关联 ID 和越界输出均被拒绝。
+草稿主题拒绝控制字符，正文最多 16 KiB。
+`should_reply=no/unknown` 均不能创建草稿请求。
+L1 的 yes 只产生 `needsReply` 展示意图。
+L0 不产生回复展示或草稿意图。
+这不代表 L0 的整理执行已经实现。
+
+校验后的分拣绑定原始 `MailInput`。
+内容改变后，必须重新分拣。
+反序列化决策不能直接用于起草。
+恢复后须结合原请求重新校验。
+
+去向未知时，厂商和模型为空。
+`declared/detected` 至少要求非空厂商。
+该类型仅表达证据，不自行检测厂商。
+本轮 DeepSeek 探针从受限运行事件确认去向。
+未取得完整可信事件时，失败记录保留未知。
+缺失 token 和实付金额表示未知，不表示零。
+
+验证结果见 [回复契约验收](validation/2026-11-16-reply-contracts.md)。

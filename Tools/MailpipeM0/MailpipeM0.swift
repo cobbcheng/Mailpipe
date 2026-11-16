@@ -13,6 +13,19 @@ struct MailpipeM0 {
                 print("PASS: \(results.count) adapter decoders; synthetic data; no model or Mail calls")
             case "discover":
                 for item in HarnessDiscovery.find() { print("\(item.kind.rawValue)\t\(item.executable.path)") }
+            case "reply-probe":
+                guard args.count == 3, args[1].hasPrefix("/"), args[2].hasPrefix("/") else { throw MailpipeError.invalidInput }
+                let output = URL(fileURLWithPath: args[2], isDirectory: true)
+                guard !FileManager.default.fileExists(atPath: output.path) else { throw MailpipeError.invalidInput }
+                try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                let adapter = DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: args[1]), dialect: DeepSeekHarnessDialect())
+                let report = try await adapter.runSyntheticReplyProbe { run in
+                    let data = try JSONEncoder().encode(run)
+                    try data.write(to: output.appendingPathComponent(run.destination.runID + ".json"), options: .atomic)
+                }
+                try JSONEncoder().encode(report.decision).write(to: output.appendingPathComponent("decision.json"), options: .atomic)
+                if let draft = report.draft { try JSONEncoder().encode(draft).write(to: output.appendingPathComponent("draft.json"), options: .atomic) }
+                print("PASS: synthetic reply probe; calls=\(report.runs.count); should_reply=\(report.decision.shouldReply.rawValue); draft=\(report.draft != nil); no Mail actions")
             case "inspect":
                 guard args.count == 3, let kind = HarnessKind(rawValue: args[1]), args[2].hasPrefix("/") else {
                     throw MailpipeError.invalidInput
@@ -25,7 +38,7 @@ struct MailpipeM0 {
                 print("Synthetic probe flags: \(report.supportsSyntheticProbe ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
                 print(report.realMailStatus)
             case nil, "--help", "-h":
-                print("mailpipe-m0 offline | discover | inspect <dsh|codex> </absolute/path>\nNo real email or live model probe command is exposed in M0 scaffolding.")
+                print("mailpipe-m0 offline | discover | inspect <dsh|codex> </absolute/path>\nreply-probe </absolute/dsh> </new/private/output-directory> runs up to two live synthetic model calls; no real email or Mail actions.")
             default: throw MailpipeError.invalidInput
             }
         } catch {

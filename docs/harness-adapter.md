@@ -14,6 +14,7 @@ Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 | `HarnessDiscovery.find()` | 只查可执行文件，不读取凭据 |
 | `inspect()` | 执行版本和帮助，检查完整参数名 |
 | `runSyntheticProbe()` | 固定合成请求；stdin 输入；结构化输出 |
+| `runSyntheticReplyProbe()` | DeepSeek 固定合成分拣；L2 + yes 才调用草稿 |
 | `classifyMail()` | 校验账户后返回 `unsafeCapability`；零进程调用 |
 | `OfflineProbe.run()` | 本地包装解析；无子进程或模型 |
 
@@ -109,12 +110,15 @@ DeepSeek 使用 `approval-policy never` 且工具全禁用。
 无法证明内置工具已被禁止时，不向该 Adapter 提交邮件。
 可以继续用合成输入验证，不开放绕过按钮。
 
-## 4. 调用接口（逻辑契约）
+## 4. 调用接口与实现范围
 
 输入包含 `request_id`、`task_kind`、`schema_version`。
-每批绑定 `account_scope`、`route_policy_version`。
+生产调度须绑定 `account_scope`、`route_policy_version`。
+该调度层尚未实现；合成探针不访问邮箱账户。
 每封邮件以内部 `message_ref` 引用。
-`task_kind` 为 triage、draft、parse_rule。
+已实现单封 `reply_triage` 与 `reply_draft`。
+下文简称 triage 与 draft。
+`parse_rule` 和批次调度尚未实现。
 `triage` 用类别和摘要回答“要不要回复”。
 `draft` 只在分拣通过后调用。
 这次调用只读、无工具，输出只能是草稿。
@@ -133,14 +137,12 @@ classify 与 summarize 不再作为独立交付，只作为 triage 的输入字�
 {
   "schema_version": 1,
   "request_id": "req-demo",
-  "results": [{
-    "message_ref": "msg-demo",
+  "message_ref": "msg-demo",
     "category": "billing",
     "needs_action": "no",
     "should_reply": "no",
     "summary": ["这是一封合成账单通知。"],
     "evidence": [{"field": "subject", "text": "示例账单"}]
-  }]
 }
 ```
 
@@ -148,15 +150,19 @@ classify 与 summarize 不再作为独立交付，只作为 triage 的输入字�
 `needs_action` 与 `should_reply` 的枚举都是 yes、no、unknown。
 只有 `should_reply` 为 yes 才进入 draft。
 摘要最多 3 项，每项长度受限。
-draft 响应只包含 `message_ref`、收件人、主题和正文。
+draft 响应包含版本、请求 ID、分拣请求 ID。
+内容只有 `message_ref`、主题和正文。
+收件人由未来的可信 Mail 交接层确定，模型不可指定。
 证据必须能在输入对应字段中找到。
 入站的 triage 与 draft 不授予工具权限。
 输出不得包含脚本、任意动作或文件访问请求。
 draft 结果不能被解释成发送、移动或打开撰写窗口。
 
-拒绝重复、缺失或批次外的 `message_ref`。
+当前拒绝缺失或请求之外的 `message_ref`。
+后续批次还须拒绝重复邮件引用。
 未知字段与枚举按严格 schema 拒绝。
-批次不完整时先隔离失败项，不重复执行已核验动作。
+后续批次不完整时须隔离失败项。
+不重复执行已核验动作。
 schema 合法不代表分拣正确；质量单独评估。
 
 ## 5. 路由、批处理与预算

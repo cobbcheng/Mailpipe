@@ -36,6 +36,7 @@
 | UI 与离线样例 | `Mailpipe/App/MailpipeApp.swift` |
 | 扩展生命周期 | `Mailpipe/MailExtension/MailExtension.swift` |
 | 输入、输出与路由校验 | `Packages/MailpipeCore/Sources/Classification.swift` |
+| 回复分拣、草稿、级别与去向 | `Packages/MailpipeCore/Sources/ReplyContracts.swift` |
 | CLI 探测和调用 | `Packages/HarnessAdapters/Sources/CLIAdapter.swift` |
 | CLI 参数与包装解析 | 同目录 `DeepSeekHarnessAdapter.swift`、`CodexCLIAdapter.swift` |
 | 进程生命周期 | 同目录 `POSIXProcessRunner.swift` |
