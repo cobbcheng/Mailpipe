@@ -4,10 +4,13 @@ import MailpipeCore
 /// Offline UI/CLI smoke check: the same two decoders and core validator, zero subprocesses.
 public enum OfflineProbe {
     public static func run() throws -> [ClassificationResponse] {
-        let object = try JSONSerialization.jsonObject(with: SyntheticFixture.response)
-        let claude = try JSONSerialization.data(withJSONObject: [
-            "type": "result", "subtype": "success", "is_error": false, "structured_output": object
-        ])
+        let deepseekEvents: [[String: Any]] = [
+            ["type": "session", "sessionId": "synthetic-session"],
+            ["type": "mailpipe_safety", "registry": [], "advertised": [], "provider": "deepseek-official", "model": "deepseek-flash"],
+            ["type": "final", "sessionId": "synthetic-session", "reason": ["kind": "completed"], "text": String(decoding: SyntheticFixture.response, as: UTF8.self)]
+        ]
+        var deepseek = Data()
+        for event in deepseekEvents { deepseek.append(try JSONSerialization.data(withJSONObject: event)); deepseek.append(10) }
         let codexEvents: [[String: Any]] = [
             ["type": "thread.started", "thread_id": "synthetic-thread"],
             ["type": "turn.started"],
@@ -16,7 +19,7 @@ public enum OfflineProbe {
         ]
         var codex = Data()
         for event in codexEvents { codex.append(try JSONSerialization.data(withJSONObject: event)); codex.append(10) }
-        return [try ClaudeCodeDialect().decode(claude, request: SyntheticFixture.request).response,
+        return [try DeepSeekHarnessDialect().decode(deepseek, request: SyntheticFixture.request).response,
                 try CodexCLIDialect().decode(codex, request: SyntheticFixture.request).response]
     }
 }

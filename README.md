@@ -4,7 +4,7 @@
 用自然语言整理邮件，在伴随 App 中查看摘要。
 
 **当前阶段：M0 工程骨架与 Adapter。**
-仓库核查日期：2026-11-15。
+仓库核查日期：2026-11-16。
 已有宿主、空动作扩展、两个 Adapter 和隔离测试。
 真实邮件入口关闭；尚无签名安装包或发布流水线。
 
@@ -14,7 +14,7 @@
 |---|---|
 | 用户 | 使用 Apple Mail，且已安装并登录 Harness 的 Mac 用户 |
 | P0 | 新邮件分类、自然语言规则、摘要、日志与条件撤销 |
-| 模型接入 | Claude Code、Codex CLI；真实邮件受限能力待验证 |
+| 模型接入 | DeepSeek Harness、Codex CLI；真实邮件受限能力待验证 |
 | 交互 | 菜单栏入口、独立工作台、系统通知 |
 | 整理 | MailKit 采集；Apple Events 定位、执行与核验 |
 | 数据去向 | 由用户 Harness 配置决定；不宣称完全本地推理 |
@@ -64,24 +64,25 @@ P1 只打开草稿，不调用发送。
 修改工程目标后运行 `python3 scripts/generate-project.py`。
 生成器是工程配置的维护入口，不手改生成文件。
 
-`inspect claude|codex /absolute/path` 只检查版本和帮助。
+`inspect dsh|codex /absolute/path` 只检查版本和帮助。
 App 的“运行样例”和 CLI 的 `offline` 都不调用模型。
 库中的 `runSyntheticProbe()` 会消耗模型额度。
-它仅接受固定合成样本；本轮只通过 fake 执行。
+它仅接受固定合成样本；Codex 已完成真实合成探测。
 App 和 CLI 不暴露真实模型探测入口。
 
 ## 验证状态
 
 正文重入及宿主退出、Mail 重启后的单样本采集已实测通过。
-相关隔离测试 8 项通过；移动闭环与长期稳定性仍未通过。
-详见 [最新验证进展](docs/validation/2026-11-15-m0-live-body-lifecycle.md)。
+单封移动、宿主独立读回与移回已实测通过。
+写入由 Mail UI 执行，生产 Bridge 尚未接入。
+Codex 固定分类及两次 canary 挑战通过。
+一期已移除 Claude；DeepSeek 合成分类与零工具检查通过。
+见 [DeepSeek 验证记录](docs/validation/2026-11-16-deepseek-harness.md)。
+完整身份、条件撤销和受限工具门槛仍未解除。
+详见 [最新验证进展](docs/validation/2026-11-16-m0-move-harness.md)。
 
-已完成两份 Notion 材料的阅读。
-已核对关键 Apple 文档、SDK 头文件和 Mail 脚本字典。
-24 项隔离测试通过；App 与嵌入扩展构建通过。
-界面自动检查受阻，窗口交互尚未验收。
-尚未在 Mail 中启用扩展、运行 Apple Events 或真实模型。
-详细证据见 [M0 工程记录](docs/validation/2026-11-15-m0-scaffold.md)。
+已有签名宿主、扩展启用和 Apple Events 实测证据。
+工程与早期隔离测试见 [M0 工程记录](docs/validation/2026-11-15-m0-scaffold.md)。
 尚未核验订阅条款、跨版本兼容和用户转化。
 
 ## 文档更新规则

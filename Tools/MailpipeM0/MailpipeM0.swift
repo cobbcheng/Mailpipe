@@ -19,13 +19,13 @@ struct MailpipeM0 {
                 }
                 let path = URL(fileURLWithPath: args[2])
                 let report: CapabilityReport
-                if kind == .claude { report = try await ClaudeCodeAdapter(executable: path, dialect: ClaudeCodeDialect()).inspect() }
+                if kind == .deepseek { report = try await DeepSeekHarnessAdapter(executable: path, dialect: DeepSeekHarnessDialect()).inspect() }
                 else { report = try await CodexCLIAdapter(executable: path, dialect: CodexCLIDialect()).inspect() }
                 print("\(kind.displayName): \(report.version)")
                 print("Synthetic probe flags: \(report.supportsSyntheticProbe ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
                 print(report.realMailStatus)
             case nil, "--help", "-h":
-                print("mailpipe-m0 offline | discover | inspect <claude|codex> </absolute/path>\nNo real email or live model probe command is exposed in M0 scaffolding.")
+                print("mailpipe-m0 offline | discover | inspect <dsh|codex> </absolute/path>\nNo real email or live model probe command is exposed in M0 scaffolding.")
             default: throw MailpipeError.invalidInput
             }
         } catch {
