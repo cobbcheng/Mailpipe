@@ -116,7 +116,95 @@ public struct ClassificationResponse: Codable, Equatable, Sendable {
 
 public enum ClassificationSchema {
     public static let json = #"""
-    {"type":"object","additionalProperties":false,"required":["schema_version","request_id","results"],"properties":{"schema_version":{"type":"integer","enum":[1]},"request_id":{"type":"string"},"results":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["message_ref","category","needs_action","summary","evidence"],"properties":{"message_ref":{"type":"string"},"category":{"type":"string","enum":["customer","billing","notification","newsletter","other","unknown"]},"needs_action":{"type":"string","enum":["yes","no","unknown"]},"summary":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},"evidence":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["field","text"],"properties":{"field":{"type":"string","enum":["subject","body"]},"text":{"type":"string"}}}}}}}}
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "request_id",
+        "results"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "enum": [
+            1
+          ]
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "message_ref",
+              "category",
+              "needs_action",
+              "summary",
+              "evidence"
+            ],
+            "properties": {
+              "message_ref": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "billing",
+                  "notification",
+                  "newsletter",
+                  "other",
+                  "unknown"
+                ]
+              },
+              "needs_action": {
+                "type": "string",
+                "enum": [
+                  "yes",
+                  "no",
+                  "unknown"
+                ]
+              },
+              "summary": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "maxItems": 3
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "field",
+                    "text"
+                  ],
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "subject",
+                        "body"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
     """#
 }
 

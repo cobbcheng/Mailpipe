@@ -1,7 +1,9 @@
 # Harness Adapter 契约
 
-状态：两个 Adapter 已实现并通过 fake；真实模型未验收。
-更新：2026-11-15。
+状态：两个 Adapter 通过 fake；Codex 通过三次真实合成探测。
+Claude 被账户验证要求阻断；完整受限能力仍未通过。
+更新：2026-11-16。
+证据见 [最新实测](validation/2026-11-16-m0-move-harness.md)。
 
 ## 当前实现边界
 

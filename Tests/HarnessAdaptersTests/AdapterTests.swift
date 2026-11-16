@@ -18,6 +18,10 @@ final class AdapterTests: XCTestCase {
         XCTAssertTrue(String(decoding: invocation.stdin, as: UTF8.self).contains("shop@example.com"))
         XCTAssertFalse(invocation.arguments.joined().contains("shop@example.com"))
         XCTAssertEqual(invocation.arguments[try XCTUnwrap(invocation.arguments.firstIndex(of: "--tools")) + 1], "")
+        let schemaIndex = try XCTUnwrap(invocation.arguments.firstIndex(of: "--json-schema"))
+        let schema = try JSONSerialization.jsonObject(with: Data(invocation.arguments[schemaIndex + 1].utf8)) as? [String: Any]
+        XCTAssertEqual(schema?["type"] as? String, "object")
+        XCTAssertNotNil((schema?["properties"] as? [String: Any])?["results"])
         XCTAssertTrue(invocation.arguments.contains("--safe-mode"))
         XCTAssertFalse(invocation.arguments.contains(where: { $0.contains("skip-permissions") || $0 == "bypassPermissions" }))
         for call in calls { XCTAssertFalse(FileManager.default.fileExists(atPath: call.workingDirectory.path)) }
