@@ -40,15 +40,19 @@ final class WorkbenchModel: ObservableObject {
 @main
 struct MailpipeApp: App {
     @StateObject private var model = WorkbenchModel()
+    @StateObject private var pending = PendingModel()
     var body: some Scene {
         WindowGroup("Mailpipe", id: "workbench") {
-            WorkbenchView(model: model).frame(minWidth: 680, minHeight: 480)
+            PendingWorkbench(model: pending).frame(minWidth: 820, minHeight: 580)
         }
         .defaultSize(width: 820, height: 620)
+        Window("新手引导", id: "onboarding") { OnboardingView(model: pending) }
+            .defaultSize(width: 720, height: 640)
+        WindowGroup("工具诊断", id: "diagnostics") { WorkbenchView(model: model) }
         WindowGroup("M0 身份验证", id: "identity-probe") { IdentityProbeView() }
         MenuBarExtra("Mailpipe", systemImage: "envelope.badge.shield.half.filled") {
-            MenuContent()
-        }
+            PendingMenu(model: pending)
+        }.menuBarExtraStyle(.window)
     }
 }
 
@@ -75,7 +79,7 @@ private struct WorkbenchView: View {
                 Image(systemName: "envelope.badge.shield.half.filled").font(.largeTitle).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Mailpipe").font(.largeTitle.bold())
-                    Text("Apple Mail 的 AI 整理助手").foregroundStyle(.secondary)
+                    Text("Apple Mail 主动回复助手").foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text("M0 工程预览").font(.caption).padding(8).background(.quaternary, in: Capsule())

@@ -148,3 +148,12 @@ task_id / run_id / action_id：
 通用结论放 `docs/validation/`。
 私人证据放本地数据目录，不进 Git。
 失败项复测后保留原结论与修正时间。
+
+## 持久化回复链路的当前证据
+
+2026-11-16：隔离回归与实机验收分开执行。
+覆盖 SQLite 导入、去重、恢复、暂停和撤权。
+DeepSeek 四次合成调用通过。
+MailKit 单封入站到工作台草稿已实测。
+菜单栏弹窗独立点击尚未验收。
+范围、命令与用量见 [持久化回复记录](validation/2026-11-16-persistent-reply-pipeline.md)。

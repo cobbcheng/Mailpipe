@@ -9,14 +9,20 @@
 
 ## 当前工程状态
 
-扩展入口已编译并嵌入宿主。
-回调只调用 `completionHandler(nil)`。
-它不读取正文、不设置动作、不请求正文重入。
-尚未在 Mail 中启用或验证扩展发现。
+扩展入口已签名并嵌入宿主。
+授权后把新回调写入 App Group 暂存目录。
+正文缺失时有界请求重入，不执行 Mail 动作。
+未授权时不采集，不调用模型。
 
-MailBridge 已有定位、快照和歧义结果类型。
-`UnavailableMailBridge` 始终返回不可用错误。
-尚未实现 Apple Events、采集、App Group 或动作回执。
+`AppleMailReplyIdentity` 提供限定范围的只读核验。
+唯一 Message-ID、主题和完整邮件源须一致。
+宿主导入 SQLite 后执行 DeepSeek 分拣与草稿。
+Google IMAP 单封合成样本已通过完整链路。
+见 [持久化回复验收](validation/2026-11-16-persistent-reply-pipeline.md)。
+
+`UnavailableMailBridge` 仍是写操作路径的占位边界。
+没有整理、草稿交接或发送能力。
+广泛 MIME、跨邮箱兼容和菜单栏独立点击未验证。
 
 ## 1. 核心结论
 

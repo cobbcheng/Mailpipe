@@ -49,7 +49,7 @@ for label, source_dir, product, product_type in (
     sources = obj(label + '-sources', 'PBXSourcesBuildPhase', buildActionMask='2147483647', files=builds,
                   runOnlyForDeploymentPostprocessing='0')
     package_products, framework_files = [], []
-    for library in (('HarnessAdapters', 'MailpipeCore', 'MailBridge') if label == 'Mailpipe' else ('MailpipeCore',)):
+    for library in (('HarnessAdapters', 'MailpipeCore', 'MailBridge', 'MailpipeRuntime') if label == 'Mailpipe' else ('MailpipeCore',)):
         dep = obj(label + '-product-' + library, 'XCSwiftPackageProductDependency', package=package, productName=library)
         package_products.append(dep)
         framework_files.append(obj(label + '-link-' + library, 'PBXBuildFile', productRef=dep))

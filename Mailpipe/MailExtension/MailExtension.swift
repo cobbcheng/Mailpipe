@@ -27,6 +27,27 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
         guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
             logger.error("probe_v2 container_unavailable"); return
         }
+        // Production capture is local-only; the host must resolve an authorized account before dispatch.
+        do {
+            let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
+            if let permission = try inbox.permission(), permission.accepts(message.subject) {
+                let ids = (message.headers ?? [:]).filter { $0.key.lowercased() == "message-id" }.flatMap(\.value)
+                let messageID = ids.count == 1 ? ids[0].trimmingCharacters(in: CharacterSet(charactersIn: "<> ")) : nil
+                if let raw = message.rawData {
+                    let oversized = raw.count > 65_536
+                    try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID,
+                        raw: oversized ? nil : raw, issue: oversized ? "messageTooLarge" : nil))
+                } else if try inbox.claimBody(permission: permission, subject: message.subject, messageID: messageID) {
+                    try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID, raw: nil))
+                    decision = .invokeAgainWithBody
+                } else if messageID == nil {
+                    try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: nil, raw: nil, issue: "missingMessageID"))
+                }
+            }
+        } catch {
+            logger.error("capture_failed")
+            try? CaptureInbox(directory: root.appendingPathComponent("inbox")).recordIssue((error as? PipelineError)?.rawValue ?? "captureFailed")
+        }
         let store = IdentityProbeStore(directory: root.appendingPathComponent("m0-identity"))
         let scope: IdentityProbeScope
         do { scope = try store.scope() }

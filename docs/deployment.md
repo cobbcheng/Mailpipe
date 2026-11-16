@@ -76,3 +76,35 @@ Apple 配置来源见 [来源](sources.md)。
 本地数据是否保留由用户选择。
 说明 Mail 中已完成的整理不会自动撤销。
 说明 Harness 会话不随 App 卸载自动删除。
+
+## 7. 回复队列本机验证更新
+
+2026-11-16：本机测试 App 与扩展更新到 build 3。
+签名和完整链路范围见 [验收记录](validation/2026-11-16-persistent-reply-pipeline.md)。
+没有新增安装命令或发布脚本。
+正式队列位于用户 Application Support 下的 Mailpipe/pipeline。
+升级保留 state.sqlite、暂停状态与账户授权。
+`--pipeline-directory` 只用于独立诊断目录。
+该模式不连接正式 App Group 或 Mail 账户。
+不要让两个宿主同时使用同一队列目录。
+第二个写者会被独占锁拒绝，不自动抢占。
+
+## 8. 新手引导验收更新
+
+2026-11-16：签名 App 与扩展更新到 build 4。
+[验收记录](validation/2026-11-16-onboarding-live.md) 包含最终授权、拒绝与首封草稿。
+
+同路径覆盖构建前，先正常退出 Mail 与宿主。
+本轮曾出现 PlugInKit Code=16：other version in use。
+旧实例仍占用时，即使勾选启用也可能无法采集。
+构建完成后核验签名，再正常启动宿主与 Mail。
+不要通过重放旧邮件来掩盖更新期间的采集缺口。
+系统权限验收使用正常 App 启动方式。
+直接执行宿主二进制的结果不替代 TCC 拒绝验收。
+
+本地构建可用 `MAILPIPE_DERIVED_DATA_PATH` 指定独立产物目录。
+不设置时仍使用 `.build/xcode`，不改变应用数据位置。
+邮箱多选测试包为 build 5，见 [验收记录](validation/2026-11-16-mailbox-multiselect.md)。
+
+build 6 修正为账户多选、自动关联各账户收件箱。
+替代 build 5 的文件夹选择交互，见 [验证记录](validation/2026-11-16-account-inboxes.md)。

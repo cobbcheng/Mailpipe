@@ -38,6 +38,11 @@ public struct DeepSeekHarnessDialect: HarnessDialect {
          "--json", "--permission-mode", "read-only", "--approval-policy", "never", "-"]
     }
     public func decode(_ output: Data, request: ClassificationRequest) throws -> AdapterResult {
+        let envelope = try decodeEnvelope(output)
+        return AdapterResult(response: try ClassificationResponse.validated(envelope.content, for: request),
+                             inputTokens: envelope.inputTokens, outputTokens: envelope.outputTokens)
+    }
+    public func decodeEnvelope(_ output: Data) throws -> DeepSeekEnvelope {
         do {
             var session: String?, finalText: String?, safetySeen = false, completed = false
             var inputTokens = 0, outputTokens = 0, usageSeen = false
@@ -76,10 +81,16 @@ public struct DeepSeekHarnessDialect: HarnessDialect {
                 }
             }
             guard completed, let finalText else { throw MailpipeError.invalidOutput }
-            return AdapterResult(response: try ClassificationResponse.validated(Data(finalText.utf8), for: request),
+            return DeepSeekEnvelope(content: Data(finalText.utf8),
                                  inputTokens: usageSeen ? inputTokens : nil, outputTokens: usageSeen ? outputTokens : nil)
         } catch let error as MailpipeError { throw error }
         catch { throw MailpipeError.invalidOutput }
     }
 }
 public typealias DeepSeekHarnessAdapter = CLIAdapter<DeepSeekHarnessDialect>
+
+public struct DeepSeekEnvelope: Sendable {
+    public let content: Data
+    public let inputTokens: Int?
+    public let outputTokens: Int?
+}
