@@ -142,3 +142,7 @@ DeepSeek 合成测试与正式采集队列隔离。
 修正拒绝提示，恢复权限后可主动重试确认。
 更新期间的扩展实例冲突及失败样本均有记录。
 见 [实机验收](docs/validation/2026-11-16-onboarding-live.md)。
+
+第四步已改为自动发现邮箱、按账户分组多选。
+选择先存草案，最终确认才授权整个集合。
+详见 [多选验证](docs/validation/2026-11-16-mailbox-multiselect.md)。

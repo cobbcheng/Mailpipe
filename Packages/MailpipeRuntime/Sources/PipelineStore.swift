@@ -3,19 +3,28 @@ import SQLite3
 import Darwin
 import MailpipeCore
 
-public struct AccountScope: Codable, Equatable, Sendable {
+public struct AccountScope: Codable, Hashable, Sendable, Identifiable {
     public let accountID: String
     public let accountName: String
     public let mailboxName: String
-    public init(accountID: String, accountName: String, mailboxName: String) throws {
+    public var mailboxPath: [String]?
+    public var displayMailbox: String {
+        let path = mailboxPath ?? [mailboxName]
+        return (path.count > 1 && path.first == accountName ? Array(path.dropFirst()) : path).joined(separator: " / ")
+    }
+    public var id: String { ([accountID] + (mailboxPath ?? [mailboxName])).map { "\($0.utf8.count):\($0)" }.joined() }
+    public init(accountID: String, accountName: String, mailboxName: String, mailboxPath: [String]? = nil) throws {
         guard [accountID, accountName, mailboxName].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 998 }) else { throw MailpipeError.invalidInput }
+        self.mailboxPath = mailboxPath
         self.accountID = accountID; self.accountName = accountName; self.mailboxName = mailboxName
     }
 }
 public struct PipelineSettings: Codable, Sendable {
     public var revision = UUID()
     public var permission: CapturePermission?
-    public var scope: AccountScope?
+    public var scope: AccountScope? // Legacy single-scope payloads remain readable.
+    public var scopes: [AccountScope]?
+    public var authorizedScopes: [AccountScope] { scopes ?? scope.map { [$0] } ?? [] }
     public var executable: String?
     public var level: ServiceLevel = .default
     public var paused = false
@@ -64,6 +73,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var sourceDigest: String?
     public var accountID: String?
     public var localID: String?
+    public var scopeID: String?
     public var revision: UUID?
     public var level: ServiceLevel = .default
     public var decisionData: Data?
@@ -154,12 +164,12 @@ public final class PipelineStore {
         try values(OnboardingDraft.self, table: "metadata", id: "onboarding").first ?? OnboardingDraft()
     }
     public func saveOnboarding(_ draft: OnboardingDraft) throws { try put(draft, id: "onboarding", table: "metadata") }
-    public func activateOnboarding(_ draft: OnboardingDraft, scope: AccountScope) throws {
+    public func activateOnboarding(_ draft: OnboardingDraft, scopes: [AccountScope]) throws {
         try execute("BEGIN IMMEDIATE")
         do {
             var settings = try settings()
             var completed = draft; completed.completed = true
-            settings.scope = scope; settings.executable = draft.executable; settings.level = draft.level
+            settings.scope = nil; settings.scopes = scopes; settings.executable = draft.executable; settings.level = draft.level
             settings.permission = CapturePermission(exactSubject: draft.exactSubject.isEmpty ? nil : draft.exactSubject)
             settings.revision = UUID() // Preserve existing pause; never resume implicitly.
             try saveSettings(settings); try saveOnboarding(completed)

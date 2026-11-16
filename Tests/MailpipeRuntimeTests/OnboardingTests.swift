@@ -28,18 +28,21 @@ final class OnboardingTests: XCTestCase {
         var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.accountName = "Synthetic"; draft.mailboxName = "INBOX"; draft.extensionAcknowledged = true
         try session.save(draft)
         let scope = try AccountScope(accountID: "synthetic", accountName: "Synthetic", mailboxName: "INBOX")
-        XCTAssertThrowsError(try session.activate(scope: scope))
+        let scopes = [scope, try AccountScope(accountID: "second", accountName: "Other", mailboxName: "INBOX")]
+        draft.selectedScopes = scopes; try session.save(draft)
+        XCTAssertThrowsError(try session.activate(scopes: scopes))
         _ = try session.beginTest()
         XCTAssertThrowsError(try session.beginTest())
         try await session.testPipeline.pump()
         XCTAssertEqual(try session.testResult()?.state, .draftReady)
         XCTAssertNil(try store.settings().permission)
         XCTAssertTrue(try store.settings().paused)
-        try session.activate(scope: scope)
+        try session.activate(scopes: scopes)
         let permission = try store.settings().permission
         XCTAssertNotNil(permission); XCTAssertTrue(try store.settings().paused)
+        XCTAssertEqual(try store.settings().authorizedScopes, scopes)
         XCTAssertTrue(try store.onboarding().completed)
-        try session.activate(scope: scope)
+        try session.activate(scopes: scopes)
         XCTAssertEqual(try store.settings().permission, permission)
         let count = await fake.calls; XCTAssertEqual(count, 2)
     }

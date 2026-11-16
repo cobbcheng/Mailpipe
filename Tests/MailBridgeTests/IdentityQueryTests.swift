@@ -13,6 +13,11 @@ final class IdentityQueryTests: XCTestCase {
         XCTAssertEqual(query.accountName, "test\" & do shell script")
     }
     @MainActor func testFixedReadOnlyScriptCompilesWithoutExecuting() {
+        for source in [AppleMailReplyIdentity.catalogScript, AppleMailReplyIdentity.scriptSource] {
+            let script = NSAppleScript(source: source)!
+            var error: NSDictionary?
+            XCTAssertTrue(script.compileAndReturnError(&error), "\(String(describing: error))")
+        }
         let script = NSAppleScript(source: AppleMailIdentityProbe.scriptSource)!
         var error: NSDictionary?
         XCTAssertTrue(script.compileAndReturnError(&error), "\(String(describing: error))")

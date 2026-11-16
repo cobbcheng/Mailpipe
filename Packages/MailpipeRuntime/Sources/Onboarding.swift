@@ -5,7 +5,9 @@ import HarnessAdapters
 public struct OnboardingDraft: Codable, Equatable, Sendable {
     public var id = UUID()
     public var step = 1
-    public var accountName = ""
+    public var selectedScopes: [AccountScope]?
+    public var selections: [AccountScope] { selectedScopes ?? [] }
+    public var accountName = "" // Legacy draft fields; never infer selection from typed names.
     public var mailboxName = ""
     public var exactSubject = ""
     public var executable = ""
@@ -63,12 +65,12 @@ public final class OnboardingSession {
         var draft = try store.onboarding(); draft.testID = nil
         try save(draft)
     }
-    public func activate(scope: AccountScope) throws {
+    public func activate(scopes: [AccountScope]) throws {
         let draft = try store.onboarding()
         if draft.completed { return }
-        guard draft.extensionAcknowledged, scope.accountName == draft.accountName,
-              scope.mailboxName == draft.mailboxName, draft.testedExecutable == draft.executable,
+        guard draft.extensionAcknowledged, !scopes.isEmpty, scopes == draft.selections,
+              Set(scopes.map(\.id)).count == scopes.count, draft.testedExecutable == draft.executable,
               draft.evidenceVersion == Self.evidenceVersion, try testResult()?.state == .draftReady else { throw MailpipeError.invalidInput }
-        try store.activateOnboarding(draft, scope: scope)
+        try store.activateOnboarding(draft, scopes: scopes)
     }
 }

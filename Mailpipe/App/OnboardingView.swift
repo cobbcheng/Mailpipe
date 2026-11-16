@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import MailpipeCore
+import MailpipeRuntime
 
 struct OnboardingView: View {
     @ObservedObject var model: PendingModel
@@ -23,7 +24,7 @@ struct OnboardingView: View {
                 Button("保存草案，稍后继续") { model.saveOnboarding(); openWindow(id: "workbench"); dismiss() }
                 Spacer()
                 if model.onboarding.step < 5 {
-                    Button("继续") { model.onboarding.step += 1 }.buttonStyle(.borderedProminent).disabled(model.onboardingBusy)
+                    Button("继续") { model.onboarding.step += 1 }.buttonStyle(.borderedProminent).disabled(model.onboardingBusy || (model.onboarding.step == 4 && !model.mailboxSelectionValid))
                 } else if model.onboarding.completed {
                     Button("打开工作台") { openWindow(id: "workbench"); dismiss() }
                 } else {
@@ -33,11 +34,14 @@ struct OnboardingView: View {
             }
         }.padding(28).frame(minWidth: 660, minHeight: 560)
             .onAppear { model.offeredOnboarding = true }
+            .task(id: model.onboarding.step) {
+                if model.onboarding.step >= 4 && !model.attemptedMailboxDiscovery { model.loadMailboxes() }
+            }
             .onChange(of: model.onboarding) { _ in model.saveOnboarding() }
     }
     private var canConfirm: Bool {
         !model.onboardingBusy && model.onboarding.extensionAcknowledged &&
-        !model.onboarding.accountName.isEmpty && !model.onboarding.mailboxName.isEmpty &&
+        !model.mailboxLoading && model.mailboxSelectionValid &&
         model.onboardingResult?.state == .draftReady && model.hasSharedInbox
     }
     @ViewBuilder private var page: some View {
@@ -87,18 +91,48 @@ struct OnboardingView: View {
             Toggle("我已手动启用扩展（运行状态仍待验证）", isOn: $model.onboarding.extensionAcknowledged)
             Text("没有新邮件不等于扩展失效。找不到扩展时，核对 App 安装位置与签名；必要时保存 Mail 草稿后手动重启 Mail。")
         case 4:
-            TextField("Apple Mail 账户名称（不预选）", text: $model.onboarding.accountName)
-            TextField("来源邮箱名称（明确选择）", text: $model.onboarding.mailboxName)
+            Text("选择要处理的邮箱，可跨账户多选。未勾选的邮箱不会交给模型。")
+            Text("只读发现账户与邮箱名称，不读取邮件内容、不授权外发。系统可能请求 Mail 自动化权限。")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Text("已选择 \(model.onboarding.selections.count) 个邮箱")
+                Spacer()
+                Button("重新读取邮箱", action: model.loadMailboxes).disabled(model.mailboxLoading)
+            }
+            if model.mailboxLoading { ProgressView("正在读取 Apple Mail 邮箱…") }
+            if let issue = model.mailboxIssue { Text(issue).foregroundStyle(.secondary) }
+            ForEach(Array(Set(model.mailboxChoices.map(\.accountID))).sorted(), id: \.self) { accountID in
+                let boxes = model.mailboxChoices.filter { $0.accountID == accountID }
+                GroupBox(boxes.first?.accountName ?? "账户") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(boxes) { box in
+                            Toggle(box.displayMailbox, isOn: Binding(
+                                get: { model.onboarding.selections.contains { $0.id == box.id } },
+                                set: { model.selectMailbox(box, selected: $0) }
+                            )).toggleStyle(.checkbox)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(6)
+                }
+            }
+            ForEach(model.onboarding.selections.filter { !model.mailboxChoices.contains($0) }) { box in
+                HStack {
+                    Text("待重新核验：\(box.accountName) / \(box.displayMailbox)")
+                    Button("移除") { model.selectMailbox(box, selected: false) }
+                }
+            }
             TextField("精确主题限制（可选）", text: $model.onboarding.exactSubject)
             Picker("服务级别", selection: $model.onboarding.level) {
                 Text("L2 · 备好草稿（默认）").tag(ServiceLevel.l2)
                 Text("L1 · 只提示需要回复").tag(ServiceLevel.l1)
                 Text("L0 · 不准备回复；整理尚未接入").tag(ServiceLevel.l0)
             }
-            Text("最终确认时会请求 Mail 自动化，用于在所选账户和邮箱中只读核验身份；不授权移动、标记或发送。拒绝后保留草案与已有结果。")
+            Text("最终确认前会再次核验全部所选邮箱。读取列表与勾选只保存草案；最终确认才授权未来新邮件处理，不授权移动、标记或发送。")
             Text("Mail 整理单独授权，目前不可用。逐封建议替代路径尚未实现。")
         default:
-            Text("账户：\(model.onboarding.accountName.isEmpty ? "未选择" : model.onboarding.accountName)\n邮箱：\(model.onboarding.mailboxName.isEmpty ? "未选择" : model.onboarding.mailboxName)\n级别：\(model.onboarding.level.rawValue)")
+            Text("已选择 \(model.onboarding.selections.count) 个邮箱 · \(model.onboarding.level.rawValue)")
+            ForEach(model.onboarding.selections) { box in
+                Text("\(box.accountName) / \(box.displayMailbox)")
+            }
             Text("主题范围：\(model.onboarding.exactSubject.isEmpty ? "所选邮箱未来新邮件" : model.onboarding.exactSubject)")
             Text("发送字段：主题和有界单段纯文本正文（最多 16 KiB）；复杂 MIME 与附件不处理。交给所选 DeepSeek Harness，再到 DeepSeek 官方模型。")
             Text("备稿测试：\(model.onboardingResult?.state == .draftReady ? "通过" : "未通过")；扩展收信链路待新邮件验证。")

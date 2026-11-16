@@ -101,3 +101,7 @@ Apple 配置来源见 [来源](sources.md)。
 不要通过重放旧邮件来掩盖更新期间的采集缺口。
 系统权限验收使用正常 App 启动方式。
 直接执行宿主二进制的结果不替代 TCC 拒绝验收。
+
+本地构建可用 `MAILPIPE_DERIVED_DATA_PATH` 指定独立产物目录。
+不设置时仍使用 `.build/xcode`，不改变应用数据位置。
+邮箱多选测试包为 build 5，见 [验收记录](validation/2026-11-16-mailbox-multiselect.md)。

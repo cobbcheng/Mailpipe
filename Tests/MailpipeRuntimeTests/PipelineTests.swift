@@ -46,6 +46,38 @@ final class PipelineTests: XCTestCase {
         InboundCapture(permissionID: try XCTUnwrap(pipeline.store.settings().permission).id,
             subject: "Synthetic", messageID: "test@example.com", raw: Data("Content-Type: text/plain\r\n\r\nPlease reply".utf8))
     }
+    func testMultipleSelectedMailboxesRequireUniqueMatch() async throws {
+        for ambiguous in [false, true] {
+            let root = try temporary(), fake = FakeReplyModel()
+            let store = try PipelineStore(directory: root.appendingPathComponent("multi"))
+            let pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")),
+                resolve: { _, scope in
+                    if ambiguous || scope.mailboxName == "Second" { return VerifiedMail(accountID: scope.accountID, localID: "one") }
+                    return nil
+                }, model: { _ in fake })
+            let scopes = try ["First", "Second"].map { try AccountScope(accountID: $0, accountName: $0, mailboxName: $0) }
+            try pipeline.updateSettings { $0.scopes = scopes; $0.permission = CapturePermission(); $0.executable = "/fake/dsh" }
+            try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
+            let item = try XCTUnwrap(store.records().first)
+            XCTAssertEqual(item.state, ambiguous ? .needsReview : .draftReady)
+            if ambiguous { XCTAssertEqual(item.error, "identityAmbiguous") }
+            else { XCTAssertEqual(item.scopeID, scopes[1].id) }
+            let count = await fake.calls; XCTAssertEqual(count, ambiguous ? 0 : 2)
+        }
+    }
+    func testLegacySettingsAndMultipleSelectionPersistSeparately() throws {
+        let scope = try AccountScope(accountID: "a", accountName: "Synthetic", mailboxName: "INBOX")
+        var legacy = PipelineSettings(); legacy.scope = scope
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as! [String: Any]
+        object.removeValue(forKey: "scopes")
+        let decoded = try JSONDecoder().decode(PipelineSettings.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(decoded.authorizedScopes, [scope])
+        let store = try PipelineStore(directory: temporary()); try store.saveSettings(decoded)
+        var draft = OnboardingDraft(); draft.selectedScopes = [scope, try AccountScope(accountID: "b", accountName: "Other", mailboxName: "INBOX")]
+        try store.saveOnboarding(draft)
+        XCTAssertEqual(try store.onboarding().selections.count, 2)
+        XCTAssertEqual(try store.settings().authorizedScopes, [scope])
+    }
     func testPersistentImportDedupAndL2() async throws {
         let root = try temporary(), fake = FakeReplyModel()
         var pipeline: ReplyPipeline? = try setup(root, fake: fake)

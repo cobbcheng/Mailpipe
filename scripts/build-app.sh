@@ -7,4 +7,4 @@ if [ -n "${MAILPIPE_DEVELOPMENT_TEAM:-}" ]; then
 fi
 exec env -u SDKROOT xcodebuild -project Mailpipe.xcodeproj -scheme Mailpipe \
   -configuration Debug -destination 'generic/platform=macOS' \
-  -derivedDataPath .build/xcode "${MAILPIPE_SIGNING_ARGS[@]}" build "$@"
+  -derivedDataPath "${MAILPIPE_DERIVED_DATA_PATH:-.build/xcode}" "${MAILPIPE_SIGNING_ARGS[@]}" build "$@"

@@ -71,16 +71,98 @@ public enum AppleMailIdentityProbe {
 @MainActor
 public enum AppleMailReplyIdentity {
     public struct Match: Sendable { public let accountID: String; public let localID: String; public let source: String }
+    public struct MailboxChoice: Sendable {
+        public let accountID: String
+        public let accountName: String
+        public let path: [String]
+    }
+    private static let mailboxPathScript = """
+    on pathForBox(box)
+        set parts to {}
+        set currentBox to box
+        tell application id "com.apple.mail"
+            repeat 33 times
+                set parts to {name of currentBox as text} & parts
+                try
+                    set parentBox to container of currentBox
+                on error errorMessage number errorNumber
+                    if errorNumber is -1728 then return parts
+                    error errorMessage number errorNumber
+                end try
+                if parentBox is missing value then return parts
+                set currentBox to parentBox
+            end repeat
+        end tell
+        error "Mailbox hierarchy too deep" number -2700
+    end pathForBox
+    """
+    public static let catalogScript = """
+    \(mailboxPathScript)
+    on collectBoxes(parentObject, accountID, accountName, parentPath, depth)
+        if depth > 32 then error "Mailbox hierarchy too deep" number -2700
+        set rows to {}
+        tell application id "com.apple.mail"
+            set children to every mailbox of parentObject
+            repeat with box in children
+                set boxName to name of box as text
+                set boxPath to my pathForBox(box)
+                set end of rows to {accountID, accountName, boxPath}
+                set rows to rows & my collectBoxes(box, accountID, accountName, boxPath, depth + 1)
+                if (count of rows) > 2000 then error "Too many mailboxes" number -2700
+            end repeat
+        end tell
+        return rows
+    end collectBoxes
+    on listMailboxes()
+        set rows to {}
+        with timeout of 15 seconds
+            tell application id "com.apple.mail"
+                repeat with acct in every account
+                    set rows to rows & my collectBoxes(acct, id of acct as text, name of acct as text, {}, 0)
+                    if (count of rows) > 2000 then error "Too many mailboxes" number -2700
+                end repeat
+            end tell
+        end timeout
+        return rows
+    end listMailboxes
+    """
+    public static func mailboxes() throws -> [MailboxChoice] {
+        let result = try call(source: catalogScript, handler: "listMailboxes", arguments: [])
+        var choices: [MailboxChoice] = []
+        guard result.numberOfItems <= 2000 else { throw IdentityQueryError.invalidResult }
+        for index in 0..<result.numberOfItems {
+            guard let row = result.atIndex(index + 1), row.numberOfItems == 3,
+                  let accountID = row.atIndex(1)?.stringValue, !accountID.isEmpty,
+                  let accountName = row.atIndex(2)?.stringValue,
+                  let parts = row.atIndex(3), parts.numberOfItems > 0, parts.numberOfItems <= 33 else { throw IdentityQueryError.invalidResult }
+            var path: [String] = []
+            for i in 0..<parts.numberOfItems {
+                guard let name = parts.atIndex(i + 1)?.stringValue, !name.isEmpty else { throw IdentityQueryError.invalidResult }
+                path.append(name)
+            }
+            choices.append(MailboxChoice(accountID: accountID, accountName: accountName, path: path))
+        }
+        return choices
+    }
     public static let scriptSource = """
-    on resolveReply(accountID, mailboxName, targetID, expectedSubject)
+    \(mailboxPathScript)
+    on resolveReply(accountID, mailboxName, targetID, expectedSubject, mailboxPath)
         with timeout of 15 seconds
             tell application id "com.apple.mail"
                 set accountsFound to every account whose id is accountID
                 if (count of accountsFound) is not 1 then return {"unresolved"}
                 set chosenAccount to item 1 of accountsFound
-                set folders to every mailbox of chosenAccount whose name is mailboxName
+                set folders to {}
+                if (count of mailboxPath) is 0 then
+                    set folders to every mailbox of chosenAccount whose name is mailboxName
+                else
+                    repeat with candidate in every mailbox of chosenAccount
+                        if (my pathForBox(candidate)) is mailboxPath then set end of folders to contents of candidate
+                    end repeat
+                end if
                 if (count of folders) is not 1 then return {"unresolved"}
-                set hits to every message of item 1 of folders whose message id is targetID
+                set selectedBox to item 1 of folders
+                set hits to every message of selectedBox whose message id is targetID
                 if (count of hits) is not 1 then return {"unresolved"}
                 set hit to item 1 of hits
                 if (subject of hit) is not expectedSubject then return {"unresolved"}
@@ -92,10 +174,12 @@ public enum AppleMailReplyIdentity {
         end timeout
     end resolveReply
     """
-    public static func resolve(accountID: String, mailboxName: String, messageID: String, subject: String) throws -> Match? {
+    public static func resolve(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil) throws -> Match? {
         let values = [accountID, mailboxName, messageID, subject]
         guard values.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2_048 }) else { throw IdentityQueryError.invalidScope }
-        let result = try call(source: scriptSource, handler: "resolveReply", arguments: values)
+        let path = mailboxPath ?? []
+        guard (mailboxPath == nil || !path.isEmpty), path.count <= 33, path.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 }) else { throw IdentityQueryError.invalidScope }
+        let result = try call(source: scriptSource, handler: "resolveReply", arguments: values, path: path)
         guard result.atIndex(1)?.stringValue == "unique", result.numberOfItems == 4,
               let account = result.atIndex(2)?.stringValue, account == accountID,
               let local = result.atIndex(3)?.stringValue,
@@ -120,12 +204,17 @@ public enum AppleMailReplyIdentity {
         guard let id = try call(source: source, handler: "selectScope", arguments: [name, mailbox]).stringValue, !id.isEmpty else { throw IdentityQueryError.invalidScope }
         return id
     }
-    private static func call(source: String, handler: String, arguments: [String]) throws -> NSAppleEventDescriptor {
+    private static func call(source: String, handler: String, arguments: [String], path: [String]? = nil) throws -> NSAppleEventDescriptor {
         guard let script = NSAppleScript(source: source) else { throw IdentityQueryError.invalidResult }
         let event = NSAppleEventDescriptor(eventClass: 0x61736372, eventID: 0x70736272, targetDescriptor: nil, returnID: -1, transactionID: 0)
         event.setParam(NSAppleEventDescriptor(string: handler), forKeyword: 0x736E616D)
         let list = NSAppleEventDescriptor.list()
         for (index, value) in arguments.enumerated() { list.insert(NSAppleEventDescriptor(string: value), at: index + 1) }
+        if let path {
+            let parts = NSAppleEventDescriptor.list()
+            for (index, value) in path.enumerated() { parts.insert(NSAppleEventDescriptor(string: value), at: index + 1) }
+            list.insert(parts, at: arguments.count + 1)
+        }
         event.setParam(list, forKeyword: 0x2D2D2D2D)
         var error: NSDictionary?
         let result = script.executeAppleEvent(event, error: &error)

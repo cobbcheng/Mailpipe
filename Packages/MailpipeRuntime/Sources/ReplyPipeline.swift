@@ -25,7 +25,7 @@ public final class ReplyPipeline {
     public func updateSettings(_ change: (inout PipelineSettings) -> Void) throws {
         let previous = try store.settings()
         var settings = previous; change(&settings)
-        if settings.permission != previous.permission || settings.scope != previous.scope ||
+        if settings.permission != previous.permission || settings.authorizedScopes != previous.authorizedScopes ||
             settings.executable != previous.executable || settings.level != previous.level { settings.revision = UUID() }
         // DB is authoritative. A crash before the extension snapshot changes cannot grant a model call.
         try store.saveSettings(settings)
@@ -92,13 +92,21 @@ public final class ReplyPipeline {
             guard settings.permission?.id == item.permissionID else {
                 item.state = .cancelled; item.error = "revoked"; try store.save(item); return
             }
-            guard let scope = settings.scope else { return }
+            let scopes = settings.authorizedScopes
+            guard !scopes.isEmpty else { return }
             if item.accountID == nil {
                 do {
-                    guard let verified = try await resolve(item, scope), verified.accountID == scope.accountID else {
-                        item.error = "identityUnresolved"; item.state = .needsReview; try store.save(item); return
+                    var matches: [(AccountScope, VerifiedMail)] = []
+                    for scope in scopes {
+                        if let verified = try await resolve(item, scope), verified.accountID == scope.accountID {
+                            matches.append((scope, verified))
+                        }
                     }
-                    item.accountID = verified.accountID; item.localID = verified.localID
+                    guard matches.count == 1, let (scope, verified) = matches.first else {
+                        item.error = matches.isEmpty ? "identityUnresolved" : "identityAmbiguous"
+                        item.state = .needsReview; try store.save(item); return
+                    }
+                    item.accountID = verified.accountID; item.localID = verified.localID; item.scopeID = scope.id
                 } catch {
                     item.error = "identityUnavailable"; item.state = .needsReview; try store.save(item); return
                 }
@@ -138,7 +146,7 @@ public final class ReplyPipeline {
         guard !settings.paused else { throw MailpipeError.paused }
         guard settings.revision == revision, let item = try store.record(id),
               item.state == .triaging || item.state == .drafting,
-              item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.scope?.accountID == item.accountID) else { throw PipelineError.revoked }
+              item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
     }
     private func invoke(id: String, task: ReplyModelTask, kind: ReplyTaskKind, executable: String) async throws {
         guard var item = try store.record(id), let revision = item.revision else { throw PipelineError.storage }

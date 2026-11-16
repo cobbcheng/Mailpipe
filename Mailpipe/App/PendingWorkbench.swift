@@ -12,6 +12,10 @@ final class PendingModel: ObservableObject {
     @Published var issue: String?
     @Published var selectedID: String?
     @Published var installations: [HarnessInstallation] = []
+    @Published var mailboxChoices: [AccountScope] = []
+    @Published var mailboxLoading = false
+    @Published var mailboxIssue: String?
+    var attemptedMailboxDiscovery = false
     @Published var onboarding = OnboardingDraft()
     @Published var onboardingResult: StoredReply?
     @Published var onboardingBusy = false
@@ -45,7 +49,7 @@ final class PendingModel: ObservableObject {
             pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: inboxURL), resolve: { item, scope in
                 guard let messageID = item.messageID, let expected = item.sourceDigest,
                       let match = try AppleMailReplyIdentity.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                          messageID: messageID, subject: item.input.subject),
+                          messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath),
                       mailSourceDigest(Data(match.source.utf8)) == expected else { return nil }
                 return VerifiedMail(accountID: match.accountID, localID: match.localID)
             })
@@ -64,6 +68,46 @@ final class PendingModel: ObservableObject {
                 }
             }
         } catch { issue = "无法打开持久化队列：\(Self.code(error))" }
+    }
+    private func discoverMailboxChoices() throws -> [AccountScope] {
+        let choices = try AppleMailReplyIdentity.mailboxes().map {
+            try AccountScope(accountID: $0.accountID, accountName: $0.accountName,
+                             mailboxName: $0.path.last!, mailboxPath: $0.path)
+        }
+        // Mail can enumerate descendants both at account level and under containers.
+        let unique = Dictionary(choices.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return unique.values.sorted {
+            ($0.accountName, ($0.mailboxPath ?? [$0.mailboxName]).joined(separator: " / ")) <
+            ($1.accountName, ($1.mailboxPath ?? [$1.mailboxName]).joined(separator: " / "))
+        }
+    }
+    func loadMailboxes() {
+        guard !mailboxLoading else { return }
+        attemptedMailboxDiscovery = true; mailboxLoading = true; mailboxIssue = nil
+        Task { @MainActor in
+            await Task.yield()
+            defer { mailboxLoading = false }
+            do {
+                mailboxChoices = try discoverMailboxChoices()
+                if mailboxChoices.isEmpty { mailboxIssue = "Apple Mail 尚未发现账户邮箱。请先在 Mail 添加账户，再刷新。" }
+            } catch {
+                mailboxChoices = []
+                if case IdentityQueryError.automation(-1743) = error {
+                    mailboxIssue = "Mail 自动化权限被拒绝。请在系统设置允许 Mailpipe 访问邮件后，主动点击重新读取。草案保留，不会外发邮件。"
+                } else if case IdentityQueryError.automation(let code) = error {
+                    mailboxIssue = "无法读取邮箱列表（\(code)），请确认 Mail 可用后重新读取。"
+                } else { mailboxIssue = "无法读取邮箱列表，请确认 Mail 可用后重新读取。" }
+            }
+        }
+    }
+    func selectMailbox(_ scope: AccountScope, selected: Bool) {
+        var scopes = onboarding.selections.filter { $0.id != scope.id }
+        if selected { scopes.append(scope) }
+        onboarding.selectedScopes = scopes.sorted { $0.id < $1.id }
+        saveOnboarding()
+    }
+    var mailboxSelectionValid: Bool {
+        !onboarding.selections.isEmpty && onboarding.selections.allSatisfy { mailboxChoices.contains($0) }
     }
     func saveOnboarding() {
         do {
@@ -120,9 +164,10 @@ final class PendingModel: ObservableObject {
             do {
                 let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
                 guard report.supportsSyntheticProbe, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
-                let id = try AppleMailReplyIdentity.accountID(named: snapshot.accountName, mailbox: snapshot.mailboxName)
-                let scope = try AccountScope(accountID: id, accountName: snapshot.accountName, mailboxName: snapshot.mailboxName)
-                try session.activate(scope: scope)
+                let current = try discoverMailboxChoices()
+                mailboxChoices = current
+                guard !snapshot.selections.isEmpty, snapshot.selections.allSatisfy({ current.contains($0) }) else { throw IdentityQueryError.invalidScope }
+                try session.activate(scopes: snapshot.selections)
                 let active = try session.store.settings()
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding(); refresh()
@@ -172,7 +217,7 @@ final class PendingModel: ObservableObject {
         catch { issue = Self.code(error) }
     }
     func revoke() {
-        do { try change { $0.permission = nil; $0.scope = nil } }
+        do { try change { $0.permission = nil; $0.scope = nil; $0.scopes = nil } }
         catch { issue = Self.code(error) }
     }
     func recheck(_ id: String) {
