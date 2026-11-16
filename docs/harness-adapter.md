@@ -15,6 +15,7 @@ Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 | `inspect()` | 执行版本和帮助，检查完整参数名 |
 | `runSyntheticProbe()` | 固定合成请求；stdin 输入；结构化输出 |
 | `runSyntheticReplyProbe()` | DeepSeek 固定合成分拣；L2 + yes 才调用草稿 |
+| `run(ReplyModelTask, route, authorize)` | DeepSeek 受限回复；调用前重查宿主授权 |
 | `classifyMail()` | 校验账户后返回 `unsafeCapability`；零进程调用 |
 | `OfflineProbe.run()` | 本地包装解析；无子进程或模型 |
 
@@ -34,7 +35,9 @@ Codex 使用 JSONL、schema、read-only 与临时会话。
 合成探测忽略用户配置和规则，并关闭 shell、图片及搜索工具。
 这不代表完整的无工具隔离。
 该模式未验证自定义 provider / model 配置兼容性。
-生产路由还需设计，不能把合成探测当作生产调用。
+DeepSeek 回复路径已接入单账户授权与持久化队列。
+未知账户不能派发；不使用其他 Harness 自动回退。
+旧 classifyMail 与 Codex 真实邮件入口仍被阻断。
 
 Runner 使用独立进程组、非阻塞管道和单个工作线程。
 原因是 stderr 堵塞会阻止 stdin 写入和取消。
@@ -114,7 +117,8 @@ DeepSeek 使用 `approval-policy never` 且工具全禁用。
 
 输入包含 `request_id`、`task_kind`、`schema_version`。
 生产调度须绑定 `account_scope`、`route_policy_version`。
-该调度层尚未实现；合成探针不访问邮箱账户。
+回复队列已绑定宿主策略版本与核验后的账户。
+合成探针不访问邮箱账户。
 每封邮件以内部 `message_ref` 引用。
 已实现单封 `reply_triage` 与 `reply_draft`。
 下文简称 triage 与 draft。

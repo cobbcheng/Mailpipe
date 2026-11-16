@@ -15,7 +15,7 @@
 	<key>CFBundleShortVersionString</key>
 	<string>0.0.1</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSMinimumSystemVersion</key>
@@ -25,6 +25,6 @@
 	<key>MailpipeAppGroup</key>
 	<string>$(MAILPIPE_APP_GROUP)</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>只在你指定的测试账户与邮箱中只读定位合成邮件，不修改或发送邮件。</string>
+	<string>在你授权的账户和邮箱中只读核验新邮件身份，确认后准备本机回复草稿；不修改或发送邮件。</string>
 </dict>
 </plist>

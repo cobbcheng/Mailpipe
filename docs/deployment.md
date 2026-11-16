@@ -76,3 +76,15 @@ Apple 配置来源见 [来源](sources.md)。
 本地数据是否保留由用户选择。
 说明 Mail 中已完成的整理不会自动撤销。
 说明 Harness 会话不随 App 卸载自动删除。
+
+## 7. 回复队列本机验证更新
+
+2026-11-16：本机测试 App 与扩展更新到 build 3。
+签名和完整链路范围见 [验收记录](validation/2026-11-16-persistent-reply-pipeline.md)。
+没有新增安装命令或发布脚本。
+正式队列位于用户 Application Support 下的 Mailpipe/pipeline。
+升级保留 state.sqlite、暂停状态与账户授权。
+`--pipeline-directory` 只用于独立诊断目录。
+该模式不连接正式 App Group 或 Mail 账户。
+不要让两个宿主同时使用同一队列目录。
+第二个写者会被独占锁拒绝，不自动抢占。

@@ -33,7 +33,10 @@
 
 | 任务 | 入口 |
 |---|---|
-| UI 与离线样例 | `Mailpipe/App/MailpipeApp.swift` |
+| 待处理 UI 与账户设置 | `Mailpipe/App/PendingWorkbench.swift` |
+| 离线诊断 | `Mailpipe/App/MailpipeApp.swift` |
+| 持久化队列与调度 | `Packages/MailpipeRuntime/Sources/` |
+| 入站暂存与纯文本 MIME | `Packages/MailpipeCore/Sources/InboundCapture.swift` |
 | 扩展生命周期 | `Mailpipe/MailExtension/MailExtension.swift` |
 | 输入、输出与路由校验 | `Packages/MailpipeCore/Sources/Classification.swift` |
 | 回复分拣、草稿、级别与去向 | `Packages/MailpipeCore/Sources/ReplyContracts.swift` |
@@ -46,18 +49,23 @@
 | 工程配置 | `scripts/generate-project.py`、`Package.swift` |
 | 当前验证 | [M0 工程记录](validation/2026-11-15-m0-scaffold.md) |
 
-## 数据与诊断入口（规划）
+## 数据与诊断入口
 
 | 对象 | 规划位置 | 排查顺序 |
 |---|---|---|
 | 扩展入站材料 | App Group 的 `inbox/` | 是否采集、是否完整、是否已导入 |
-| 宿主事实库 | `$MAILPIPE_DATA_DIR/state.sqlite` | task → run → action → receipt |
+| 当前回复事实库 | `$HOME/Library/Application Support/Mailpipe/pipeline/state.sqlite` | records → runs / decision / draft；动作回执未实现 |
 | 私有正文缓存 | `$MAILPIPE_DATA_DIR/content/` | 来源、到期时间、清洗状态 |
 | 脱敏诊断 | `$MAILPIPE_DATA_DIR/diagnostics/` | error_code、版本、耗时 |
 | 私有实机验收 | `$MAILPIPE_DATA_DIR/validation/` | 原始回执、截图和脱敏摘要 |
 | 可提交验收 | `docs/validation/` | 仅合成或脱敏材料 |
 
-`MAILPIPE_DATA_DIR` 是设计中的数据目录符号。
+当前宿主库位于 `$HOME/Library/Application Support/Mailpipe/pipeline/state.sqlite`。
+扩展暂存在签名 App Group 的 `inbox/`。
+诊断启动参数 `--pipeline-directory` 指定独立目录。
+该模式不使用正式 App Group，也不访问 Mail 账户。
+
+`MAILPIPE_DATA_DIR` 仍是设计中的数据目录符号。
 目前没有实现此环境变量或对应 CLI。
 不要在共享报告写真实账户、邮件或机器路径。
 

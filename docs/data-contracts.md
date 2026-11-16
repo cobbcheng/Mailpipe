@@ -1,6 +1,6 @@
 # 数据与执行契约
 
-状态：逻辑模型草案，无数据库实现。
+状态：逻辑模型草案；回复链路已有 SQLite 实现。
 更新：2026-11-16。增加单封数据去向标签。
 
 ## 1. 问题与存储选择
@@ -259,7 +259,8 @@ P0。每封交给 Harness 的邮件都要能回答发给了谁。
 
 2026-11-16：以下类型已有源码和隔离回归。
 入口：`Packages/MailpipeCore/Sources/ReplyContracts.swift`。
-数据库、生产调度和菜单栏待处理尚未实现。
+回复链路持久化与菜单栏待处理已接入。
+执行范围与限制见第 13 节。
 
 | 类型 | 约束 |
 |---|---|
@@ -292,3 +293,36 @@ L0 不产生回复展示或草稿意图。
 缺失 token 和实付金额表示未知，不表示零。
 
 验证结果见 [回复契约验收](validation/2026-11-16-reply-contracts.md)。
+
+## 13. 已实现的持久化回复链路
+
+入口：`Packages/MailpipeRuntime/Sources/`。
+SQLite 使用 records、ingests、metadata 三张表。
+Task、Run、Decision 和草稿存于同一记录中。
+单次事务提交后才删除扩展暂存材料。
+账户策略在 metadata 内，模型不能修改。
+完整规则、动作意图和撤销实体仍未实现。
+
+未知账户先停留在 `awaitingAccount`。
+在授权账户内，Message-ID 必须唯一匹配。
+同时校验主题与完整规范化邮件源摘要。
+随后用账户、locator、内容去重。
+正文重入只合并唯一的空候选，不合并两封完整邮件。
+
+| 状态 | 恢复方式 |
+|---|---|
+| awaitingBody | 等待正文回调，不派发模型 |
+| awaitingAccount / queued | 核验当前权限后接续 |
+| triaging / drafting | 转 needsReview，不自动重放 |
+| draftQueued | 重验存储决策与策略版本，只接续草稿 |
+| draftReady / needsReply | 直接显示，不再次调用 |
+| needsReview / cancelled | 不自动重试 |
+
+全局暂停单独持久化。
+账户、处理范围、模型路径或级别变更会更新策略版本。
+派发前与采用结果前均核验权限。
+调用被暂停或撤权时，保留调用证据并丢弃输出。
+
+当前有容量和派发时效上限。
+自动保留期清理未实现，不把时效校验当作删除。
+完整验收和限制见 [持久化链路记录](validation/2026-11-16-persistent-reply-pipeline.md)。

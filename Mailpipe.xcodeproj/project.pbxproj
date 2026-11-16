@@ -170,16 +170,26 @@
       "isa" = "PBXBuildFile";
       "fileRef" = "6F98382B7D4C41D42DFD157E";
     };
+    "3B649129F066DA726BB7CED4" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/App/PendingWorkbench.swift";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "sourcecode.swift";
+    };
+    "A276EA678EC9094CEEE21E10" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "3B649129F066DA726BB7CED4";
+    };
     "AEA12B8A9F795C2B7DA6CA67" = {
       "isa" = "PBXGroup";
-      "children" = ("8B706747C40EA5AD71834CDB", "BE6C3526711AF609BA8B87E3", "ECAA2C2BEF3B9127FEAB90B8", "6F98382B7D4C41D42DFD157E");
+      "children" = ("8B706747C40EA5AD71834CDB", "BE6C3526711AF609BA8B87E3", "ECAA2C2BEF3B9127FEAB90B8", "6F98382B7D4C41D42DFD157E", "3B649129F066DA726BB7CED4");
       "name" = "Mailpipe";
       "sourceTree" = "<group>";
     };
     "FB8CDB3834FB005F1094940F" = {
       "isa" = "PBXSourcesBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("755064C8A8E2123035E449A3", "6FAA2DDE8AC4ADB741CB733A");
+      "files" = ("755064C8A8E2123035E449A3", "6FAA2DDE8AC4ADB741CB733A", "A276EA678EC9094CEEE21E10");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "2927EA4D7998778FB78BF683" = {
@@ -209,10 +219,19 @@
       "isa" = "PBXBuildFile";
       "productRef" = "A27F2187C3A089835F424CF1";
     };
+    "DDBEACEA2C3778B734691391" = {
+      "isa" = "XCSwiftPackageProductDependency";
+      "package" = "BC4A71180870F7945155FBB0";
+      "productName" = "MailpipeRuntime";
+    };
+    "50B9B52B921AE824867C42C4" = {
+      "isa" = "PBXBuildFile";
+      "productRef" = "DDBEACEA2C3778B734691391";
+    };
     "4495950929277D4003B00283" = {
       "isa" = "PBXFrameworksBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("DFC03C57789D058C2111FFEB", "76DB58043316AE66296FEA42", "757B52605B5CD035F1E86015");
+      "files" = ("DFC03C57789D058C2111FFEB", "76DB58043316AE66296FEA42", "757B52605B5CD035F1E86015", "50B9B52B921AE824867C42C4");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "DBEB21021DA7690EF23A1762" = {
@@ -301,7 +320,7 @@
       "productName" = "Mailpipe";
       "productReference" = "681C948D238C526E9E3424E0";
       "productType" = "com.apple.product-type.application";
-      "packageProductDependencies" = ("2927EA4D7998778FB78BF683", "76C7A77379E76B712E09C24A", "A27F2187C3A089835F424CF1");
+      "packageProductDependencies" = ("2927EA4D7998778FB78BF683", "76C7A77379E76B712E09C24A", "A27F2187C3A089835F424CF1", "DDBEACEA2C3778B734691391");
     };
     "0A3E27B8CA818264D75C8D81" = {
       "isa" = "PBXGroup";

@@ -1,10 +1,11 @@
 import Foundation
 import HarnessAdapters
 import MailpipeCore
+import MailpipeRuntime
 
 @main
 struct MailpipeM0 {
-    static func main() async {
+    @MainActor static func main() async {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
             switch args.first {
@@ -13,6 +14,15 @@ struct MailpipeM0 {
                 print("PASS: \(results.count) adapter decoders; synthetic data; no model or Mail calls")
             case "discover":
                 for item in HarnessDiscovery.find() { print("\(item.kind.rawValue)\t\(item.executable.path)") }
+            case "pipeline-seed":
+                guard args.count == 3, args[1].hasPrefix("/"), args[2].hasPrefix("/"),
+                      !FileManager.default.fileExists(atPath: args[2]) else { throw MailpipeError.invalidInput }
+                let root = URL(fileURLWithPath: args[2], isDirectory: true)
+                let store = try PipelineStore(directory: root)
+                let pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")), resolve: { _, _ in nil })
+                try pipeline.updateSettings { $0.executable = args[1] }
+                _ = try pipeline.enqueueSynthetic()
+                print("PASS: synthetic input persisted; no model or Mail call; open the App with --pipeline-directory pointing to this directory to resume")
             case "reply-probe":
                 guard args.count == 3, args[1].hasPrefix("/"), args[2].hasPrefix("/") else { throw MailpipeError.invalidInput }
                 let output = URL(fileURLWithPath: args[2], isDirectory: true)
@@ -38,7 +48,7 @@ struct MailpipeM0 {
                 print("Synthetic probe flags: \(report.supportsSyntheticProbe ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
                 print(report.realMailStatus)
             case nil, "--help", "-h":
-                print("mailpipe-m0 offline | discover | inspect <dsh|codex> </absolute/path>\nreply-probe </absolute/dsh> </new/private/output-directory> runs up to two live synthetic model calls; no real email or Mail actions.")
+                print("mailpipe-m0 offline | discover | inspect <dsh|codex> </absolute/path>\npipeline-seed </absolute/dsh> </new/private/directory> persists one fixed synthetic input.\nreply-probe </absolute/dsh> </new/private/output-directory> runs up to two live synthetic model calls; no real email or Mail actions.")
             default: throw MailpipeError.invalidInput
             }
         } catch {
