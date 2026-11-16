@@ -116,7 +116,8 @@ DeepSeek 使用 `approval-policy never` 且工具全禁用。
 每封邮件以内部 `message_ref` 引用。
 `task_kind` 为 triage、draft、parse_rule。
 `triage` 用类别和摘要回答“要不要回复”。
-`draft` 只在分拣通过后调用，输出只有草稿。
+`draft` 只在分拣通过后调用。
+这次调用只读、无工具，输出只能是草稿。
 classify 与 summarize 不再作为独立交付，只作为 triage 的输入字段。
 历史搜索和写意图不走这些批次。
 它们走第 8 节的 Mailpipe 工具，并且只能由用户主动发起。
