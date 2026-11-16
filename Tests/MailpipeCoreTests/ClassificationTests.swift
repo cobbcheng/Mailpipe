@@ -59,14 +59,14 @@ final class ClassificationTests: XCTestCase {
         rejected(Data("```json\n{}\n```".utf8))
     }
     func testRouteCannotUseUnknownOrDisallowedAccount() throws {
-        for route in [AccountRoute(accountID: nil, allowedHarnesses: [.claude]),
-                      AccountRoute(accountID: " ", allowedHarnesses: [.claude])] {
-            XCTAssertThrowsError(try route.authorize(.claude)) { XCTAssertEqual($0 as? MailpipeError, .unknownAccount) }
+        for route in [AccountRoute(accountID: nil, allowedHarnesses: [.deepseek]),
+                      AccountRoute(accountID: " ", allowedHarnesses: [.deepseek])] {
+            XCTAssertThrowsError(try route.authorize(.deepseek)) { XCTAssertEqual($0 as? MailpipeError, .unknownAccount) }
         }
-        XCTAssertThrowsError(try AccountRoute(accountID: "synthetic", allowedHarnesses: [.claude]).authorize(.codex)) {
+        XCTAssertThrowsError(try AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek]).authorize(.codex)) {
             XCTAssertEqual($0 as? MailpipeError, .routeNotAllowed)
         }
-        XCTAssertThrowsError(try AccountRoute(accountID: "synthetic", allowedHarnesses: [.claude], paused: true).authorize(.claude)) {
+        XCTAssertThrowsError(try AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek], paused: true).authorize(.deepseek)) {
             XCTAssertEqual($0 as? MailpipeError, .paused)
         }
     }

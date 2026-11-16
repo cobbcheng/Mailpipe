@@ -21,7 +21,7 @@
 
 采用临时数据目录、fake Harness 与 fake MailBridge。
 PATH 首位放只记录调用的假工具。
-确认没有落到真实 `claude` 或 `codex`。
+确认没有落到真实 `dsh`、`codex` 或旧 `claude`。
 使用 XCTest；运行 `./scripts/test.sh`。
 下表仍是完整产品的验收计划，不代表全部覆盖。
 

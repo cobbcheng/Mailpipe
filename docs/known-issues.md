@@ -34,8 +34,12 @@ M0-02 的两阶段回调和合成正文标记已实测通过。
 退出重启后的单样本采集也通过，长期稳定性仍未验证。
 11 月 16 日单样本 UI 移动、宿主读回与移回通过。
 生产写回及并发冲突撤销仍未验证。
-Codex 三次合成探测通过，Claude 被账户验证阻断。
-完整受限工具清单与 Mailpipe 工具挂载仍未验证。
+Codex 三次合成探测通过。
+一期已移除 Claude，改为 DeepSeek Harness。
+DeepSeek 零工具分类及反向暴露测试通过。
+DeepSeek 0.2.2-rc.1 的运行时工具清单为空。
+Mailpipe 工具挂载仍未验证。
+见 [DeepSeek 验证](validation/2026-11-16-deepseek-harness.md)。
 详见 [最新实测](validation/2026-11-16-m0-move-harness.md)。
 Q-01、Q-02、Q-03 不因隔离回归通过而解除。
 
@@ -56,7 +60,7 @@ Q-23 解除前，不向真实邮件开放这些工具。
 | Q-22 | 跨 macOS 版本的 `V` 编号和库格式 | M0-15 / Mail 集成 | 不把单一 `V10` 当成全部版本 |
 | Q-23 | 如何只挂载 Mailpipe 工具并关闭内置工具 | Q-04 / Adapter | 有证据的接入方式。未验证前不写命令 |
 
-Q-23 涉及 Claude Code 与 Codex CLI。
+Q-23 涉及 DeepSeek Harness 与 Codex CLI。
 可能的形态包括自定义工具或 MCP。
 具体命令和参数未验证，本文不记录。
 Q-21 先观察并发只读。

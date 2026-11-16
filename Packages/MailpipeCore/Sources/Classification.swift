@@ -10,8 +10,8 @@ public enum MailpipeError: String, Error, Sendable, LocalizedError {
 }
 
 public enum HarnessKind: String, CaseIterable, Codable, Sendable {
-    case claude, codex
-    public var displayName: String { self == .claude ? "Claude Code" : "Codex CLI" }
+    case deepseek = "dsh", codex
+    public var displayName: String { self == .deepseek ? "DeepSeek Harness" : "Codex CLI" }
 }
 
 public struct MailInput: Codable, Equatable, Sendable {

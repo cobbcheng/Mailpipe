@@ -29,12 +29,17 @@ actor RecordingRunner: ProcessRunning {
 }
 
 func inspectionOutputs<D: HarnessDialect>(_ dialect: D) -> [ProcessOutput] {
-    [ProcessOutput(stdout: Data("synthetic-cli 1.2.3\n".utf8)),
+    [ProcessOutput(stdout: Data((dialect.kind == .deepseek ? "0.2.2-rc.1\n" : "synthetic-cli 1.2.3\n").utf8)),
      ProcessOutput(stdout: Data(dialect.requiredFlags.joined(separator: "\n").utf8))]
 }
-func claudeEnvelope(_ payload: Data = SyntheticFixture.response) throws -> Data {
-    try JSONSerialization.data(withJSONObject: ["type":"result", "subtype":"success", "is_error":false,
-                                               "structured_output": JSONSerialization.jsonObject(with: payload)])
+func deepseekEvents(_ payload: Data = SyntheticFixture.response) throws -> Data {
+    let events: [[String: Any]] = [
+        ["type":"session", "sessionId":"synthetic-session"],
+        ["type":"mailpipe_safety", "registry":[], "advertised":[], "provider":"deepseek-official", "model":"deepseek-flash"],
+        ["type":"status", "phase":"step_end", "usage":["inputTokens":12,"outputTokens":20]],
+        ["type":"final", "sessionId":"synthetic-session", "reason":["kind":"completed"], "text":String(decoding:payload,as:UTF8.self)]
+    ]
+    return try events.reduce(into: Data()) { $0.append(try JSONSerialization.data(withJSONObject: $1)); $0.append(10) }
 }
 func codexEvents(_ payload: Data = SyntheticFixture.response, completed: Bool = true) throws -> Data {
     var events: [[String: Any]] = [["type":"thread.started"], ["type":"turn.started"],

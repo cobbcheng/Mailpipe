@@ -82,7 +82,7 @@ P1 的共享服务附件、线程与发件账户也未实测。
 
 ## M0 Adapter 工程核查补充
 
-核查：2026-11-15。
+核查：2026-11-15。Claude 来源仅保留为历史。
 
 | 来源 | 用途 | 证据边界 |
 |---|---|---|
@@ -122,3 +122,14 @@ P1 的共享服务附件、线程与发件账户也未实测。
 未决项编号为 [Q-17](known-issues.md)。
 O1 本身不是权限决定。
 后来的只读搜索决定见同文第 10 节。
+
+## DeepSeek Harness 一手核查
+
+核查：2026-11-16。一期替换 Claude。
+
+| 来源 | 用途 | 证据边界 |
+|---|---|---|
+| [官方仓库](https://github.com/deepseek-ai/deepseek-harness) | profile、插件、无头运行机制 | 文档不是实机验收 |
+| [headless bundle](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/bundle/headless/README.md) | JSONL、审批与退出事件 | 以本机版本源码交叉核对 |
+| 本机 dsh 0.2.2-rc.1 帮助与安装包源码 | 参数、credentials、tools guard、llm/stream | 版本固定；更新后需重验 |
+| [本次验收](validation/2026-11-16-deepseek-harness.md) | 真实合成调用与反向暴露 | 不代表真实邮件或自定义工具已开放 |

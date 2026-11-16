@@ -96,20 +96,20 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertEqual(output.inputTokens, 12)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
     }
-    func testCompleteAdapterAgainstFakeExecutable() async throws {
-        let root = try TemporaryDirectory(), dialect = ClaudeCodeDialect()
-        let response = String(decoding: try claudeEnvelope(), as: UTF8.self)
+    func testDeepSeekAdapterAgainstFakeExecutable() async throws {
+        let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
+        let response = String(decoding: try deepseekEvents(), as: UTF8.self)
         let file = try root.script("""
-        case "$1" in
-          --version) echo 'fake-claude 1.2.3'; exit 0;;
-          --help) echo '\(dialect.requiredFlags.joined(separator: " "))'; exit 0;;
+        case "$*" in
+          --version) echo '0.2.2-rc.1'; exit 0;;
+          *--help*) echo '\(dialect.requiredFlags.joined(separator: " "))'; exit 0;;
         esac
         /bin/cat >/dev/null
         /bin/cat <<'MAILPIPE_SYNTHETIC_OUTPUT'
         \(response)
         MAILPIPE_SYNTHETIC_OUTPUT
         """)
-        let adapter = ClaudeCodeAdapter(executable: file, dialect: dialect, temporaryRoot: root.url, environment: [:])
+        let adapter = DeepSeekHarnessAdapter(executable: file, dialect: dialect, temporaryRoot: root.url, environment: [:])
         let output = try await adapter.runSyntheticProbe()
         XCTAssertEqual(output.response.results.first?.category, .billing)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])

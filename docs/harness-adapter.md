@@ -1,9 +1,11 @@
 # Harness Adapter 契约
 
-状态：两个 Adapter 通过 fake；Codex 通过三次真实合成探测。
-Claude 被账户验证要求阻断；完整受限能力仍未通过。
+状态：一期支持 DeepSeek Harness 与 Codex CLI。
+两个 Adapter 已通过隔离回归和真实合成探测。
+真实邮件与 Mailpipe 工具挂载仍未开放。
 更新：2026-11-16。
-证据见 [最新实测](validation/2026-11-16-m0-move-harness.md)。
+证据见 [DeepSeek 实测](validation/2026-11-16-deepseek-harness.md)。
+Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 
 ## 当前实现边界
 
@@ -15,10 +17,17 @@ Claude 被账户验证要求阻断；完整受限能力仍未通过。
 | `classifyMail()` | 校验账户后返回 `unsafeCapability`；零进程调用 |
 | `OfflineProbe.run()` | 本地包装解析；无子进程或模型 |
 
-Claude 使用空 tools、严格空 MCP 与 safe-mode。
-同时禁用 slash commands、普通 hooks 和会话持久化。
-managed policy / hooks 的限制仍需实测。
-不使用会改变登录方式的 `--bare`。
+DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
+每次创建独立 DSH_HOME，加载应用自有配置。
+禁用内置工具、MCP、skills、指令及子代理。
+禁用后台任务、热更新、遥测和推理重试。
+推理前核对注册及广告工具均为空。
+工具 guard 拒绝所有调用，并限制一次模型请求。
+固定路由为 `deepseek-official / deepseek-flash`。
+原有凭据由 Harness 官方插件读取，App 不提取。
+只验证了已有 API Key 登录；其他登录方式未验证。
+正常结束删除临时会话；硬崩溃残留未验证。
+这些限制不构成操作系统级沙盒。
 
 Codex 使用 JSONL、schema、read-only 与临时会话。
 合成探测忽略用户配置和规则，并关闭 shell、图片及搜索工具。
@@ -54,9 +63,10 @@ stdout 与 stderr 总上限为 1 MiB。
 | 本地 HTTP / Gateway | 可复用连接 | 鉴权、服务发现、权限隔离 | P1 验证 |
 | 直连模型 API | 可自建简单调用 | 引入凭据与计费管理 | 不采用 |
 
-P0 候选为 Claude Code 与 Codex CLI。
-`claude -p`、`codex exec` 是来源中的候选入口。
-它们不是已经验证的完整命令。
+P0 使用 DeepSeek Harness 与 Codex CLI。
+入口分别为 `dsh --profile headless` 和 `codex exec`。
+完整调用参数由 Adapter 源码维护。
+Claude 已移出一期，不迁移其账户授权。
 落地时读取安装版本的帮助与官方文档。
 禁止猜测无工具、沙盒和 JSON 参数。
 
@@ -92,7 +102,9 @@ P0 候选为 Claude Code 与 Codex CLI。
 
 “只读”不等于“无工具”，读取文件也会泄露数据。
 因此不把 Harness 的只读模式当作邮件库隔离。
-不传自动批准或跳过权限确认参数。
+不传跳过权限确认参数。
+DeepSeek 使用 `approval-policy never` 且工具全禁用。
+该策略本身不作为安全证明。
 无法证明内置工具已被禁止时，不向该 Adapter 提交邮件。
 可以继续用合成输入验证，不开放绕过按钮。
 
@@ -204,9 +216,10 @@ Harness 不能直接打开文件系统、运行 shell，或向 Mail 发命令。
 Mailpipe 校验参数、账户和上限后再执行读取。
 需要确认的意图先交给用户，再由 MailBridge 执行。
 
-Claude Code 与 Codex CLI 如何挂上这些工具，尚未验证。
+DeepSeek Harness 与 Codex CLI 的工具挂载尚未验证。
 可能的方式包括各自的自定义工具或 MCP。
 本文不记录具体命令、开关或参数。
-如何同时关掉二者的内置工具，也尚未验证。
+DeepSeek 的零内置工具配置已有实测。
+挂载自有工具后的组合边界仍需验证。
 这两项并入 [Q-04](known-issues.md)，细节编号为 Q-23。
 验证前，真实邮件仍走 `unsafeCapability`，不调用进程。

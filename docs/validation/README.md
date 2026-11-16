@@ -2,6 +2,7 @@
 
 当前已有工程与签名验证记录，尚无完整功能验收。
 
+- [DeepSeek Harness 替换与受限验证](2026-11-16-deepseek-harness.md)
 - [单样本移动读回与受限 Harness 实测](2026-11-16-m0-move-harness.md)
 - [移动闭环再次实机验证](2026-11-15-m0-move-retest.md)
 - [正文重入与退出重启实机复测](2026-11-15-m0-live-body-lifecycle.md)
@@ -20,7 +21,8 @@ SMTP / MailKit 缺失头入站、完整 Mail 门槛仍未通过。
 Google 恢复待发草稿后，源代码已含 Message-ID。
 该路径未保留代转语义；提交项仍待确认送达。
 Codex 固定分类与两次 canary 挑战通过。
-Claude 被账户验证要求阻断，完整受限能力未通过。
+一期改为 DeepSeek Harness；零工具分类通过。
+Mailpipe 自定义工具接入仍未验证。
 核查边界见 [来源](../sources.md)。
 
 后续记录采用 [验证计划](../testing.md) 的模板。

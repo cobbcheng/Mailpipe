@@ -18,8 +18,8 @@ final class WorkbenchModel: ObservableObject {
             do {
                 let report: CapabilityReport
                 switch installation.kind {
-                case .claude:
-                    report = try await ClaudeCodeAdapter(executable: installation.executable, dialect: ClaudeCodeDialect()).inspect()
+                case .deepseek:
+                    report = try await DeepSeekHarnessAdapter(executable: installation.executable, dialect: DeepSeekHarnessDialect()).inspect()
                 case .codex:
                     report = try await CodexCLIAdapter(executable: installation.executable, dialect: CodexCLIDialect()).inspect()
                 }
@@ -97,7 +97,7 @@ private struct WorkbenchView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if model.installations.isEmpty {
-                        Text("未找到工具。安装 Claude Code 或 Codex CLI 后重新查找。")
+                        Text("未找到工具。安装 DeepSeek Harness 或 Codex CLI 后重新查找。")
                             .foregroundStyle(.secondary).padding(.vertical)
                     }
                     ForEach(model.installations) { installation in

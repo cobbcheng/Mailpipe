@@ -36,7 +36,7 @@
 | 扩展生命周期 | `Mailpipe/MailExtension/MailExtension.swift` |
 | 输入、输出与路由校验 | `Packages/MailpipeCore/Sources/Classification.swift` |
 | CLI 探测和调用 | `Packages/HarnessAdapters/Sources/CLIAdapter.swift` |
-| CLI 参数与包装解析 | 同目录 `ClaudeCodeAdapter.swift`、`CodexCLIAdapter.swift` |
+| CLI 参数与包装解析 | 同目录 `DeepSeekHarnessAdapter.swift`、`CodexCLIAdapter.swift` |
 | 进程生命周期 | 同目录 `POSIXProcessRunner.swift` |
 | Bridge 边界 | `Packages/MailBridge/Sources/MailBridge.swift` |
 | 无模型命令行检查 | `Tools/MailpipeM0/MailpipeM0.swift` |
