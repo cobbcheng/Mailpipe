@@ -19,7 +19,7 @@
 |---|---|---|
 | 修改范围或优先级 | [产品方案](product.md) | 里程碑、交互与验收 |
 | 主动回复、分拣或数据去向 | [产品方案](product.md)、[设计](../DESIGN.md) 第 10 节、[数据契约](data-contracts.md) 第 11 节 | 安全、Harness、邮件集成与验证 |
-| 页面或交互状态 | [交互设计](interaction-design.md) | 对应错误码和验证用例 |
+| 页面或交互状态 | [交互设计](interaction-design.md)、[新手引导](onboarding.md) | 对应错误码和验证用例 |
 | MailKit / Mail 操作 | [邮件集成](mail-integration.md) | 数据契约、权限矩阵 |
 | 模型调用 / 路由 | [Harness 契约](harness-adapter.md) | 安全和用量显示 |
 | 身份 / 状态 / 撤销 | [数据契约](data-contracts.md) | 交互状态与恢复测试 |

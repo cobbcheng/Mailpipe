@@ -62,6 +62,7 @@ L2 为默认级别，已有暂停状态不会自动恢复。
 | 按任务找文档 | [Agent 维护参考](docs/agent-reference.md) |
 | 产品范围和 PRD v0.5 | [产品方案](docs/product.md) |
 | 页面、流程和异常态 | [交互设计](docs/interaction-design.md) |
+| 首次设置与首封草稿 | [新手引导 PRD](docs/onboarding.md) |
 | MailKit / Apple Events 边界 | [邮件集成](docs/mail-integration.md) |
 | 模型调用和路由 | [Harness 契约](docs/harness-adapter.md) |
 | 队列、动作、回执 | [数据契约](docs/data-contracts.md) |
