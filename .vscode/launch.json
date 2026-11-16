@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:Mailpipe}",
+      "name": "Debug mailpipe-m0",
+      "target": "mailpipe-m0",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug mailpipe-m0"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:Mailpipe}",
+      "name": "Release mailpipe-m0",
+      "target": "mailpipe-m0",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release mailpipe-m0"
+    }
+  ]
+}
