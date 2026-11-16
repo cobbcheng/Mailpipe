@@ -75,6 +75,7 @@ final class PendingModel: ObservableObject {
         } catch { onboardingIssue = Self.code(error) }
     }
     func editOnboarding() {
+        onboardingIssue = nil
         if onboarding.completed {
             onboarding.id = UUID(); onboarding.completed = false; onboarding.step = 1
             saveOnboarding()
@@ -126,6 +127,17 @@ final class PendingModel: ObservableObject {
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding(); refresh()
                 onboardingIssue = active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
+            } catch let error as IdentityQueryError {
+                switch error {
+                case .automation(-1743):
+                    onboardingIssue = "Mail 自动化权限被拒绝（-1743）。未保存新授权；草案和已有结果保留。可稍后在系统设置 → 隐私与安全性 → 自动化中允许 Mailpipe 控制邮件，再主动确认。"
+                case .automation(let code):
+                    onboardingIssue = "Mail 账户核验失败（\(code)）。未保存新授权；草案保留。"
+                case .invalidScope:
+                    onboardingIssue = "无法唯一识别所选账户或邮箱。请核对名称；未保存新授权。"
+                case .invalidResult:
+                    onboardingIssue = "Mail 返回的账户信息无法核验；未保存新授权。"
+                }
             } catch { onboardingIssue = "授权未完成，原设置保留或等待同步：\(Self.code(error))" }
         }
     }

@@ -136,3 +136,9 @@ Codex 固定分类及两次 canary 挑战通过。
 默认 L2；最终确认才生效，保留已有暂停。
 DeepSeek 合成测试与正式采集队列隔离。
 详见 [本轮验收](docs/validation/2026-11-16-onboarding.md)。
+
+签名 build 4 已完成限定 Google IMAP 实机验收。
+覆盖最终授权、系统拒绝（-1743）与首封 L2 草稿。
+修正拒绝提示，恢复权限后可主动重试确认。
+更新期间的扩展实例冲突及失败样本均有记录。
+见 [实机验收](docs/validation/2026-11-16-onboarding-live.md)。
