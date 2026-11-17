@@ -48,11 +48,16 @@ final class PendingModel: ObservableObject {
             }
             let store = try PipelineStore(directory: root)
             pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: inboxURL), resolve: { item, scope in
-                guard let messageID = item.messageID, let expected = item.sourceDigest,
+                guard let messageID = item.messageID,
                       let match = try AppleMailReplyIdentity.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                          messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath),
-                      mailSourceDigest(Data(match.source.utf8)) == expected else { return nil }
-                return VerifiedMail(accountID: match.accountID, localID: match.localID)
+                          messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath) else { return nil }
+                let source = Data(match.source.utf8)
+                if let evidence = item.sourceEvidence {
+                    guard evidence.matches(source) else { return nil }
+                } else {
+                    guard let expected = item.sourceDigest, mailSourceDigest(source) == expected else { return nil }
+                }
+                return VerifiedMail(accountID: match.accountID, localID: match.localID, source: source)
             })
             onboardingSession = try OnboardingSession(store: store)
             onboarding = try store.onboarding()

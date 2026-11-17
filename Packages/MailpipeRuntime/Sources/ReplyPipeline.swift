@@ -5,7 +5,10 @@ import HarnessAdapters
 public struct VerifiedMail: Sendable {
     public let accountID: String
     public let localID: String
-    public init(accountID: String, localID: String) { self.accountID = accountID; self.localID = localID }
+    public let source: Data?
+    public init(accountID: String, localID: String, source: Data? = nil) {
+        self.accountID = accountID; self.localID = localID; self.source = source
+    }
 }
 public typealias MailIdentityResolver = @MainActor @Sendable (StoredReply, AccountScope) async throws -> VerifiedMail?
 
@@ -110,9 +113,15 @@ public final class ReplyPipeline {
                         item.error = matches.isEmpty ? "identityUnresolved" : "identityAmbiguous"
                         item.state = .needsReview; try store.save(item); return
                     }
+                    if let evidence = item.sourceEvidence {
+                        guard let source = verified.source, evidence.matches(source) else {
+                            item.error = "identityUnresolved"; item.state = .needsReview; try store.save(item); return
+                        }
+                        item.input = MailInput(messageRef: item.id, subject: item.input.subject, body: try PlainMailBody.decode(source))
+                    }
                     item.accountID = verified.accountID; item.localID = verified.localID; item.scopeID = scope.id
-                } catch MailBodyRejection.messageTooLarge {
-                    item.error = MailBodyRejection.messageTooLarge.rawValue
+                } catch let rejection as MailBodyRejection {
+                    item.error = rejection.rawValue
                     item.state = .needsReview; try store.save(item); return
                 } catch {
                     item.error = "identityUnavailable"; item.state = .needsReview; try store.save(item); return
