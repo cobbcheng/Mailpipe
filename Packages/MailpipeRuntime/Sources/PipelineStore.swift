@@ -92,6 +92,13 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var runs: [PipelineRun] = []
     public var manualExecutable: String? // Host-only, single-message confirmation; never imported from the spool.
     public var syntheticAuthorized = false
+    public var editedSubject: String?
+    public var editedBody: String?
+    public var discardedAt: Date?
+    public var regenerationCount: Int?
+    public var isPreparing: Bool { [.awaitingAccount, .queued, .triaging, .draftQueued, .drafting].contains(state) }
+    public var displayedSubject: String { editedSubject ?? draft?.subject ?? input.subject }
+    public var displayedBody: String { editedBody ?? draft?.body ?? "" }
     public var canRecheckIdentity: Bool {
         state == .needsReview && runs.isEmpty && (!input.body.isEmpty ||
             (sourceEvidence != nil && ["identityUnresolved", "identityUnavailable", "identityAmbiguous"].contains(error ?? "")))
@@ -196,6 +203,21 @@ public final class PipelineStore {
     public func records() throws -> [StoredReply] { try values(StoredReply.self, table: "records").sorted { $0.capturedAt < $1.capturedAt } }
     public func record(_ id: String) throws -> StoredReply? { try values(StoredReply.self, table: "records", id: id).first }
     public func save(_ item: StoredReply) throws { try put(item, id: item.id, table: "records") }
+    public func saveEdits(_ id: String, subject: String, body: String) throws {
+        guard var item = try record(id), subject.utf8.count <= 2_048,
+              body.utf8.count <= 65_536 else { throw MailpipeError.invalidInput }
+        item.editedSubject = subject; item.editedBody = body
+        try save(item)
+    }
+    public func discard(_ id: String, now: Date = Date()) throws {
+        guard var item = try record(id), !item.isPreparing else { throw MailpipeError.invalidInput }
+        item.discardedAt = now; try save(item)
+    }
+    public func restoreDiscard(_ id: String, now: Date = Date()) throws {
+        guard var item = try record(id), let date = item.discardedAt,
+              now.timeIntervalSince(date) <= 15 else { throw MailpipeError.invalidInput }
+        item.discardedAt = nil; try save(item)
+    }
     public func note(_ issue: String) throws { try put(issue, id: "captureIssue", table: "metadata") }
     public func issue() throws -> String? { try values(String.self, table: "metadata", id: "captureIssue").first }
     @discardableResult public func importCapture(_ capture: InboundCapture, syntheticGrant: Bool = false) throws -> String {

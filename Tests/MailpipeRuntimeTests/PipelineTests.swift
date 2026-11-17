@@ -49,6 +49,87 @@ final class PipelineTests: XCTestCase {
         InboundCapture(permissionID: try XCTUnwrap(pipeline.store.settings().permission).id,
             subject: "Synthetic", messageID: "test@example.com", raw: Data("Content-Type: text/plain\r\n\r\nPlease reply".utf8))
     }
+    func testEditsDiscardUndoAndLegacyPayload() async throws {
+        let pipeline = try setup(temporary())
+        try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
+        let item = try XCTUnwrap(pipeline.store.records().first)
+        try pipeline.store.saveEdits(item.id, subject: "Edited", body: "Local reply")
+        let now = Date()
+        try pipeline.store.discard(item.id, now: now)
+        XCTAssertNotNil(try pipeline.store.record(item.id)?.discardedAt)
+        try pipeline.store.restoreDiscard(item.id, now: now.addingTimeInterval(10))
+        XCTAssertEqual(try pipeline.store.record(item.id)?.displayedBody, "Local reply")
+        XCTAssertNil(try pipeline.store.record(item.id)?.discardedAt)
+        try pipeline.store.discard(item.id, now: now)
+        XCTAssertThrowsError(try pipeline.store.restoreDiscard(item.id, now: now.addingTimeInterval(16)))
+        var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(item)) as! [String: Any]
+        for key in ["editedSubject", "editedBody", "discardedAt", "regenerationCount"] { object.removeValue(forKey: key) }
+        let legacy = try JSONDecoder().decode(StoredReply.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(legacy.editedBody)
+        XCTAssertEqual(legacy.displayedBody, item.draft?.body)
+    }
+    func testRegenerationIsBoundedAndPreservesEdits() async throws {
+        let fake = FakeReplyModel(), pipeline = try setup(temporary(), fake: fake)
+        try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
+        let id = try XCTUnwrap(pipeline.store.records().first).id
+        try pipeline.store.saveEdits(id, subject: "My subject", body: "My local edit")
+        for _ in 0..<3 {
+            try pipeline.regenerate(id)
+            XCTAssertThrowsError(try pipeline.regenerate(id))
+            try await pipeline.pump()
+            XCTAssertEqual(try pipeline.store.record(id)?.displayedBody, "My local edit")
+            XCTAssertEqual(try pipeline.store.record(id)?.state, .draftReady)
+        }
+        XCTAssertThrowsError(try pipeline.regenerate(id))
+        let count = await fake.calls; XCTAssertEqual(count, 8)
+        try pipeline.store.discard(id)
+        XCTAssertThrowsError(try pipeline.regenerate(id))
+    }
+    func testRegenerationFailureAndCancelKeepLocalEdit() async throws {
+        let fake = FakeReplyModel(), pipeline = try setup(temporary(), fake: fake)
+        try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
+        let id = try XCTUnwrap(pipeline.store.records().first).id
+        try pipeline.store.saveEdits(id, subject: "Edited subject", body: "Keep this reply")
+        await fake.setAfterRun { throw MailpipeError.invalidOutput }
+        try pipeline.regenerate(id); try await pipeline.pump()
+        XCTAssertEqual(try pipeline.store.record(id)?.state, .needsReview)
+        XCTAssertEqual(try pipeline.store.record(id)?.displayedBody, "Keep this reply")
+        try pipeline.regenerate(id); try pipeline.cancel(id); try await pipeline.pump()
+        XCTAssertEqual(try pipeline.store.record(id)?.state, .cancelled)
+        XCTAssertEqual(try pipeline.store.record(id)?.displayedBody, "Keep this reply")
+    }
+    func testManualRegenerationUsesCurrentServiceLevel() async throws {
+        let pipeline = try setup(temporary())
+        try pipeline.updateSettings { $0.suggestionsOnly = true }
+        let id = try pipeline.enqueueManual(id: UUID(), subject: "Synthetic", body: "Please reply", executable: "/fake/dsh")
+        try await pipeline.pump()
+        try pipeline.store.saveEdits(id, subject: "Edited", body: "Keep local reply")
+        try pipeline.updateSettings { $0.level = .l1 }
+        try pipeline.regenerate(id); try await pipeline.pump()
+        let item = try XCTUnwrap(pipeline.store.record(id))
+        XCTAssertEqual(item.level, .l1)
+        XCTAssertEqual(item.state, .needsReply)
+        XCTAssertEqual(item.runs.count, 3)
+        XCTAssertEqual(item.displayedBody, "Keep local reply")
+    }
+    func testCancelledRunMustFinishBeforeRegeneration() async throws {
+        let pipeline = try setup(temporary())
+        try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
+        var item = try XCTUnwrap(pipeline.store.records().first)
+        item.state = .cancelled
+        item.runs[item.runs.count - 1].finishedAt = nil
+        try pipeline.store.save(item)
+        XCTAssertThrowsError(try pipeline.regenerate(item.id))
+    }
+    func testRegenerationRespectsPauseAndRevocation() async throws {
+        let pipeline = try setup(temporary())
+        try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
+        let id = try XCTUnwrap(pipeline.store.records().first).id
+        try pipeline.updateSettings { $0.paused = true }
+        XCTAssertThrowsError(try pipeline.regenerate(id))
+        try pipeline.updateSettings { $0.paused = false; $0.permission = nil }
+        XCTAssertThrowsError(try pipeline.regenerate(id))
+    }
     func testMultipleSelectedMailboxesRequireUniqueMatch() async throws {
         for ambiguous in [false, true] {
             let root = try temporary(), fake = FakeReplyModel()
