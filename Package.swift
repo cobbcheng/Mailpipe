@@ -9,7 +9,8 @@ let linuxSQLite: [Target.Dependency] = []
 #endif
 
 var packageTargets: [Target] = [
-        .target(name: "MailpipeCharset", path: "Packages/MailpipeCharset", sources: ["src/mailpipe_iconv.c"], publicHeadersPath: "include"),
+        .target(name: "MailpipeCharset", path: "Packages/MailpipeCharset", sources: ["src/mailpipe_iconv.c"], publicHeadersPath: "include",
+                linkerSettings: [.linkedLibrary("iconv", .when(platforms: [.macOS]))]),
         .target(name: "MailpipeCore", dependencies: ["MailpipeCharset"], path: "Packages/MailpipeCore/Sources"),
         .target(name: "HarnessAdapters", dependencies: ["MailpipeCore"], path: "Packages/HarnessAdapters/Sources", resources: [.copy("Resources")]),
         .target(name: "MailBridge", dependencies: ["MailpipeCore"], path: "Packages/MailBridge/Sources"),

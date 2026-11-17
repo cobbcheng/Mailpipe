@@ -36,8 +36,12 @@ Google IMAP 单封合成样本已通过完整链路。
 | text/html | 转成纯文本。去掉脚本、样式和隐藏块 |
 | multipart/alternative | 优先 text/plain。没有可用纯文本时用 HTML |
 | multipart/mixed、related | 取正文。附件只记名称和类型 |
-| 嵌套 multipart、message/rfc822 | 继续提取可读正文 |
+| 嵌套 multipart、内联 message/rfc822 | 继续提取可读正文 |
 | multipart/signed、PGP 清签名 | 读取已有明文。不验证签名 |
+
+标记为 `attachment` 的部分只记名称和类型。
+此边界也适用于 `.eml` 和 multipart 容器。
+不解码或递归提取这些附件的内容。
 
 | 待核对原因 | 含义 |
 |---|---|

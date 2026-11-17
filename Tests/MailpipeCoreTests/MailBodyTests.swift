@@ -76,6 +76,61 @@ final class MailBodyTests: XCTestCase {
         XCTAssertEqual(try PlainMailBody.decode(header + page), "请确认周五。")
     }
 
+    func testAttachedMessagesDoNotBecomeModelBody() throws {
+        for type in ["message/rfc822", "message/global"] {
+            let attachment = "Content-Type: \(type)\r\nContent-Disposition: attachment; filename=archive.eml\r\n\r\n"
+                + "From: sender@example.com\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nATTACHMENT-ONLY-CANARY"
+            let raw = Data(("Content-Type: multipart/mixed; boundary=b\r\n\r\n"
+                + "--b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nPlease review the attachment.\r\n"
+                + "--b\r\n" + attachment + "\r\n--b--\r\n").utf8)
+            let result = try PlainMailBody.extract(raw)
+            XCTAssertEqual(result.text, "Please review the attachment.\n[attachments: archive.eml (\(type))]")
+            XCTAssertEqual(result.attachments, [MailAttachmentNote(filename: "archive.eml", mediaType: type)])
+            XCTAssertThrowsError(try PlainMailBody.decode(Data(attachment.utf8))) { error in
+                XCTAssertEqual(error as? MailBodyRejection, .attachmentOnly)
+            }
+        }
+    }
+
+    func testAttachedMultipartIsNotTraversed() throws {
+        let source = [
+            "Content-Type: multipart/mixed; boundary=outer\r\n\r\n",
+            "--outer\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nVisible body.\r\n",
+            "--outer\r\nContent-Type: multipart/mixed; boundary=inner\r\n",
+            "Content-Disposition: attachment; filename=bundle.mime\r\n\r\n",
+            "--inner\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nATTACHED-CONTAINER-CANARY\r\n",
+            "--inner--\r\n--outer--\r\n"
+        ].joined()
+        let raw = Data(source.utf8)
+        let result = try PlainMailBody.extract(raw)
+        XCTAssertEqual(result.text, "Visible body.\n[attachments: bundle.mime (multipart/mixed)]")
+        XCTAssertEqual(result.attachments.map(\.filename), ["bundle.mime"])
+    }
+
+    func testInlineMessageRemainsReadable() throws {
+        let raw = Data(("Content-Type: message/rfc822\r\nContent-Disposition: inline\r\n\r\n"
+            + "From: sender@example.com\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nInline forwarded body.").utf8)
+        let result = try PlainMailBody.extract(raw)
+        XCTAssertEqual(result.text, "Inline forwarded body.")
+        XCTAssertTrue(result.attachments.isEmpty)
+    }
+
+    func testHiddenVoidElementsPreserveFollowingBody() throws {
+        for tag in ["img", "br", "hr", "meta", "link", "input", "source", "wbr", "area", "base", "col", "embed"] {
+            for style in ["display:none", "visibility:hidden"] {
+                let raw = Data(("Content-Type: text/html; charset=utf-8\r\n\r\n<html><body>"
+                    + "<p>Intro.</p><\(tag) style=\"\(style)\" alt=\"HIDDEN-ALT-CANARY\">"
+                    + "<div style=\"display:none\"><span>HIDDEN-BLOCK-CANARY</span></div>"
+                    + "<p>Please confirm Friday.</p></body></html>").utf8)
+                let text = try PlainMailBody.decode(raw)
+                XCTAssertTrue(text.contains("Intro."), "\(tag): \(text)")
+                XCTAssertTrue(text.contains("Please confirm Friday."), "\(tag): \(text)")
+                XCTAssertFalse(text.contains("HIDDEN-ALT-CANARY"))
+                XCTAssertFalse(text.contains("HIDDEN-BLOCK-CANARY"))
+            }
+        }
+    }
+
     func testEncodedHeaders() throws {
         XCTAssertEqual(MailHeaderCodec.decodeEncodedWords("=?UTF-8?B?6K+35rGC6K+B5piO?="), "请求证明")
         XCTAssertEqual(MailHeaderCodec.decodeEncodedWords("=?utf-8?Q?Please?= =?utf-8?Q?_reply?="), "Please reply")

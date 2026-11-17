@@ -252,8 +252,13 @@ private enum MIMEEntity {
         if counter > MailBodyLimits.maxParts || depth > MailBodyLimits.maxDepth { throw MailBodyRejection.malformedMIME }
         let split = try splitHeaders(data)
         let headers = try MIMEHeaders(split.header, defaultType: defaultType)
-        let payload = try TransferDecoding.apply(split.body, encoding: headers.encoding)
         let type = headers.mediaType
+        // Attachment disposition applies to containers and embedded messages too.
+        // Do not decode or recurse into their contents.
+        if headers.disposition == "attachment" {
+            return EntityResult(mediaType: type, attachments: [note(headers)], calendar: isCalendar(type))
+        }
+        let payload = try TransferDecoding.apply(split.body, encoding: headers.encoding)
         if isOpaqueSigned(type, parameters: headers.parameters) {
             return EntityResult(mediaType: type, opaqueSignature: true)
         }
@@ -285,12 +290,9 @@ private enum MIMEEntity {
             return EntityResult(mediaType: type, attachments: [note(headers)], calendar: true)
         }
         if type == "text/plain" || type == "text/html" {
-            if headers.disposition == "attachment" {
-                return EntityResult(mediaType: type, attachments: [note(headers)])
-            }
             return try textPart(payload, headers: headers)
         }
-        if isAttachment(type) || headers.disposition == "attachment" {
+        if isAttachment(type) {
             return EntityResult(mediaType: type, attachments: [note(headers)])
         }
         return EntityResult(mediaType: type, unsupported: true)
@@ -969,7 +971,7 @@ private struct HTMLScanner {
             return
         }
         if hidden(tag) {
-            stack.append(HTMLFrame(name: name, skip: true))
+            if !isVoid(name) { stack.append(HTMLFrame(name: name, skip: true)) }
             return
         }
         var frame = HTMLFrame(name: name)
