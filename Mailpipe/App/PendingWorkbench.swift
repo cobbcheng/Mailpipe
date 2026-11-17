@@ -442,27 +442,22 @@ struct PendingWorkbench: View {
     private var visible: [StoredReply] { model.records.filter(filter.includes).reversed() }
     var body: some View {
         NavigationSplitView {
-            VStack(spacing: 0) {
-                Picker("视图", selection: $filter) {
-                    ForEach(WorkbenchFilter.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented).controlSize(.small).labelsHidden().padding([.horizontal, .top])
-                List(selection: $model.selectedID) {
-                    Section("\(filter.rawValue) · \(visible.count)") {
-                        ForEach(visible) { item in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(item.input.subject).fontWeight(model.selectedID == item.id ? .semibold : .medium).lineLimit(2)
-                                Text(item.displayedBody.isEmpty ? "等待准备回复" : item.displayedBody)
-                                    .font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                                HStack {
-                                    Text(DraftContentWarnings(body: model.editorBody(item)).requiresCopyConfirmation ? "待确认" : item.state.label)
-                                    Spacer()
-                                    Text(item.capturedAt, format: .dateTime.month(.twoDigits).day(.twoDigits))
-                                }.font(.caption).foregroundStyle(.secondary)
-                            }.padding(.vertical, 6).tag(item.id)
-                        }
+            List(selection: $model.selectedID) {
+                Section("\(filter.rawValue) · \(visible.count)") {
+                    ForEach(visible) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.input.subject).fontWeight(model.selectedID == item.id ? .semibold : .medium).lineLimit(2)
+                            Text(item.displayedBody.isEmpty ? "等待准备回复" : item.displayedBody)
+                                .font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                            HStack {
+                                Text(DraftContentWarnings(body: model.editorBody(item)).requiresCopyConfirmation ? "待确认" : item.state.label)
+                                Spacer()
+                                Text(item.capturedAt, format: .dateTime.month(.twoDigits).day(.twoDigits))
+                            }.font(.caption).foregroundStyle(.secondary)
+                        }.padding(.vertical, 6).tag(item.id)
                     }
-                }.listStyle(.sidebar)
-            }
+                }
+            }.listStyle(.sidebar)
                 .navigationSplitViewColumnWidth(min: 240, ideal: 290, max: 380)
                 .overlay {
                     if visible.isEmpty { Text("暂时没有\(filter == .failed ? "失败的任务" : "待处理的草稿")").foregroundStyle(.secondary).padding() }
@@ -514,6 +509,13 @@ struct PendingWorkbench: View {
             }.frame(minWidth: 440).background(Color(nsColor: .textBackgroundColor))
         }
         .navigationTitle("Mailpipe")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("视图", selection: $filter) {
+                    ForEach(WorkbenchFilter.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).fixedSize()
+            }
+        }
         .sheet(isPresented: $showManual) { ManualSuggestionView(model: model) }
     }
 }
