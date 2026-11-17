@@ -80,6 +80,7 @@
 | 任务 | 入口 |
 |---|---|
 | 产品与架构 | [README.md](README.md)、[DESIGN.md](DESIGN.md) |
+| PRD v0.5 子页面 | [文档索引](docs/README.md) |
 | 找契约与模块 | [Agent 维护参考](docs/agent-reference.md) |
 | 交互 | [交互设计](docs/interaction-design.md) |
 | 邮件 API | [邮件集成](docs/mail-integration.md) |
