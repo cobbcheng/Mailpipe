@@ -88,3 +88,55 @@ final class OnboardingTests: XCTestCase {
         XCTAssertThrowsError(try reopened.beginTest())
     }
 }
+
+@MainActor
+final class OnboardingCompletionTests: XCTestCase {
+    func makeSession(_ fake: FakeReplyModel) throws -> OnboardingSession {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return try OnboardingSession(store: PipelineStore(directory: root), model: { _ in fake })
+    }
+    func testEveryLevelCompletesWithoutHigherLevelCalls() async throws {
+        for level in [ServiceLevel.l0, .l1, .l2] {
+            for manual in [false, true] {
+                let fake = FakeReplyModel(), isolated = try makeSession(fake)
+                let scope = try AccountScope(accountID: "synthetic", accountName: "Synthetic", mailboxName: "INBOX")
+                var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = level
+                draft.suggestionsOnly = manual; draft.extensionAcknowledged = !manual
+                draft.selectedScopes = manual ? [] : [scope]
+                try isolated.save(draft); _ = try isolated.beginTest(); try await isolated.testPipeline.pump()
+                XCTAssertTrue(OnboardingSession.testPassed(try isolated.testResult(), level: level))
+                try isolated.activate(scopes: draft.selections)
+                XCTAssertTrue(try isolated.store.onboarding().completed)
+                XCTAssertEqual(try isolated.store.settings().permission == nil, manual)
+                XCTAssertEqual(try isolated.store.settings().authorizedScopes, draft.selections)
+                let calls = await fake.calls; XCTAssertEqual(calls, level == .l2 ? 2 : 1)
+            }
+        }
+    }
+    func testLevelChangeInvalidatesEvidenceAndNonYesCannotPass() async throws {
+        let fake = FakeReplyModel(), session = try makeSession(fake)
+        var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = .l1
+        try session.save(draft); _ = try session.beginTest(); try await session.testPipeline.pump()
+        draft = try session.store.onboarding(); draft.level = .l2; try session.save(draft)
+        XCTAssertNil(try session.testResult())
+        for decision in ["no", "unknown"] {
+            let other = try makeSession(FakeReplyModel(shouldReply: decision))
+            var input = OnboardingDraft(); input.executable = "/fake/dsh"; input.level = .l1; input.suggestionsOnly = true
+            try other.save(input); _ = try other.beginTest(); try await other.testPipeline.pump()
+            XCTAssertThrowsError(try other.activate(scopes: []))
+        }
+    }
+    func testSuggestionsRevokeAutomaticScopeAndPreservePause() async throws {
+        let session = try makeSession(FakeReplyModel())
+        var settings = PipelineSettings(); settings.paused = true; settings.permission = CapturePermission()
+        settings.scope = try AccountScope(accountID: "synthetic", accountName: "Synthetic", mailboxName: "INBOX")
+        try session.store.saveSettings(settings)
+        var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = .l1; draft.suggestionsOnly = true
+        try session.save(draft); _ = try session.beginTest(); try await session.testPipeline.pump()
+        try session.activate(scopes: [])
+        XCTAssertNil(try session.store.settings().permission)
+        XCTAssertTrue(try session.store.settings().authorizedScopes.isEmpty)
+        XCTAssertTrue(try session.store.settings().paused)
+    }
+}

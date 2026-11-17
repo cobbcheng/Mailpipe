@@ -27,6 +27,7 @@ public struct PipelineSettings: Codable, Sendable {
     public var authorizedScopes: [AccountScope] { scopes ?? scope.map { [$0] } ?? [] }
     public var executable: String?
     public var level: ServiceLevel = .default
+    public var suggestionsOnly: Bool?
     public var paused = false
     public init() {}
 }
@@ -79,6 +80,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var decisionData: Data?
     public var draftData: Data?
     public var runs: [PipelineRun] = []
+    public var manualExecutable: String? // Host-only, single-message confirmation; never imported from the spool.
     public var syntheticAuthorized = false
     public var triageRequest: ReplyTriageRequest { ReplyTriageRequest(requestID: id + "-triage", message: input) }
     public var decision: ReplyDecision? { decisionData.flatMap { try? ReplyDecision.validated($0, for: triageRequest) } }
@@ -170,7 +172,8 @@ public final class PipelineStore {
             var settings = try settings()
             var completed = draft; completed.completed = true
             settings.scope = nil; settings.scopes = scopes; settings.executable = draft.executable; settings.level = draft.level
-            settings.permission = CapturePermission(exactSubject: draft.exactSubject.isEmpty ? nil : draft.exactSubject)
+            settings.suggestionsOnly = draft.isSuggestionsOnly
+            settings.permission = draft.isSuggestionsOnly ? nil : CapturePermission(exactSubject: draft.exactSubject.isEmpty ? nil : draft.exactSubject)
             settings.revision = UUID() // Preserve existing pause; never resume implicitly.
             try saveSettings(settings); try saveOnboarding(completed)
             try execute("COMMIT")

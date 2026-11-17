@@ -20,6 +20,7 @@ final class PendingModel: ObservableObject {
     @Published var onboardingResult: StoredReply?
     @Published var onboardingBusy = false
     @Published var onboardingIssue: String?
+    @Published var extensionObservation: ExtensionObservation?
     var offeredOnboarding = false
     private var onboardingSession: OnboardingSession?
     private var onboardingTask: Task<Void, Never>?
@@ -55,6 +56,7 @@ final class PendingModel: ObservableObject {
             })
             onboardingSession = try OnboardingSession(store: store)
             onboarding = try store.onboarding()
+            attemptedMailboxDiscovery = onboarding.automationDenied == true
             onboardingResult = try onboardingSession?.testResult()
             settings = try store.settings()
             // Reconcile a crash between authoritative policy and extension snapshot updates.
@@ -80,18 +82,20 @@ final class PendingModel: ObservableObject {
     }
 
     func loadMailboxes() {
-        guard !mailboxLoading else { return }
+        guard !mailboxLoading, !onboarding.isSuggestionsOnly else { return }
         attemptedMailboxDiscovery = true; mailboxLoading = true; mailboxIssue = nil
         Task { @MainActor in
             await Task.yield()
             defer { mailboxLoading = false }
             do {
                 mailboxChoices = try discoverMailboxChoices()
+                onboarding.automationDenied = false; saveOnboarding()
                 if mailboxChoices.isEmpty { mailboxIssue = "Apple Mail 尚未发现可用账户的收件箱。请先在 Mail 添加账户，再刷新。" }
             } catch {
                 mailboxChoices = []
                 if case IdentityQueryError.automation(-1743) = error {
-                    mailboxIssue = "Mail 自动化权限被拒绝。请在系统设置允许 Mailpipe 访问邮件后，主动点击重新读取。草案保留，不会外发邮件。"
+                    onboarding.automationDenied = true; saveOnboarding()
+                    mailboxIssue = "Mail 自动化权限被拒绝。可以选择“逐封建议”，手动粘贴并确认一封内容；不会自动读取或外发。"
                 } else if case IdentityQueryError.automation(let code) = error {
                     mailboxIssue = "无法读取账户列表（\(code)），请确认 Mail 可用后重新读取。"
                 } else { mailboxIssue = "无法读取账户列表，请确认 Mail 可用后重新读取。" }
@@ -151,7 +155,7 @@ final class PendingModel: ObservableObject {
         catch { onboardingIssue = Self.code(error) }
     }
     func finishOnboarding() {
-        guard !onboardingBusy, hasSharedInbox, let session = onboardingSession, let pipeline else {
+        guard !onboardingBusy, (onboarding.isSuggestionsOnly || hasSharedInbox), let session = onboardingSession, let pipeline else {
             onboardingIssue = "共享容器不可用；可保存草案，不能授权采集。"; return
         }
         guard !onboarding.completed else { return }
@@ -162,18 +166,21 @@ final class PendingModel: ObservableObject {
             do {
                 let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
                 guard report.supportsSyntheticProbe, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
-                let current = try discoverMailboxChoices()
-                mailboxChoices = current
-                guard !snapshot.selections.isEmpty, snapshot.selections.allSatisfy({ current.contains($0) }) else { throw IdentityQueryError.invalidScope }
-                try session.activate(scopes: snapshot.selections)
+                if !snapshot.isSuggestionsOnly {
+                    let current = try discoverMailboxChoices()
+                    mailboxChoices = current
+                    guard !snapshot.selections.isEmpty, snapshot.selections.allSatisfy({ current.contains($0) }) else { throw IdentityQueryError.invalidScope }
+                }
+                try session.activate(scopes: snapshot.isSuggestionsOnly ? [] : snapshot.selections)
                 let active = try session.store.settings()
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding(); refresh()
-                onboardingIssue = active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
+                onboardingIssue = active.suggestionsOnly == true ? "逐封建议已就绪；每封提交前需确认内容和工具。" : active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
             } catch let error as IdentityQueryError {
                 switch error {
                 case .automation(-1743):
-                    onboardingIssue = "Mail 自动化权限被拒绝（-1743）。未保存新授权；草案和已有结果保留。可稍后在系统设置 → 隐私与安全性 → 自动化中允许 Mailpipe 控制邮件，再主动确认。"
+                    onboarding.automationDenied = true; saveOnboarding()
+                    onboardingIssue = "Mail 自动化权限被拒绝（-1743）。未保存新授权；草案和已有结果保留。可返回选择“逐封建议”，无需 Mail 自动化权限。"
                 case .automation(let code):
                     onboardingIssue = "Mail 账户核验失败（\(code)）。未保存新授权；草案保留。"
                 case .invalidScope:
@@ -185,9 +192,28 @@ final class PendingModel: ObservableObject {
         }
     }
 
+    var onboardingTestPassed: Bool { OnboardingSession.testPassed(onboardingResult, level: onboarding.level) }
+    func useSuggestions() {
+        onboarding.suggestionsOnly = true
+        saveOnboarding()
+    }
+    func confirmManual(id: UUID, subject: String, body: String, executable: String) -> Bool {
+        do {
+            guard let pipeline else { return false }
+            selectedID = try pipeline.enqueueManual(id: id, subject: subject, body: body, executable: executable)
+            refresh(); return true
+        } catch { issue = "逐封确认未完成：\(Self.code(error))"; return false }
+    }
+    func openExtensionSettings() {
+        guard let url = URL(string: "mail-pref-pane://extensionspref") else { return }
+        if !NSWorkspace.shared.open(url) {
+            onboardingIssue = "无法打开设置页。请打开 Mail，进入邮件 → 设置 → 扩展。"
+        }
+    }
     func refresh() {
         guard let pipeline else { return }
         do {
+            extensionObservation = try? ExtensionObservation.read(from: pipeline.inbox)
             records = try pipeline.store.records(); settings = try pipeline.store.settings()
             if let problem = try pipeline.store.issue() { issue = "采集提示：\(problem)" }
         } catch { issue = Self.code(error) }
@@ -215,7 +241,7 @@ final class PendingModel: ObservableObject {
         catch { issue = Self.code(error) }
     }
     func revoke() {
-        do { try change { $0.permission = nil; $0.scope = nil; $0.scopes = nil } }
+        do { try change { $0.permission = nil; $0.scope = nil; $0.scopes = nil; $0.suggestionsOnly = false } }
         catch { issue = Self.code(error) }
     }
     func recheck(_ id: String) {
@@ -268,6 +294,7 @@ struct PendingWorkbench: View {
     @ObservedObject var model: PendingModel
     @State private var showSettings = false
     @State private var onlyPending = true
+    @State private var showManual = false
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -280,6 +307,9 @@ struct PendingWorkbench: View {
                 Text(model.settings.paused ? "已暂停" : "运行中")
                 Button(model.settings.paused ? "恢复处理" : "暂停处理", action: model.togglePause)
                 Button("新手引导") { model.editOnboarding(); openWindow(id: "onboarding") }
+                if model.settings.suggestionsOnly == true {
+                    Button("逐封建议…") { showManual = true }.disabled(model.settings.paused)
+                }
                 Button("账户与设置") { showSettings.toggle() }
             }
             if let issue = model.issue { Text(issue).font(.callout).foregroundStyle(.secondary) }
@@ -309,6 +339,7 @@ struct PendingWorkbench: View {
                         VStack(alignment: .leading, spacing: 14) {
                             Text(item.input.subject).font(.title2)
                             Text(item.state.label).font(.headline)
+                            if item.manualExecutable != nil { Text("用户逐封确认 · 未核验 Mail 账户 · 不修改邮件").font(.caption) }
                             if let error = item.error { Text("原因：\(error)").foregroundStyle(.secondary) }
                             if let decision = item.decision {
                                 Text("要不要回复：\(decision.shouldReply.rawValue)")
@@ -345,7 +376,8 @@ struct PendingWorkbench: View {
             if !model.onboarding.completed && !model.offeredOnboarding {
                 model.offeredOnboarding = true; openWindow(id: "onboarding")
             }
-        }.sheet(isPresented: $showSettings) {
+        }.sheet(isPresented: $showManual) { ManualSuggestionView(model: model) }
+        .sheet(isPresented: $showSettings) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("账户与处理范围").font(.title2)
                 Text("新邮件先在本机暂存；只有在所选账户与邮箱中唯一核验后，才交给 DeepSeek 官方模型。正文最长 16 KiB，仅支持单段纯文本；其他格式会显示待核对。")

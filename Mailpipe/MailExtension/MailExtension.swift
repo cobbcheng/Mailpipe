@@ -6,10 +6,12 @@ nonisolated final class MailExtension: NSObject, MEExtension {
     private let logger = Logger(subsystem: "com.mailpipe.app", category: "identity-probe")
     override init() {
         super.init()
+        observeExtension(.initialized)
         logger.notice("probe_v2 extension_initialized")
     }
     func handlerForMessageActions() -> any MEMessageActionHandler {
         logger.notice("probe_v2 handler_requested")
+        observeExtension(.handlerRequested)
         return MessageActionHandler()
     }
 }
@@ -27,6 +29,7 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
         guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
             logger.error("probe_v2 container_unavailable"); return
         }
+        observeExtension(.messageReceived)
         // Production capture is local-only; the host must resolve an authorized account before dispatch.
         do {
             let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
@@ -82,4 +85,12 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
             logger.error("probe_v2 receipt_verify_failed code=\(failure.rawValue, privacy: .public)")
         } catch { logger.error("probe_v2 capture_failed") }
     }
+}
+
+nonisolated private func observeExtension(_ event: ExtensionObservation.Event) {
+    guard let group = Bundle.main.object(forInfoDictionaryKey: "MailpipeAppGroup") as? String,
+          !group.hasPrefix("."),
+          let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group),
+          let inbox = try? CaptureInbox(directory: root.appendingPathComponent("inbox")) else { return }
+    try? ExtensionObservation(event: event, build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown").write(to: inbox)
 }
