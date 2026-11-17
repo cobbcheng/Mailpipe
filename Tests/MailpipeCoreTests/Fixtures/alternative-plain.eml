@@ -1,0 +1,12 @@
+Content-Type: multipart/alternative; boundary=bound
+MIME-Version: 1.0
+
+--bound
+Content-Type: text/plain; charset=utf-8
+
+Use the plain part.
+--bound
+Content-Type: text/html; charset=utf-8
+
+<p>HTML only sentence that must not win.</p>
+--bound--

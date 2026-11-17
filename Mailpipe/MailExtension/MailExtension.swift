@@ -37,9 +37,9 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
                 let ids = (message.headers ?? [:]).filter { $0.key.lowercased() == "message-id" }.flatMap(\.value)
                 let messageID = ids.count == 1 ? ids[0].trimmingCharacters(in: CharacterSet(charactersIn: "<> ")) : nil
                 if let raw = message.rawData {
-                    let oversized = raw.count > 65_536
+                    let oversized = raw.count > MailBodyLimits.rawCeiling
                     try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID,
-                        raw: oversized ? nil : raw, issue: oversized ? "messageTooLarge" : nil))
+                        raw: oversized ? nil : raw, issue: oversized ? MailBodyRejection.messageTooLarge.rawValue : nil))
                 } else if try inbox.claimBody(permission: permission, subject: message.subject, messageID: messageID) {
                     try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID, raw: nil))
                     decision = .invokeAgainWithBody

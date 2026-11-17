@@ -1,0 +1,11 @@
+Content-Type: text/html; charset=utf-8
+
+<html><head><style>p{color:red}</style><script>var tracker=1</script></head><body>
+<div style="display:none">secret tracking phrase</div>
+<p>Hello,</p>
+<p>Please review the <a href="https://example.com/invoice">invoice</a>.</p>
+<ul><li>Amount due</li><li>Due Friday</li></ul>
+<img src="https://example.com/pixel.gif" width="1" height="1" alt="">
+<blockquote>On Monday Alex wrote:<br>Old thread</blockquote>
+<p>Thanks</p>
+</body></html>

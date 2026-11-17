@@ -1,6 +1,7 @@
 import Foundation
-import Darwin
 import MailpipeCore
+#if os(macOS)
+import Darwin
 
 /// A dedicated process group, bounded nonblocking pipes, and one worker per call.
 /// This manages process lifetime; it is NOT a security sandbox.
@@ -134,3 +135,12 @@ public struct POSIXProcessRunner: ProcessRunning {
         return ProcessOutput(stdout: stdout, stderr: stderr, exitCode: exitCode)
     }
 }
+#else
+/// Linux unit tests do not spawn harness processes. macOS keeps the Darwin runner.
+public struct POSIXProcessRunner: ProcessRunning {
+    public init() {}
+    public func run(_ invocation: ProcessInvocation) async throws -> ProcessOutput {
+        throw MailpipeError.launchFailed
+    }
+}
+#endif

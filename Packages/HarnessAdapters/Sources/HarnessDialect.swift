@@ -1,5 +1,7 @@
 import Foundation
+#if os(macOS)
 import CoreFoundation
+#endif
 import MailpipeCore
 
 public protocol HarnessDialect: Sendable {
@@ -11,8 +13,13 @@ public protocol HarnessDialect: Sendable {
 }
 
 func tokenCount(_ value: Any?) -> Int? {
-    guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-          number.doubleValue >= 0, number.doubleValue < Double(Int.max),
+#if os(macOS)
+    guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+#else
+    if value is Bool { return nil }
+    guard let number = value as? NSNumber else { return nil }
+#endif
+    guard number.doubleValue >= 0, number.doubleValue < Double(Int.max),
           number.doubleValue.rounded() == number.doubleValue else { return nil }
     return number.intValue
 }

@@ -172,7 +172,7 @@ struct OnboardingView: View {
                     Text("\(box.accountName) · 收件箱")
                 }
                 Text("主题范围：\(model.onboarding.exactSubject.isEmpty ? "所选账户收件箱的未来新邮件" : model.onboarding.exactSubject)")
-                Text("发送字段：主题和有界单段纯文本正文（最多 16 KiB）；复杂 MIME 与附件不处理。交给所选 DeepSeek Harness，再到 DeepSeek 官方模型。")
+                Text("发送字段：主题，以及从邮件提取的纯文本（最多 16 KiB）。HTML 和常见 multipart 会先转成文本。加密、仅附件或无法阅读的正文转待核对。附件内容不交给模型。交给所选 DeepSeek Harness，再到 DeepSeek 官方模型。")
                 extensionStatus
             }
             Text("所选级别测试：\(model.onboardingTestPassed ? "通过" : "未通过")")

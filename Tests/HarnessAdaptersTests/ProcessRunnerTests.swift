@@ -1,4 +1,5 @@
 import XCTest
+#if os(macOS)
 import Darwin
 @testable import HarnessAdapters
 import MailpipeCore
@@ -110,3 +111,4 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
     }
 }
+#endif

@@ -146,8 +146,25 @@ final class PipelineTests: XCTestCase {
         try pipeline.importInbox()
         XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
         XCTAssertEqual(try pipeline.store.issue(), "invalidCapture")
-        XCTAssertThrowsError(try PlainMailBody.decode(Data("Content-Type: multipart/mixed; boundary=x\r\n\r\nbody".utf8)))
+        XCTAssertThrowsError(try PlainMailBody.decode(Data("Content-Type: multipart/mixed; boundary=x\r\n\r\nbody".utf8))) { error in
+            XCTAssertEqual(error as? MailBodyRejection, .malformedMIME)
+        }
         XCTAssertEqual(try PlainMailBody.decode(Data("Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nPlease=20reply".utf8)), "Please reply")
+        let html = Data("Content-Type: text/html; charset=utf-8\r\n\r\n<p>Please reply</p>".utf8)
+        let imported = InboundCapture(permissionID: try XCTUnwrap(pipeline.store.settings().permission).id,
+            subject: "Synthetic", messageID: "html@example.com", raw: html)
+        try pipeline.inbox.publish(imported)
+        try pipeline.importInbox()
+        let record = try XCTUnwrap(pipeline.store.records().first { $0.messageID == "html@example.com" })
+        XCTAssertEqual(record.input.body, "Please reply")
+        XCTAssertEqual(record.state, .awaitingAccount)
+        XCTAssertNil(record.error)
+        let sealed = Data("Content-Type: application/pkcs7-mime; smime-type=enveloped-data\r\n\r\nsecret".utf8)
+        try pipeline.inbox.publish(InboundCapture(permissionID: imported.permissionID, subject: "Synthetic", messageID: "sealed@example.com", raw: sealed))
+        try pipeline.importInbox()
+        let rejected = try XCTUnwrap(pipeline.store.records().first { $0.messageID == "sealed@example.com" })
+        XCTAssertEqual(rejected.state, .needsReview)
+        XCTAssertEqual(rejected.error, MailBodyRejection.encryptedContent.rawValue)
     }
 }
 

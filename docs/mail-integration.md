@@ -22,7 +22,59 @@ Google IMAP 单封合成样本已通过完整链路。
 
 `UnavailableMailBridge` 仍是写操作路径的占位边界。
 没有整理、草稿交接或发送能力。
-广泛 MIME、跨邮箱兼容和菜单栏独立点击未验证。
+正文提取已有隔离测试。Mail 实机格式、跨邮箱兼容和菜单栏独立点击未验证。
+
+## 正文提取
+
+解析在本机完成。
+不下载 HTML 里的图片或跟踪资源。
+不把附件字节交给模型。
+
+| 会提取 | 处理 |
+|---|---|
+| text/plain | 解码传输编码和字符集 |
+| text/html | 转成纯文本。去掉脚本、样式和隐藏块 |
+| multipart/alternative | 优先 text/plain。没有可用纯文本时用 HTML |
+| multipart/mixed、related | 取正文。附件只记名称和类型 |
+| 嵌套 multipart、message/rfc822 | 继续提取可读正文 |
+| multipart/signed、PGP 清签名 | 读取已有明文。不验证签名 |
+
+| 待核对原因 | 含义 |
+|---|---|
+| messageTooLarge | 原文超过 4 MiB |
+| encryptedContent | S/MIME 或 PGP 加密，无法阅读 |
+| signedOpaque | 不透明签名，没有可读正文 |
+| attachmentOnly | 只有附件，没有正文 |
+| calendarOnly | 只有日历邀请 |
+| malformedMIME | 结构或传输编码无法解析 |
+| unsupportedCharset | 字符集不支持，或字节无效 |
+| unsupportedContent | 例如 text/enriched |
+| emptyBody | 提取结果为空 |
+
+| 上限 | 值 | 原因 |
+|---|---|---|
+| 原始邮件 | 4 MiB | 暂存和全文身份比对的硬顶 |
+| 暂存文件 | 6 MiB | Base64 后的 JSON 捕获 |
+| 解码工作集 | 256 KiB | 先截断，再裁引用 |
+| 交给模型 | 16 KiB | 与分拣和草稿契约相同 |
+| MIME 深度 | 8 | 更深视为畸形 |
+| MIME 部分 | 64 | 更多视为畸形 |
+
+字符集允许 UTF-8、US-ASCII、GBK、GB2312、GB18030、Big5、ISO-2022-JP。
+也允许 ISO-8859-1 至 16（不含 12）和 windows-1250 至 1258。
+标成 GB2312 的邮件按 GBK 解码。
+GB2312 是 GBK 的子集，真实邮件常把 GBK 标成 GB2312。
+传输编码允许 7bit、8bit、binary、base64 和 quoted-printable。
+RFC 2047 头和 RFC 2231 附件名在本机解码。
+Mail 提供的主题仍用 MailKit 已经解码的值。
+超过 16 KiB 时，先去掉文末引用和 `-- ` 签名，再硬截断。
+标记是 `[quoted history trimmed]`、`[signature trimmed]` 和 `[truncated]`。
+附件记成 `[attachments: 名称 (类型)]`。
+QP 或 base64 的中文原文仍是 ASCII，全文摘要可以比对。
+8bit 且不是 UTF-8 的原文，摘要可能为空。
+这种情况会停在身份待核对。实机表现未验证。
+
+实机核对尚未执行。
 
 ## 1. 核心结论
 
@@ -53,7 +105,8 @@ MailKit 能在下载邮件时返回动作。
 | 自动发送 | 无主动 send API | P2 独立桥接 | 本轮不实现 |
 
 `rawData` 包含原始邮件内容，需自行解析。[A4]
-M0 不自动解析或发送附件内容。
+M0 正文探针仍只检查合成标记。
+生产分拣使用上面的正文提取，不把附件字节交给模型。
 不把网页示例的旧 `bodyData` 名称写入实现契约。
 以所选 SDK 的 `rawData` 声明为准。
 

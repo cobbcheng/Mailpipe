@@ -1,4 +1,5 @@
 import Foundation
+import MailpipeCore
 
 public enum IdentityQueryError: Error { case invalidScope, automation(Int), invalidResult }
 public struct IdentityQuery: Sendable {
@@ -46,6 +47,9 @@ public enum AppleMailIdentityProbe {
     end probe
     """
     public static func run(_ query: IdentityQuery) throws -> IdentityQueryResult {
+#if !os(macOS)
+        throw IdentityQueryError.invalidResult
+#else
         guard let script = NSAppleScript(source: scriptSource) else { throw IdentityQueryError.invalidResult }
         var error: NSDictionary?
         let event = NSAppleEventDescriptor(eventClass: 0x61736372, eventID: 0x70736272,
@@ -63,6 +67,7 @@ public enum AppleMailIdentityProbe {
               result.numberOfItems == (status == "uniqueInScope" ? 3 : 1) else { throw IdentityQueryError.invalidResult }
         return IdentityQueryResult(status: status, accountID: result.atIndex(2)?.stringValue,
                                    localMessageID: result.atIndex(3)?.stringValue)
+#endif
     }
 }
 
@@ -115,6 +120,9 @@ public enum AppleMailReplyIdentity {
     end listMailboxes
     """
     public static func inboxes() throws -> [MailboxChoice] {
+#if !os(macOS)
+        throw IdentityQueryError.invalidResult
+#else
         let result = try call(source: catalogScript, handler: "listMailboxes", arguments: [])
         var choices: [MailboxChoice] = []
         guard result.numberOfItems <= 2000 else { throw IdentityQueryError.invalidResult }
@@ -131,7 +139,9 @@ public enum AppleMailReplyIdentity {
             choices.append(MailboxChoice(accountID: accountID, accountName: accountName, path: path))
         }
         return choices
+#endif
     }
+    // 4194304 matches MailBodyLimits.rawCeiling.
     public static let scriptSource = """
     \(mailboxPathScript)
     on resolveReply(accountID, mailboxName, targetID, expectedSubject, mailboxPath)
@@ -156,13 +166,16 @@ public enum AppleMailReplyIdentity {
                 if (subject of hit) is not expectedSubject then return {"unresolved"}
                 if (id of account of mailbox of hit) is not accountID then return {"unresolved"}
                 set rawSource to source of hit
-                if (count of characters of rawSource) > 65536 then return {"unresolved"}
+                if (count of characters of rawSource) > 4194304 then return {"unresolved"}
                 return {"unique", id of chosenAccount as text, id of hit as text, rawSource}
             end tell
         end timeout
     end resolveReply
     """
     public static func resolve(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil) throws -> Match? {
+#if !os(macOS)
+        throw IdentityQueryError.invalidResult
+#else
         let values = [accountID, mailboxName, messageID, subject]
         guard values.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2_048 }) else { throw IdentityQueryError.invalidScope }
         let path = mailboxPath ?? []
@@ -171,9 +184,11 @@ public enum AppleMailReplyIdentity {
         guard result.atIndex(1)?.stringValue == "unique", result.numberOfItems == 4,
               let account = result.atIndex(2)?.stringValue, account == accountID,
               let local = result.atIndex(3)?.stringValue,
-              let source = result.atIndex(4)?.stringValue, source.utf8.count <= 65_536 else { return nil }
+              let source = result.atIndex(4)?.stringValue, source.utf8.count <= MailBodyLimits.rawCeiling else { return nil }
         return Match(accountID: account, localID: local, source: source)
+#endif
     }
+#if os(macOS)
     private static func call(source: String, handler: String, arguments: [String], path: [String]? = nil) throws -> NSAppleEventDescriptor {
         guard let script = NSAppleScript(source: source) else { throw IdentityQueryError.invalidResult }
         let event = NSAppleEventDescriptor(eventClass: 0x61736372, eventID: 0x70736272, targetDescriptor: nil, returnID: -1, transactionID: 0)
@@ -191,4 +206,5 @@ public enum AppleMailReplyIdentity {
         if let error { throw IdentityQueryError.automation((error[NSAppleScript.errorNumber] as? Int) ?? -1) }
         return result
     }
+#endif
 }

@@ -1,5 +1,6 @@
 import XCTest
 @testable import MailBridge
+import MailpipeCore
 
 final class IdentityQueryTests: XCTestCase {
     func testMissingScopeCannotQuery() {
@@ -12,6 +13,11 @@ final class IdentityQueryTests: XCTestCase {
         XCTAssertEqual(query.messageID, "synthetic@example.com")
         XCTAssertEqual(query.accountName, "test\" & do shell script")
     }
+    @MainActor func testSourceCeilingMatchesBodyLimit() {
+        XCTAssertTrue(AppleMailReplyIdentity.scriptSource.contains(String(MailBodyLimits.rawCeiling)))
+        XCTAssertFalse(AppleMailReplyIdentity.scriptSource.contains("65536"))
+    }
+#if os(macOS)
     @MainActor func testFixedReadOnlyScriptCompilesWithoutExecuting() {
         for source in [AppleMailReplyIdentity.catalogScript, AppleMailReplyIdentity.scriptSource] {
             let script = NSAppleScript(source: source)!
@@ -22,4 +28,5 @@ final class IdentityQueryTests: XCTestCase {
         var error: NSDictionary?
         XCTAssertTrue(script.compileAndReturnError(&error), "\(String(describing: error))")
     }
+#endif
 }

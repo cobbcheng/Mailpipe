@@ -1,0 +1,11 @@
+Content-Type: multipart/alternative; boundary=bound
+
+--bound
+Content-Type: text/plain; charset=utf-8
+
+
+--bound
+Content-Type: text/html; charset=utf-8
+
+<p>Hello from HTML</p>
+--bound--

@@ -362,7 +362,7 @@ struct PendingWorkbench: View {
                             Text(item.input.subject).font(.title2)
                             Text(item.state.label).font(.headline)
                             if item.manualExecutable != nil { Text("用户逐封确认 · 未核验 Mail 账户 · 不修改邮件").font(.caption) }
-                            if let error = item.error { Text("原因：\(error)").foregroundStyle(.secondary) }
+                            if let error = item.error { Text("原因：\(MailBodyRejection(rawValue: error)?.reviewLabel ?? error)").foregroundStyle(.secondary) }
                             if let decision = item.decision {
                                 Text("要不要回复：\(decision.shouldReply.rawValue)")
                                 ForEach(decision.summary, id: \.self) { Text($0) }
@@ -402,7 +402,7 @@ struct PendingWorkbench: View {
         .sheet(isPresented: $showSettings) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("账户与处理范围").font(.title2)
-                Text("新邮件先在本机暂存；只有在所选账户与邮箱中唯一核验后，才交给 DeepSeek 官方模型。正文最长 16 KiB，仅支持单段纯文本；其他格式会显示待核对。")
+                Text("新邮件先在本机暂存。所选账户与邮箱唯一核验后，才交给 DeepSeek 官方模型。模型只看提取后的纯文本，最长 16 KiB。HTML 和常见 multipart 会先转成文本。加密、仅附件或无法阅读的邮件显示待核对。")
                     .font(.callout).foregroundStyle(.secondary)
                 Text("处理范围请通过五步向导修改。保存草案不会改变当前授权。")
                 Button("打开新手引导") { showSettings = false; model.editOnboarding(); openWindow(id: "onboarding") }
