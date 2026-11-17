@@ -67,7 +67,7 @@ L0/L1 只测试分拣，L2 另测备稿。
 | 产品范围和 PRD v0.5 | [产品方案](docs/product.md) |
 | 路线图重排（对照 PRD v0.5） | [路线图重排](docs/product/roadmap-v0.5.md) |
 | 假设确认与措辞修订 | [假设与措辞](docs/product/assumptions-and-wording.md) |
-| 好回复标准与用户画像 | [好回复标准](docs/product/good-reply-standard.md) |
+| 好回复标准与 harness 记忆提示 | [好回复标准](docs/product/good-reply-standard.md) |
 | 文档总索引 | [docs/README.md](docs/README.md) |
 | 页面、流程和异常态 | [交互设计](docs/interaction-design.md) |
 | 首次设置与首封草稿 | [新手引导 PRD](docs/onboarding.md) |
