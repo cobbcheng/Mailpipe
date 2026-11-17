@@ -2,8 +2,9 @@
 
 状态：一期支持 DeepSeek Harness 与 Codex CLI。
 两个 Adapter 已通过隔离回归和真实合成探测。
-真实邮件与 Mailpipe 工具挂载仍未开放。
+Mailpipe 工具挂载仍未开放；Codex 真实邮件入口未接入。
 更新：2026-11-16。入站调用改为无工具的分拣和草稿。
+更新：2026-11-17。移除旧分类探测与离线样例。
 证据见 [DeepSeek 实测](validation/2026-11-16-deepseek-harness.md)。
 Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 
@@ -13,10 +14,7 @@ Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 |---|---|
 | `HarnessDiscovery.find()` | 只查可执行文件，不读取凭据 |
 | `inspect()` | 执行版本和帮助，检查完整参数名 |
-| `runSyntheticProbe()` | 固定合成请求；stdin 输入；结构化输出 |
 | `run(ReplyModelTask, route, authorize)` | DeepSeek 受限回复；调用前重查宿主授权 |
-| `classifyMail()` | 校验账户后返回 `unsafeCapability`；零进程调用 |
-| `OfflineProbe.run()` | 本地包装解析；无子进程或模型 |
 
 DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
 每次创建独立 DSH_HOME，加载应用自有配置。
@@ -30,13 +28,10 @@ DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
 正常结束删除临时会话；硬崩溃残留未验证。
 这些限制不构成操作系统级沙盒。
 
-Codex 使用 JSONL、schema、read-only 与临时会话。
-合成探测忽略用户配置和规则，并关闭 shell、图片及搜索工具。
-这不代表完整的无工具隔离。
-该模式未验证自定义 provider / model 配置兼容性。
+Codex 目前只做发现、版本和参数检查。
+真实邮件调用尚未接入，也没有可用入口。
 DeepSeek 回复路径已接入单账户授权与持久化队列。
 未知账户不能派发；不使用其他 Harness 自动回退。
-旧 classifyMail 与 Codex 真实邮件入口仍被阻断。
 
 Runner 使用独立进程组、非阻塞管道和单个工作线程。
 原因是 stderr 堵塞会阻止 stdin 写入和取消。
@@ -48,14 +43,14 @@ Runner 使用独立进程组、非阻塞管道和单个工作线程。
 
 输入上限为 10 封；单封正文上限为 16 KiB。
 stdout 与 stderr 总上限为 1 MiB。
-真实模型探测最长 120 秒；元数据检查最长 10 秒。
+模型调用最长 120 秒；元数据检查最长 10 秒。
 这些是工程保护值，尚无吞吐量实测依据。
 
 输出拒绝多余字段、缺项、重复和批次外 ID。
 证据必须来自输入的 subject 或 body。
 错误展示只返回错误码，不展示原始输出。
-参数齐全只允许合成探测，不解除真实邮件阻断。
-当前代码仍使用空工具集，并阻断真实邮件。
+参数齐全只用于启动前检查，不构成安全认证。
+当前代码仍使用空工具集；Codex 真实邮件入口未接入。
 下文第 8 节是已确认、尚未实现的工具边界。
 
 ## 1. 问题与接入选择

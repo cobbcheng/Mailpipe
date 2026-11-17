@@ -1,19 +1,29 @@
 import XCTest
 @testable import MailpipeCore
 
+private enum Fixture {
+    static let request = ClassificationRequest(requestID: "synthetic-classification-v1", messages: [
+        MailInput(messageRef: "synthetic-invoice", subject: "Example invoice",
+                  body: "Synthetic invoice from shop@example.com. No payment is required. This is test data.")
+    ])
+    static let response = Data(#"""
+    {"schema_version":1,"request_id":"synthetic-classification-v1","results":[{"message_ref":"synthetic-invoice","category":"billing","needs_action":"no","summary":["A synthetic invoice requiring no payment."],"evidence":[{"field":"subject","text":"Example invoice"}]}]}
+    """#.utf8)
+}
+
 final class ClassificationTests: XCTestCase {
     private func changed(_ mutate: (inout [String: Any]) -> Void) throws -> Data {
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: SyntheticFixture.response) as? [String: Any])
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Fixture.response) as? [String: Any])
         mutate(&object)
         return try JSONSerialization.data(withJSONObject: object)
     }
     private func rejected(_ data: Data, error: MailpipeError = .invalidOutput) {
-        XCTAssertThrowsError(try ClassificationResponse.validated(data, for: SyntheticFixture.request)) {
+        XCTAssertThrowsError(try ClassificationResponse.validated(data, for: Fixture.request)) {
             XCTAssertEqual($0 as? MailpipeError, error)
         }
     }
     func testValidResponse() throws {
-        let result = try ClassificationResponse.validated(SyntheticFixture.response, for: SyntheticFixture.request)
+        let result = try ClassificationResponse.validated(Fixture.response, for: Fixture.request)
         XCTAssertEqual(result.results.first?.category, .billing)
         XCTAssertEqual(result.results.first?.needsAction, .no)
     }

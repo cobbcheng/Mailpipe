@@ -164,7 +164,7 @@ Message-ID 是线索，不是跨账户唯一主键。
 
 | 目录 | 当前实现 | 后续职责 |
 |---|---|---|
-| `Mailpipe/App/` | 工作台、菜单栏、工具检测、离线样例 | 引导、待处理、队列与回执 |
+| `Mailpipe/App/` | 工作台、菜单栏、工具检测 | 引导、待处理、队列与回执 |
 | `Mailpipe/MailExtension/` | Action handler 返回 nil | 采集与入站暂存 |
 | `Packages/MailpipeCore/` | 分类契约、严格校验、账户路由 | 分拣、去向标签、规则与持久状态 |
 | `Packages/MailBridge/` | 类型与不可用实现 | 定位、草稿落点、动作与读回 |

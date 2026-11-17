@@ -165,7 +165,7 @@ final class PendingModel: ObservableObject {
             defer { onboardingBusy = false }
             do {
                 let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
-                guard report.supportsSyntheticProbe, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
+                guard report.supportsHeadlessRun, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
                 if !snapshot.isSuggestionsOnly {
                     let current = try discoverMailboxChoices()
                     mailboxChoices = current

@@ -38,7 +38,7 @@ public struct CapabilityReport: Sendable {
     public let installation: HarnessInstallation
     public let version: String
     public let missingFlags: [String]
-    public var supportsSyntheticProbe: Bool { missingFlags.isEmpty }
+    public var supportsHeadlessRun: Bool { missingFlags.isEmpty }
     /// CLI flags alone are never a safety certification.
     public var realMailStatus: String { "unsafeCapability: M0-08 尚未验收" }
 }
