@@ -2,6 +2,7 @@
 
 当前已有工程与签名验证记录，尚无完整功能验收。
 
+- [引导分级测试、扩展回执与逐封建议](2026-11-17-onboarding-completion.md)
 - [DeepSeek Harness 替换与受限验证](2026-11-16-deepseek-harness.md)
 - [单样本移动读回与受限 Harness 实测](2026-11-16-m0-move-harness.md)
 - [移动闭环再次实机验证](2026-11-15-m0-move-retest.md)

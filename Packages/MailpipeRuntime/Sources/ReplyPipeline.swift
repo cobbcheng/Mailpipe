@@ -26,7 +26,7 @@ public final class ReplyPipeline {
         let previous = try store.settings()
         var settings = previous; change(&settings)
         if settings.permission != previous.permission || settings.authorizedScopes != previous.authorizedScopes ||
-            settings.executable != previous.executable || settings.level != previous.level { settings.revision = UUID() }
+            settings.executable != previous.executable || settings.level != previous.level || settings.suggestionsOnly != previous.suggestionsOnly { settings.revision = UUID() }
         // DB is authoritative. A crash before the extension snapshot changes cannot grant a model call.
         try store.saveSettings(settings)
         try inbox.setPermission(settings.paused ? nil : settings.permission)
@@ -88,7 +88,11 @@ public final class ReplyPipeline {
         guard item.capturedAt > Date().addingTimeInterval(-7 * 86_400) else {
             item.state = .needsReview; item.error = "contentExpired"; try store.save(item); return
         }
-        if !item.syntheticAuthorized {
+        if let confirmedTool = item.manualExecutable {
+            guard settings.suggestionsOnly == true, confirmedTool == executable else {
+                item.state = .cancelled; item.error = "revoked"; try store.save(item); return
+            }
+        } else if !item.syntheticAuthorized {
             guard settings.permission?.id == item.permissionID else {
                 item.state = .cancelled; item.error = "revoked"; try store.save(item); return
             }
@@ -146,7 +150,7 @@ public final class ReplyPipeline {
         guard !settings.paused else { throw MailpipeError.paused }
         guard settings.revision == revision, let item = try store.record(id),
               item.state == .triaging || item.state == .drafting,
-              item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
+              (item.manualExecutable == settings.executable && item.manualExecutable != nil && settings.suggestionsOnly == true) || item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
     }
     private func invoke(id: String, task: ReplyModelTask, kind: ReplyTaskKind, executable: String) async throws {
         guard var item = try store.record(id), let revision = item.revision else { throw PipelineError.storage }
@@ -192,6 +196,29 @@ public final class ReplyPipeline {
             }
             try store.save(current)
         }
+    }
+    /// Explicit confirmation authorizes exactly this pasted content and tool, without Mail access.
+    @discardableResult public func enqueueManual(id: UUID, subject: String, body: String, executable: String) throws -> String {
+        let settings = try store.settings()
+        guard settings.suggestionsOnly == true, !settings.paused,
+              settings.executable == executable, executable.hasPrefix("/"),
+              !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              subject.utf8.count <= 998, body.utf8.count <= 16_384 else { throw MailpipeError.invalidInput }
+        let key = id.uuidString
+        if let existing = try store.record(key) {
+            guard existing.manualExecutable == executable, existing.input.subject == subject,
+                  existing.input.body == body else { throw MailpipeError.invalidInput }
+            return key // A repeated confirmation never replays a completed/unknown call.
+        }
+        guard try store.records().count < 1_000 else { throw PipelineError.quota }
+        var item = StoredReply(id: key, permissionID: UUID(), capturedAt: Date(), messageID: nil,
+            input: MailInput(messageRef: key, subject: subject, body: body), state: .queued)
+        item.manualExecutable = executable
+        item.accountID = "explicit-single-message" // Consent route, not a discovered Mail account.
+        item.revision = settings.revision; item.level = settings.level
+        try store.save(item)
+        return key
     }
     /// Explicit user action authorizes only this fixed synthetic input and the selected dsh.
     /// Uses the same spool importer, durable states, model path and pending view as mail.

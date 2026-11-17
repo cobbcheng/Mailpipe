@@ -12,6 +12,10 @@ public struct OnboardingDraft: Codable, Equatable, Sendable {
     public var exactSubject = ""
     public var executable = ""
     public var level: ServiceLevel = .default
+    public var automationDenied: Bool?
+    public var suggestionsOnly: Bool?
+    public var testedLevel: ServiceLevel?
+    public var isSuggestionsOnly: Bool { suggestionsOnly == true }
     public var extensionAcknowledged = false
     public var completed = false
     public var testID: String?
@@ -37,7 +41,7 @@ public final class OnboardingSession {
     public func save(_ value: OnboardingDraft) throws {
         var draft = value
         draft.step = min(5, max(1, draft.step))
-        if draft.testedExecutable != draft.executable || draft.evidenceVersion != Self.evidenceVersion {
+        if draft.testedExecutable != draft.executable || draft.evidenceVersion != Self.evidenceVersion || (draft.testedLevel ?? .l2) != draft.level {
             draft.testID = nil; draft.testedExecutable = nil; draft.evidenceVersion = nil
         }
         try store.saveOnboarding(draft)
@@ -54,8 +58,9 @@ public final class OnboardingSession {
         for item in try testPipeline.store.records() where [.awaitingAccount, .queued, .draftQueued].contains(item.state) {
             try testPipeline.cancel(item.id)
         }
-        try testPipeline.updateSettings { $0.executable = draft.executable; $0.level = .l2 }
+        try testPipeline.updateSettings { $0.executable = draft.executable; $0.level = draft.level }
         let id = try testPipeline.enqueueSynthetic()
+        draft.testedLevel = draft.level
         draft.testID = id; draft.testedExecutable = draft.executable; draft.evidenceVersion = Self.evidenceVersion
         try save(draft)
         return id
@@ -65,13 +70,28 @@ public final class OnboardingSession {
         var draft = try store.onboarding(); draft.testID = nil
         try save(draft)
     }
+    public static func testPassed(_ result: StoredReply?, level: ServiceLevel) -> Bool {
+        guard let result, result.level == level, result.decision?.shouldReply == .yes,
+              result.runs.allSatisfy({ $0.finishedAt != nil && $0.error == nil }) else { return false }
+        switch level {
+        case .l0: return result.state == .noReply && result.runs.count == 1
+        case .l1: return result.state == .needsReply && result.runs.count == 1
+        case .l2: return result.state == .draftReady && result.runs.count == 2
+        }
+    }
     public func activate(scopes: [AccountScope]) throws {
         let draft = try store.onboarding()
         if draft.completed { return }
-        guard draft.extensionAcknowledged, !scopes.isEmpty, scopes == draft.selections,
-              Set(scopes.map(\.id)).count == scopes.count,
-              Set(scopes.map(\.accountID)).count == scopes.count, draft.testedExecutable == draft.executable,
-              draft.evidenceVersion == Self.evidenceVersion, try testResult()?.state == .draftReady else { throw MailpipeError.invalidInput }
+        guard draft.testedExecutable == draft.executable,
+              draft.evidenceVersion == Self.evidenceVersion,
+              Self.testPassed(try testResult(), level: draft.level) else { throw MailpipeError.invalidInput }
+        if draft.isSuggestionsOnly {
+            guard scopes.isEmpty else { throw MailpipeError.invalidInput }
+        } else {
+            guard draft.extensionAcknowledged, !scopes.isEmpty, scopes == draft.selections,
+                  Set(scopes.map(\.id)).count == scopes.count,
+                  Set(scopes.map(\.accountID)).count == scopes.count else { throw MailpipeError.invalidInput }
+        }
         try store.activateOnboarding(draft, scopes: scopes)
     }
 }
