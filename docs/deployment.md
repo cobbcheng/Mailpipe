@@ -1,11 +1,12 @@
 # 安装、签名与发布
 
 状态：支持本地开发签名；尚无发布安装包。
-更新：2026-11-15。
+更新：2026-11-17。
 
 ## 1. 当前限制
 
 运行 `./scripts/build-app.sh` 构建宿主与嵌入扩展。
+图标由资源目录编入宿主与扩展，菜单栏使用模板图。
 脚本默认关闭签名；不安装或启用扩展。
 设置 `MAILPIPE_DEVELOPMENT_TEAM` 后使用 Apple Development。
 例如：`MAILPIPE_DEVELOPMENT_TEAM="$TEAM_ID" ./scripts/build-app.sh`。

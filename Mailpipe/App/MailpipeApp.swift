@@ -43,7 +43,7 @@ struct MailpipeApp: App {
             .defaultSize(width: 720, height: 640)
         WindowGroup("工具诊断", id: "diagnostics") { WorkbenchView(model: model) }
         WindowGroup("M0 身份验证", id: "identity-probe") { IdentityProbeView() }
-        MenuBarExtra("Mailpipe", systemImage: "envelope.badge.shield.half.filled") {
+        MenuBarExtra("Mailpipe", image: "MenuBarIcon") {
             PendingMenu(model: pending)
         }.menuBarExtraStyle(.window)
     }
