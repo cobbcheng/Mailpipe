@@ -108,10 +108,9 @@ MailKit 单封合成入站到工作台草稿验证通过。
 暂停和撤权后保留已生成草稿，不继续处理。
 见 [持久化链路验收](docs/validation/2026-11-16-persistent-reply-pipeline.md)。
 菜单栏弹窗独立点击、广泛 MIME 与邮箱兼容性未验证。
-build 8 已完成限定 Google IMAP 的 MIME 合成实测。
-9 个可读样本通过账户核验并交给 fake Harness。
-超大附件和正文重入仍有缺口，完整验收未通过。
-见 [MIME 实机记录](docs/validation/2026-11-17-mime-live.md)。
+build 8 的 MIME 实测发现超限提示和候选残留问题。
+build 9 已修复两项，并通过限定 Google IMAP 复测。
+见 [MIME 复测记录](docs/validation/2026-11-17-mime-fix-retest.md)。
 早期契约见 [回复契约验收](docs/validation/2026-11-16-reply-contracts.md)。
 
 正文重入及宿主退出、Mail 重启后的单样本采集已实测通过。
