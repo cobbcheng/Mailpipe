@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Deterministic, dependency-free generator for the two-target M0 Xcode host project.
 
-Both targets compile Mailpipe/Assets.xcassets. AppIcon is the bundle icon;
-MenuBarIcon is the host menu-bar template image.
+Both targets compile design/icon/AppIcon.icon and Mailpipe/Assets.xcassets.
+AppIcon is the bundle icon; MenuBarIcon is the host menu-bar template image.
 """
 import hashlib
 import json
@@ -39,6 +39,8 @@ ext_product = obj('ext-product', 'PBXFileReference', explicitFileType='wrapper.a
 package = obj('package', 'XCLocalSwiftPackageReference', relativePath='.')
 asset_catalog = obj('asset-catalog', 'PBXFileReference', lastKnownFileType='folder.assetcatalog',
                     path='Mailpipe/Assets.xcassets', sourceTree='SOURCE_ROOT')
+app_icon = obj('native-app-icon', 'PBXFileReference', lastKnownFileType='folder.icon',
+               path='design/icon/AppIcon.icon', sourceTree='SOURCE_ROOT')
 source_groups = []
 target_ids = []
 for label, source_dir, product, product_type in (
@@ -65,8 +67,9 @@ for label, source_dir, product, product_type in (
     frameworks = obj(label + '-frameworks', 'PBXFrameworksBuildPhase', buildActionMask='2147483647',
                      files=framework_files, runOnlyForDeploymentPostprocessing='0')
     asset_build = obj(label + '-asset', 'PBXBuildFile', fileRef=asset_catalog)
+    icon_build = obj(label + '-native-icon', 'PBXBuildFile', fileRef=app_icon)
     resources = obj(label + '-resources', 'PBXResourcesBuildPhase', buildActionMask='2147483647',
-                    files=[asset_build], runOnlyForDeploymentPostprocessing='0')
+                    files=[asset_build, icon_build], runOnlyForDeploymentPostprocessing='0')
     phases, dependencies = [sources, frameworks, resources], []
     if label == 'Mailpipe':
         embed = obj('embed-extension-file', 'PBXBuildFile', fileRef=ext_product, settings={'ATTRIBUTES':['RemoveHeadersOnCopy']})
@@ -92,7 +95,7 @@ for label, source_dir, product, product_type in (
                           buildPhases=phases, buildRules=[], dependencies=dependencies, name=label, productName=label,
                           productReference=product, productType=product_type, packageProductDependencies=package_products))
 products = obj('products', 'PBXGroup', children=[app_product, ext_product], name='Products', sourceTree='<group>')
-main = obj('main', 'PBXGroup', children=source_groups + [asset_catalog, products], sourceTree='<group>')
+main = obj('main', 'PBXGroup', children=source_groups + [asset_catalog, app_icon, products], sourceTree='<group>')
 project = obj('project', 'PBXProject', attributes={'LastUpgradeCheck':'1600','BuildIndependentTargetsInParallel':'YES'},
               buildConfigurationList=configs('project', {'SDKROOT':'macosx', 'CLANG_ENABLE_MODULES':'YES', 'SWIFT_VERSION':'6.0'}),
               compatibilityVersion='Xcode 14.0', developmentRegion='en', hasScannedForEncodings='0', knownRegions=['en','Base'],

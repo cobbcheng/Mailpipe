@@ -93,8 +93,13 @@ L0/L1 只测试分拣，L2 另测备稿。
 构建脚本不签名、不安装、不启用 Mail 扩展。
 修改工程目标后运行 `python3 scripts/generate-project.py`。
 生成器是工程配置的维护入口，不手改生成文件。
-应用图标和菜单栏图标在 `Mailpipe/Assets.xcassets`。
+菜单栏图标在 `Mailpipe/Assets.xcassets`。
+应用图标使用 `design/icon/AppIcon.icon`。
 源文件与生成脚本在 `design/icon/`。
+运行 `python3 design/icon/build.py` 重新生成图标。
+需安装 CairoSVG 与 Cairo 动态库。
+背景与信封分层，圆角交给系统遮罩。
+PNG 与 ICNS 保留为旧版设计导出。
 
 `inspect dsh|codex /absolute/path` 只检查版本和帮助。
 工具诊断只发现本机工具并检查参数，不调用模型。

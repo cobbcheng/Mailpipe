@@ -6,7 +6,8 @@
 ## 1. 当前限制
 
 运行 `./scripts/build-app.sh` 构建宿主与嵌入扩展。
-图标由资源目录编入宿主与扩展，菜单栏使用模板图。
+原生分层图标编入宿主与扩展。
+菜单栏使用资源目录中的模板图。
 脚本默认关闭签名；不安装或启用扩展。
 设置 `MAILPIPE_DEVELOPMENT_TEAM` 后使用 Apple Development。
 例如：`MAILPIPE_DEVELOPMENT_TEAM="$TEAM_ID" ./scripts/build-app.sh`。

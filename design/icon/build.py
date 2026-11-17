@@ -1,7 +1,7 @@
 """Regenerate Mailpipe icon rasters from the SVGs in this directory.
 
-Requires cairosvg. Writes PNGs, AppIcon.icns, and the design appiconset here,
-then copies the Xcode catalog into Mailpipe/Assets.xcassets.
+Requires cairosvg. Writes the native AppIcon.icon, legacy PNGs, AppIcon.icns,
+and the design appiconset, then syncs Mailpipe/Assets.xcassets.
 """
 import math, json, os, struct, shutil
 from pathlib import Path
@@ -104,6 +104,28 @@ icon=f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" view
 '''
 open(f'{OUT}/icon.svg','w').write(icon)
 print('glyph bbox (centerline)',g['bbox'],'Lm',g['Lm'],'w',g['w'])
+# Native macOS icons need a separate background fill. Feeding the legacy
+# inset bitmap to the system places the whole tile over a gray backplate.
+# Keep the legacy catalog above for older systems and design exports.
+native = OUT / 'AppIcon.icon'
+(native / 'Assets').mkdir(parents=True, exist_ok=True)
+foreground = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  {glyph_svg_path(g,512,512+OPT_DY,FG)}
+</svg>
+'''
+(native / 'Assets' / 'Envelope.svg').write_text(foreground)
+native_manifest = {
+    'fill': {'solid': 'srgb:0.06667,0.06667,0.06667,1.00000'},
+    'groups': [{
+        'name': 'Envelope',
+        'layers': [{'name': 'Envelope', 'image-name': 'Envelope.svg', 'glass': False}],
+        'shadow': {'kind': 'neutral', 'opacity': 0},
+        'specular': False,
+        'translucency': {'enabled': False, 'value': 0},
+    }],
+    'supported-platforms': {'squares': ['macOS']},
+}
+(native / 'icon.json').write_text(json.dumps(native_manifest, indent=2) + '\n')
 # ---------- menu bar ----------
 gm=build_glyph(60)
 mx0,my0,mx1,my1=gm['bbox']

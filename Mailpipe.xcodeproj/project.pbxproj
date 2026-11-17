@@ -29,6 +29,12 @@
       "path" = "Mailpipe/Assets.xcassets";
       "sourceTree" = "SOURCE_ROOT";
     };
+    "22A73AE752B058993E5CB944" = {
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "folder.icon";
+      "path" = "design/icon/AppIcon.icon";
+      "sourceTree" = "SOURCE_ROOT";
+    };
     "B5E04800D30BF586C503FB20" = {
       "isa" = "PBXFileReference";
       "path" = "Mailpipe/MailExtension/Info.plist";
@@ -82,10 +88,14 @@
       "isa" = "PBXBuildFile";
       "fileRef" = "16E7D55F9F0647CB3C104449";
     };
+    "6D95BF80EF50E61020F40B5B" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "22A73AE752B058993E5CB944";
+    };
     "6B9EAAC652B49331C050EDD7" = {
       "isa" = "PBXResourcesBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("32619883B056CD6587A222B8");
+      "files" = ("32619883B056CD6587A222B8", "6D95BF80EF50E61020F40B5B");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "76CA1C5312F83AB140566B24" = {
@@ -277,10 +287,14 @@
       "isa" = "PBXBuildFile";
       "fileRef" = "16E7D55F9F0647CB3C104449";
     };
+    "22D995ED5C0529BBF46A3040" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "22A73AE752B058993E5CB944";
+    };
     "55023A1881924D084692D681" = {
       "isa" = "PBXResourcesBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("82A32561AFF55769FC2A5309");
+      "files" = ("82A32561AFF55769FC2A5309", "22D995ED5C0529BBF46A3040");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "DBEB21021DA7690EF23A1762" = {
@@ -382,7 +396,7 @@
     };
     "0D6E4079E36703EBD37C0072" = {
       "isa" = "PBXGroup";
-      "children" = ("182AA5E0764EA153D55CA5BD", "AEA12B8A9F795C2B7DA6CA67", "16E7D55F9F0647CB3C104449", "0A3E27B8CA818264D75C8D81");
+      "children" = ("182AA5E0764EA153D55CA5BD", "AEA12B8A9F795C2B7DA6CA67", "16E7D55F9F0647CB3C104449", "22A73AE752B058993E5CB944", "0A3E27B8CA818264D75C8D81");
       "sourceTree" = "<group>";
     };
     "73EBF6644258C120893E685D" = {
