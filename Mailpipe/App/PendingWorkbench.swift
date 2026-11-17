@@ -210,6 +210,28 @@ final class PendingModel: ObservableObject {
             onboardingIssue = "无法打开设置页。请打开 Mail，进入邮件 → 设置 → 扩展。"
         }
     }
+    func openMailAndExtensionSettings() {
+        if let mail = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.mail").first {
+            mail.activate(options: [])
+            openExtensionSettings()
+            return
+        }
+        NSWorkspace.shared.openApplication(
+            at: URL(fileURLWithPath: "/System/Applications/Mail.app"),
+            configuration: NSWorkspace.OpenConfiguration()
+        ) { [weak self] app, error in
+            Task { @MainActor in
+                guard let self else { return }
+                guard error == nil else {
+                    self.onboardingIssue = "无法打开 Apple Mail。请手动打开，再进入邮件 → 设置 → 扩展。"
+                    return
+                }
+                app?.activate(options: [])
+                try? await Task.sleep(for: .seconds(1))
+                self.openExtensionSettings()
+            }
+        }
+    }
     func refresh() {
         guard let pipeline else { return }
         do {

@@ -108,10 +108,10 @@ struct OnboardingView: View {
             }
         case 3:
             Text("扩展已随 App 提供，无需另外下载。")
-            Text("1. 打开 Apple Mail\n2. 进入“邮件 → 设置 → 扩展”\n3. 勾选 Mailpipe，并确认系统显示的权限。")
-            Button("打开 Apple Mail") { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Mail.app")) }
+            Text("1. 打开 Apple Mail 并显示扩展设置。\n2. 勾选 Mailpipe，并确认系统显示的权限。")
+            Button("打开 Mail 并显示扩展设置", action: model.openMailAndExtensionSettings)
+                .buttonStyle(.borderedProminent)
             Text("扩展可接触新邮件；账户未解析时可能先在本机暂存。若不接受，可保留离线体验，或在 Mail 中关闭扩展。")
-            Button("打开 Mail 扩展设置…", action: model.openExtensionSettings)
             Button("我已操作，检查状态") { model.onboarding.extensionAcknowledged = true; model.refresh() }
             extensionStatus
             Button("不启用扩展，使用逐封建议") { model.useSuggestions() }
