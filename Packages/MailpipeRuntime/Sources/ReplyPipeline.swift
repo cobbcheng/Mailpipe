@@ -68,6 +68,31 @@ public final class ReplyPipeline {
         item.accountID = nil; item.localID = nil; item.revision = nil
         item.state = .awaitingAccount; item.error = nil; try store.save(item)
     }
+    /// User-confirmed retry only. Reverify captured mail and preserve local edits.
+    public func regenerate(_ id: String) throws {
+        let settings = try store.settings()
+        guard var item = try store.record(id), !settings.paused, !item.isPreparing,
+              item.discardedAt == nil, !item.runs.contains(where: { $0.finishedAt == nil }),
+              (item.regenerationCount ?? 0) < 3,
+              item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
+              let executable = settings.executable else { throw MailpipeError.invalidInput }
+        if let tool = item.manualExecutable {
+            guard settings.suggestionsOnly == true, tool == executable else { throw PipelineError.revoked }
+            item.state = .queued; item.revision = settings.revision
+        } else if item.syntheticAuthorized {
+            item.state = .queued; item.revision = settings.revision
+        } else {
+            guard settings.permission?.id == item.permissionID,
+                  settings.authorizedScopes.contains(where: { $0.id == item.scopeID ||
+                      (item.scopeID == nil && $0.accountID == item.accountID) }) else { throw PipelineError.revoked }
+            item.accountID = nil; item.localID = nil; item.revision = nil
+            item.state = .awaitingAccount
+        }
+        item.level = settings.level
+        item.regenerationCount = (item.regenerationCount ?? 0) + 1
+        item.error = nil
+        try store.save(item)
+    }
     public func cancel(_ id: String) throws {
         guard var item = try store.record(id) else { return }
         item.state = .cancelled; item.error = "cancelled"; try store.save(item)

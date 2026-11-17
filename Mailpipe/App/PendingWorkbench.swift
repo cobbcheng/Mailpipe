@@ -28,7 +28,41 @@ final class PendingModel: ObservableObject {
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
     private(set) var hasSharedInbox = false
-    var pending: [StoredReply] { records.filter { $0.state.isPending } }
+    var needsPermissionRecovery: Bool { onboarding.completed && settings.suggestionsOnly != true && (settings.permission == nil || settings.authorizedScopes.isEmpty) }
+    var pending: [StoredReply] { records.filter { $0.discardedAt == nil && ($0.state.isPending || $0.isPreparing || $0.state == .needsReview || $0.state == .awaitingBody) } }
+    @Published var notice: String?
+    @Published var undoDiscardID: String?
+    private var noticeTask: Task<Void, Never>?
+    var toolName: String { installations.first { $0.executable.path == settings.executable }?.kind.displayName ?? "AI 工具" }
+    func notify(_ text: String) { notice = text }
+    func saveEdits(_ id: String, subject: String, body: String) {
+        do { try pipeline?.store.saveEdits(id, subject: subject, body: body); refresh() }
+        catch { issue = "无法保存编辑，请保留当前窗口后重试。" }
+    }
+    func discard(_ id: String) {
+        do {
+            try pipeline?.store.discard(id); undoDiscardID = id; notice = "已丢弃"
+            refresh(); noticeTask?.cancel()
+            noticeTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled else { return }
+                self?.undoDiscardID = nil; self?.notice = nil
+            }
+        } catch { issue = "无法丢弃草稿，请重试。" }
+    }
+    func undoDiscard() {
+        guard let id = undoDiscardID else { return }
+        do { try pipeline?.store.restoreDiscard(id); selectedID = id; undoDiscardID = nil; notice = "已恢复草稿"; refresh() }
+        catch { issue = "撤销时间已过，草稿记录仍保留在本机。" }
+    }
+    func regenerate(_ id: String) {
+        do { try pipeline?.regenerate(id); refresh() }
+        catch { issue = "无法重新生成。请核对暂停、账户授权、工具和邮件有效期；每封最多重新生成三次。" }
+    }
+    func applyConfiguration() {
+        guard !onboardingBusy else { return }
+        onboarding.completed = false; saveOnboarding(); finishOnboarding()
+    }
     var selected: StoredReply? { records.first { $0.id == selectedID } }
 
     init() {
@@ -37,6 +71,8 @@ final class PendingModel: ObservableObject {
             let diagnosticIndex = args.firstIndex(of: "--pipeline-directory")
             let root: URL, inboxURL: URL
             if let index = diagnosticIndex, index + 1 < args.count, args[index + 1].hasPrefix("/") {
+                // Isolated visual acceptance only; never changes the system appearance.
+                if args.contains("--ui-dark") { NSApp.appearance = NSAppearance(named: .darkAqua) }
                 root = URL(fileURLWithPath: args[index + 1], isDirectory: true)
                 inboxURL = root.appendingPathComponent("inbox")
             } else {
@@ -284,141 +320,275 @@ final class PendingModel: ObservableObject {
     }
 }
 
+enum WorkbenchFilter: String, CaseIterable, Identifiable {
+    case pending = "待处理", all = "全部", review = "需确认", failed = "失败"
+    var id: Self { self }
+    func includes(_ item: StoredReply) -> Bool {
+        guard item.discardedAt == nil else { return false }
+        switch self {
+        case .pending: return item.state.isPending || item.isPreparing || item.state == .awaitingBody || item.state == .needsReview
+        case .all: return true
+        case .review: return [.needsReview, .awaitingAccount, .awaitingBody, .needsReply].contains(item.state) && item.error == nil || item.canRecheckIdentity
+        case .failed: return item.error != nil && item.state != .cancelled
+        }
+    }
+}
+
 struct PendingMenu: View {
     @ObservedObject var model: PendingModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Mailpipe · 待处理 \(model.pending.count)").font(.headline)
+                Label("Mailpipe", systemImage: "envelope").font(.headline)
                 Spacer()
-                Text(model.settings.paused ? "已暂停" : "运行中").foregroundStyle(.secondary)
+                Text(!model.onboarding.completed ? "未配置" : model.needsPermissionRecovery ? "需要授权" : model.settings.paused ? "已暂停" : "运行中").foregroundStyle(.secondary)
             }
-            if model.pending.isEmpty { Text("还没有需要回复的邮件或草稿。").foregroundStyle(.secondary) }
-            ForEach(model.pending.prefix(8)) { item in
+            Text("待处理 \(model.pending.count)").font(.subheadline)
+            if model.pending.isEmpty { Text("暂时没有待处理的草稿").foregroundStyle(.secondary) }
+            ForEach(model.pending.suffix(4).reversed()) { item in
                 Button {
                     model.selectedID = item.id; openWindow(id: "workbench"); NSApp.activate(ignoringOtherApps: true)
                 } label: {
-                    VStack(alignment: .leading) {
-                        Text(item.input.subject).lineLimit(1)
-                        Text(item.state.label).font(.caption).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.buttonStyle(.plain)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.input.subject).lineLimit(1)
+                            Text(item.state.label).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain).padding(.vertical, 3)
             }
-            if let issue = model.issue { Text(issue).font(.caption).foregroundStyle(.secondary) }
             Divider()
-            HStack {
-                Button("打开工作台") { openWindow(id: "workbench"); NSApp.activate(ignoringOtherApps: true) }
-                Button(model.settings.paused ? "恢复" : "暂停", action: model.togglePause)
-                Button("新手引导") { openWindow(id: "onboarding"); NSApp.activate(ignoringOtherApps: true) }
-                Button("退出") { NSApp.terminate(nil) }
+            Button("打开工作台") { openWindow(id: "workbench"); NSApp.activate(ignoringOtherApps: true) }
+            if !model.onboarding.completed {
+                Button("开始使用") { openWindow(id: "onboarding"); NSApp.activate(ignoringOtherApps: true) }
             }
-        }.padding(16).frame(width: 370)
+            Button(model.settings.paused ? "恢复处理" : "暂停处理", action: model.togglePause)
+            SettingsButton()
+            Divider()
+            Button("退出 Mailpipe") { NSApp.terminate(nil) }
+        }.padding().frame(width: 320)
+    }
+}
+
+struct SettingsButton: View {
+    var body: some View {
+        if #available(macOS 14, *) {
+            SettingsLink { Text("设置…") }
+        } else {
+            Button("设置…") { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
+        }
     }
 }
 
 struct PendingWorkbench: View {
     @ObservedObject var model: PendingModel
-    @State private var showSettings = false
-    @State private var onlyPending = true
+    @State private var filter = WorkbenchFilter.pending
     @State private var showManual = false
     @Environment(\.openWindow) private var openWindow
+    private var visible: [StoredReply] { model.records.filter(filter.includes).reversed() }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Mailpipe").font(.largeTitle.bold())
-                    Text("Apple Mail 主动回复助手").foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text(model.settings.paused ? "已暂停" : "运行中")
-                Button(model.settings.paused ? "恢复处理" : "暂停处理", action: model.togglePause)
-                Button("新手引导") { model.editOnboarding(); openWindow(id: "onboarding") }
-                if model.settings.suggestionsOnly == true {
-                    Button("逐封建议…") { showManual = true }.disabled(model.settings.paused)
-                }
-                Button("账户与设置") { showSettings.toggle() }
-            }
-            if let issue = model.issue { Text(issue).font(.callout).foregroundStyle(.secondary) }
-            if !model.onboarding.completed {
-                Button("继续设置 · 第 \(model.onboarding.step) 步，共 5 步") { openWindow(id: "onboarding") }
-            }
-            HStack {
-                Picker("视图", selection: $onlyPending) {
-                    Text("待处理 \(model.pending.count)").tag(true)
-                    Text("全部采集 \(model.records.count)").tag(false)
-                }.pickerStyle(.segmented).frame(maxWidth: 320)
-                Spacer()
-                Text("草稿留在本机待处理，不会自动打开 Mail").font(.caption).foregroundStyle(.secondary)
-            }
-            HSplitView {
-                List(selection: $model.selectedID) {
-                    ForEach(onlyPending ? model.pending : model.records) { item in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(item.input.subject).lineLimit(2)
-                            Text(item.state.label).font(.caption).foregroundStyle(.secondary)
-                            Text(item.capturedAt, style: .time).font(.caption2).foregroundStyle(.secondary)
-                        }.padding(.vertical, 4).tag(item.id)
+        NavigationSplitView {
+            List(selection: $model.selectedID) {
+                Section("\(filter.rawValue) · \(visible.count)") {
+                    ForEach(visible) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.input.subject).fontWeight(model.selectedID == item.id ? .semibold : .medium).lineLimit(2)
+                            Text(item.displayedBody.isEmpty ? "等待准备回复" : item.displayedBody)
+                                .font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                            HStack {
+                                Text(item.state.label)
+                                Spacer()
+                                Text(item.capturedAt, format: .dateTime.month(.twoDigits).day(.twoDigits))
+                            }.font(.caption).foregroundStyle(.secondary)
+                        }.padding(.vertical, 6).tag(item.id)
                     }
-                }.frame(minWidth: 240, idealWidth: 280)
-                ScrollView {
-                    if let item = model.selected {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Text(item.input.subject).font(.title2)
-                            Text(item.state.label).font(.headline)
-                            if item.manualExecutable != nil { Text("用户逐封确认 · 未核验 Mail 账户 · 不修改邮件").font(.caption) }
-                            if let error = item.error { Text("原因：\(MailBodyRejection(rawValue: error)?.reviewLabel ?? error)").foregroundStyle(.secondary) }
-                            if let decision = item.decision {
-                                Text("要不要回复：\(decision.shouldReply.rawValue)")
-                                ForEach(decision.summary, id: \.self) { Text($0) }
-                            }
-                            if let draft = item.draft {
-                                Divider()
-                                Text(draft.subject).font(.headline)
-                                Text(draft.body).textSelection(.enabled)
-                                Text("草稿已备好；尚未发送。Mail 草稿交接尚未验收。").font(.caption).foregroundStyle(.secondary)
-                            }
-                            Divider()
-                            Text("本封数据去向").font(.headline)
-                            if item.runs.isEmpty { Text("尚未调用模型") }
-                            ForEach(item.runs, id: \.destination.runID) { run in
-                                VStack(alignment: .leading) {
-                                    Text("\(run.destination.taskKind.rawValue) · DeepSeek Harness")
-                                    Text("\(run.destination.vendor ?? "厂商未知") · \(run.destination.model ?? "模型未知")")
-                                    Text("输入 token：\(run.inputTokens.map(String.init) ?? "未知")；输出：\(run.outputTokens.map(String.init) ?? "未知")")
-                                    if let error = run.error { Text("结果：\(error)") }
-                                }.font(.caption).foregroundStyle(.secondary)
-                            }
-                            if item.canRecheckIdentity {
-                                Button("重新核验并继续处理") { model.recheck(item.id) }
-                            }
-                            if [.queued, .triaging, .draftQueued, .drafting, .awaitingAccount, .awaitingBody].contains(item.state) {
-                                Button("取消此任务") { model.cancel(item.id) }
-                            }
-                        }.frame(maxWidth: .infinity, alignment: .leading).padding()
-                    } else { Text("选择一封邮件查看分拣、草稿和数据去向").foregroundStyle(.secondary).padding(32) }
-                }.frame(minWidth: 420)
-            }
-        }.padding(20).onAppear {
-            if !model.onboarding.completed && !model.offeredOnboarding {
-                model.offeredOnboarding = true; openWindow(id: "onboarding")
-            }
-        }.sheet(isPresented: $showManual) { ManualSuggestionView(model: model) }
-        .sheet(isPresented: $showSettings) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("账户与处理范围").font(.title2)
-                Text("新邮件先在本机暂存。所选账户与邮箱唯一核验后，才交给 DeepSeek 官方模型。模型只看提取后的纯文本，最长 16 KiB。HTML 和常见 multipart 会先转成文本。加密、仅附件或无法阅读的邮件显示待核对。")
-                    .font(.callout).foregroundStyle(.secondary)
-                Text("处理范围请通过五步向导修改。保存草案不会改变当前授权。")
-                Button("打开新手引导") { showSettings = false; model.editOnboarding(); openWindow(id: "onboarding") }
-                Button("撤销采集和账户授权", action: model.revoke)
-                HStack {
-                    Button("工具诊断") { openWindow(id: "diagnostics") }
-                    Button("M0 身份验证") { openWindow(id: "identity-probe") }
-                    Spacer()
-                    Button("完成") { showSettings = false }
                 }
-            }.padding(24).frame(width: 680)
+            }.listStyle(.sidebar)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 290, max: 380)
+                .overlay {
+                    if visible.isEmpty { Text("暂时没有\(filter == .failed ? "失败的任务" : "待处理的草稿")").foregroundStyle(.secondary).padding() }
+                }
+        } detail: {
+            VStack(spacing: 0) {
+                if !model.onboarding.completed {
+                    HStack {
+                        Label("连接工具并选择邮箱后，为新邮件备好草稿。", systemImage: "info.circle")
+                        Spacer()
+                        Button("开始使用") { openWindow(id: "onboarding") }
+                    }.padding().background(Color(nsColor: .controlBackgroundColor))
+                } else if model.needsPermissionRecovery {
+                    HStack {
+                        Label("账户授权已撤销。已有草稿保留，请在设置中恢复。", systemImage: "exclamationmark.shield")
+                        Spacer(); SettingsButton()
+                    }.padding().background(Color(nsColor: .controlBackgroundColor))
+                } else if model.settings.suggestionsOnly == true {
+                    HStack {
+                        Text("逐封建议：提交前由你确认内容与工具。").foregroundStyle(.secondary)
+                        Spacer()
+                        Button("添加来信…") { showManual = true }.disabled(model.settings.paused)
+                    }.padding()
+                }
+                if model.issue != nil {
+                    HStack {
+                        Label("处理需要核对，已有草稿和编辑已保留。", systemImage: "exclamationmark.triangle")
+                        Spacer(); SettingsButton()
+                        Button { model.issue = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭提示")
+                    }.font(.callout).padding().background(Color(nsColor: .controlBackgroundColor))
+                }
+                if let item = model.selected, filter.includes(item) {
+                    DraftDetail(model: model, item: item).id(item.id)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "text.bubble").font(.system(size: 36)).foregroundStyle(.secondary)
+                        Text(visible.isEmpty ? "暂时没有待处理的草稿" : "选择一封来信").font(.title2)
+                        Text("审阅来信，编辑回复，再复制到 Mail。") .foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                if let notice = model.notice {
+                    HStack {
+                        Text(notice)
+                        if model.undoDiscardID != nil { Button("撤销", action: model.undoDiscard) }
+                        Spacer()
+                        Button { model.notice = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭反馈")
+                    }.padding().background(Color(nsColor: .controlBackgroundColor)).accessibilityElement(children: .contain)
+                }
+            }.frame(minWidth: 440).background(Color(nsColor: .textBackgroundColor))
+        }
+        .navigationTitle("Mailpipe")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("视图", selection: $filter) {
+                    ForEach(WorkbenchFilter.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).fixedSize()
+            }
+        }
+        .sheet(isPresented: $showManual) { ManualSuggestionView(model: model) }
+    }
+}
+
+private struct DraftDetail: View {
+    @ObservedObject var model: PendingModel
+    let item: StoredReply
+    @State private var subject = ""
+    @State private var bodyText = ""
+    @State private var showOriginal = false
+    @State private var showExplanation = false
+    @State private var confirmRegeneration = false
+    @State private var confirmReplacement = false
+    private var hasDraft: Bool { item.draft != nil || item.editedBody != nil }
+    private var isExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || ["contentExpired", "policyChanged", "identityUnresolved"].contains(item.error ?? "") }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(item.input.subject).font(.title2.weight(.semibold)).textSelection(.enabled)
+                    HStack {
+                        Text("发件人未采集")
+                        Text("·")
+                        Text(item.capturedAt, format: .dateTime.year().month().day().hour().minute())
+                    }.font(.callout).foregroundStyle(.secondary)
+                    Label(item.state.label, systemImage: item.isPreparing ? "hourglass" : item.error != nil ? "exclamationmark.circle" : "text.bubble")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                if isExpired {
+                    Label("原邮件或授权需要重新核对，当前编辑已保留。", systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
+                }
+                DisclosureGroup("来信原文", isExpanded: $showOriginal) {
+                    Text(item.input.body.isEmpty ? "尚未取得可阅读的正文。请核对 Mail 权限和邮件格式。" : item.input.body)
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
+                }
+                Divider()
+                if hasDraft {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("回复草稿").font(.headline)
+                            Spacer()
+                            Text("编辑自动保存在本机").font(.caption).foregroundStyle(.secondary)
+                        }
+                        TextField("回复主题", text: $subject).textFieldStyle(.roundedBorder).accessibilityLabel("回复主题")
+                        TextEditor(text: $bodyText).font(.body).frame(minHeight: 240)
+                            .accessibilityLabel("回复草稿正文")
+                        HStack {
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                if NSPasteboard.general.setString(bodyText, forType: .string) {
+                                    model.notify("已复制。请到 Mail 中粘贴发送。")
+                                } else { model.notify("复制未成功，请重试。") }
+                            } label: { Label("复制草稿", systemImage: "doc.on.doc") }
+                                .buttonStyle(.borderedProminent).disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                .keyboardShortcut("c", modifiers: [.command, .shift])
+                            Button("重新生成") { confirmRegeneration = true }
+                                .disabled(item.isPreparing || item.runs.contains { $0.finishedAt == nil } || model.settings.paused || (item.regenerationCount ?? 0) >= 3 || item.capturedAt < Date().addingTimeInterval(-7 * 86_400))
+                            Spacer()
+                            Menu {
+                                Button("丢弃草稿", role: .destructive) { model.discard(item.id) }
+                            } label: { Image(systemName: "ellipsis") }
+                                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多草稿操作").disabled(item.isPreparing)
+                        }
+                        Text("复制后，请到 Mail 中粘贴并发送。").font(.caption).foregroundStyle(.secondary)
+                        if let draft = item.draft, draft.body != bodyText, (item.regenerationCount ?? 0) > 0, item.state == .draftReady, item.error == nil {
+                            DisclosureGroup("查看生成的草稿") {
+                                Text(draft.body).textSelection(.enabled).padding(.vertical, 8)
+                                Button("使用这份草稿") { confirmReplacement = true }
+                            }
+                        }
+                    }
+                } else if item.isPreparing {
+                    ProgressView("正在准备…")
+                } else {
+                    Text(item.error == nil ? "这封来信尚无回复草稿。" : "未能准备草稿，请展开处理说明核对。").foregroundStyle(.secondary)
+                    if item.canRecheckIdentity {
+                        Button("重新核对来信") { model.recheck(item.id) }.disabled(model.settings.paused)
+                    } else if item.state == .needsReview || item.state == .needsReply {
+                        Button("重新生成") { confirmRegeneration = true }.disabled(model.settings.paused || (item.regenerationCount ?? 0) >= 3)
+                    }
+                }
+                if item.isPreparing { Button("取消此任务") { model.cancel(item.id) } }
+                Divider()
+                DisclosureGroup("处理说明", isExpanded: $showExplanation) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let run = item.runs.last {
+                            Text("本次经 \(run.destination.harness.displayName) 处理。邮件会到达该工具配置的模型。Mailpipe 不设服务器。")
+                        } else { Text("尚未调用 AI 工具。") }
+                        if let decision = item.decision { ForEach(decision.summary, id: \.self) { Text($0) } }
+                        if let error = item.error { Text(errorDescription(error)) }
+                        if (item.regenerationCount ?? 0) >= 3 { Text("已达本封重新生成次数上限。当前草稿仍可编辑和复制。") }
+                    }.foregroundStyle(.secondary).padding(.top, 8)
+                }
+            }.padding(28).frame(maxWidth: 820, alignment: .leading).frame(maxWidth: .infinity)
+        }
+        .onAppear { subject = item.displayedSubject; bodyText = item.displayedBody }
+        .onChange(of: item.draftData) { _ in
+            if item.editedBody == nil, let draft = item.draft { subject = draft.subject; bodyText = draft.body }
+        }
+        .onChange(of: subject) { _ in persist() }
+        .onChange(of: bodyText) { _ in persist() }
+        .alert("重新生成回复？", isPresented: $confirmRegeneration) {
+            Button("取消", role: .cancel) { }
+            Button("重新生成") { persist(); model.regenerate(item.id) }
+        } message: {
+            Text("当前编辑会保留。新结果备好后，由你选择是否替换。最多两次模型调用，消耗所选工具额度。")
+        }
+        .alert("替换当前编辑？", isPresented: $confirmReplacement) {
+            Button("保留编辑", role: .cancel) { }
+            Button("使用新草稿") { if let draft = item.draft { subject = draft.subject; bodyText = draft.body; persist() } }
+        } message: { Text("将用生成的内容替换当前主题和正文。") }
+    }
+    private func persist() {
+        guard hasDraft, subject != item.displayedSubject || bodyText != item.displayedBody else { return }
+        model.saveEdits(item.id, subject: subject, body: bodyText)
+    }
+    private func errorDescription(_ code: String) -> String {
+        if let rejection = MailBodyRejection(rawValue: code) { return rejection.reviewLabel }
+        switch code {
+        case "contentExpired": return "来信已超过处理有效期。请重新确认内容后使用逐封建议。"
+        case "policyChanged", "revoked": return "处理授权已变更，请在设置中核对。"
+        case "identityUnresolved", "identityUnavailable", "identityAmbiguous": return "无法唯一核对原邮件，请检查 Mail 权限和账户。"
+        case "cancelled": return "任务已取消，当前编辑保留。"
+        default: return "处理未成功，当前编辑保留。请检查 AI 工具连接。"
         }
     }
 }

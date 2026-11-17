@@ -27,9 +27,8 @@ struct ManualSuggestionView: View {
                 Text("邮件正文（纯文本，最多 16 KiB）")
                 TextEditor(text: $bodyText).frame(minHeight: 180).accessibilityLabel("邮件正文")
             }
-            Text("目标：DeepSeek Harness → DeepSeek 官方 / deepseek-flash")
-            Text(executable).font(.caption).textSelection(.enabled)
-            Text("级别：\(model.settings.level.rawValue)；最多 \(model.settings.level == .l2 ? 2 : 1) 次调用，消耗所选工具额度。不自动重试。")
+            Text("目标：\(model.toolName)。邮件会到达该工具配置的模型。")
+            Text("最多 \(model.settings.level == .l2 ? 2 : 1) 次调用，消耗所选工具额度。不自动重试。")
             if reviewing && reviewedRevision != model.settings.revision { Text("设置已变更，请返回重新预览和确认。") }
             if let issue = model.issue { Text(issue).foregroundStyle(.secondary) }
             HStack {
