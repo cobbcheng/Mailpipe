@@ -81,6 +81,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var state: ReplyState
     public var error: String?
     public var sourceDigest: String?
+    public var sourceEvidence: MailSourceEvidence?
     public var accountID: String?
     public var localID: String?
     public var scopeID: String?
@@ -214,16 +215,24 @@ public final class PipelineStore {
         }
         let hasBodyResult = capture.raw != nil || capture.issue != nil
         let id = hasBodyResult && candidates.count == 1 ? candidates[0].id : UUID().uuidString
+        let evidence = capture.raw.flatMap(MailSourceEvidence.init)
         var body = "", bodyIssue = capture.issue
         if let raw = capture.raw {
             do { body = try PlainMailBody.decode(raw) }
-            catch let rejection as MailBodyRejection { bodyIssue = rejection.rawValue }
+            catch let rejection as MailBodyRejection {
+                // MailKit can drop top-level MIME parameters. Defer extraction to the
+                // full source, after source evidence and a unique authorized account match.
+                if evidence == nil || ![.malformedMIME, .unsupportedCharset].contains(rejection) {
+                    bodyIssue = rejection.rawValue
+                }
+            }
             catch { bodyIssue = "unsupportedMIME" }
         }
         var item = StoredReply(id: id, permissionID: capture.permissionID, capturedAt: capture.capturedAt,
             messageID: capture.messageID, input: MailInput(messageRef: id, subject: capture.subject, body: body),
-            state: bodyIssue != nil ? .needsReview : (body.isEmpty ? .awaitingBody : .awaitingAccount), error: bodyIssue)
+            state: bodyIssue != nil ? .needsReview : (body.isEmpty && evidence == nil ? .awaitingBody : .awaitingAccount), error: bodyIssue)
         item.sourceDigest = capture.raw.flatMap(mailSourceDigest)
+        item.sourceEvidence = evidence
         item.syntheticAuthorized = syntheticGrant
         try execute("BEGIN IMMEDIATE")
         do {

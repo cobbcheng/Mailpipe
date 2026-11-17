@@ -15,7 +15,7 @@
 未授权时不采集，不调用模型。
 
 `AppleMailReplyIdentity` 提供限定范围的只读核验。
-唯一 Message-ID、主题和完整邮件源须一致。
+唯一 Message-ID、主题和来源证据须一致。
 宿主导入 SQLite 后执行 DeepSeek 分拣与草稿。
 Google IMAP 单封合成样本已通过完整链路。
 见 [持久化回复验收](validation/2026-11-16-persistent-reply-pipeline.md)。
@@ -92,6 +92,43 @@ build 9 保留身份核验时的原文超限原因。
 8bit GBK 的实机路径仍未验证。
 初次失败见 [build 8 实机记录](validation/2026-11-17-mime-live.md)。
 修复证据见 [build 9 复测](validation/2026-11-17-mime-fix-retest.md)。
+
+### build 11：恢复 MailKit 丢失的 MIME 参数
+
+跨账户样本中，MailKit 丢失顶层 MIME 参数。
+纯文本缺少 charset；multipart 缺少 boundary。
+Mail 中的完整原文仍包含这些参数。
+正文传输字节未变化。
+这会分别触发字符集或 MIME 解析拒绝。
+
+宿主在已有授权范围内取得唯一完整原文。
+先核验来源证据，再从完整原文提取正文。
+来源证据包含稳定头字段与完整 MIME 正文摘要。
+不会仅凭 Message-ID 或主题认定账户。
+
+| 核验项 | 规则 |
+|---|---|
+| From、To、Cc、Reply-To | 地址与顺序一致；忽略显示名与域名大小写 |
+| Date、Subject、Message-ID、引用头 | 一致；只规范化折行空白 |
+| MIME 类型、传输编码、Disposition | 一致 |
+| 已采集 MIME 参数 | 原文必须保留相同值 |
+| 完整 MIME 正文 | SHA-256 一致，包含附件及所有子部分 |
+| 正文换行 | 统一 CRLF/LF，忽略末尾换行 |
+| Received、ARC 等传输头 | 不作为稳定身份字段 |
+
+复杂地址组、注释及引号本地部分暂不支持。
+证据不足时保留旧的整封摘要核验。
+旧摘要核验失败仍转人工，不猜测账户。
+新证据仅存哈希与顶层 MIME 参数。
+不增加原始邮件保留期。
+
+所有者是宿主已有账户核验阶段。
+触发是新入站带正文且能形成来源证据。
+沿用每个授权范围一次查询及既有上限。
+没有新增重试、后台任务或 MailKit 重放。
+入站 ID 幂等、暂停和撤权边界保持有效。
+已有失败记录不自动重试。
+歧义、正文变化或解析失败均不调用模型。
 
 ## 1. 核心结论
 

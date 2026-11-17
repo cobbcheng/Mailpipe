@@ -70,6 +70,98 @@ public enum MailHeaderCodec {
     }
 }
 
+/// Evidence for a MailKit representation whose transport headers may be rewritten.
+/// The host still requires one authorized mailbox match before reading the full source.
+public struct MailSourceEvidence: Codable, Equatable, Sendable {
+    private let headerDigest: String
+    private let bodyDigest: String
+    private let parameters: [String: String]
+
+    public init?(_ raw: Data) {
+        guard let value = try? Self.components(raw) else { return nil }
+        headerDigest = value.headers
+        bodyDigest = value.body
+        parameters = value.parameters
+    }
+
+    public func matches(_ source: Data) -> Bool {
+        guard let value = try? Self.components(source), value.headers == headerDigest,
+              value.body == bodyDigest else { return false }
+        // Missing MailKit parameters can be recovered only from the verified source.
+        // A parameter that WAS captured must never silently change.
+        return parameters.allSatisfy { value.parameters[$0.key] == $0.value }
+    }
+
+    private static func components(_ raw: Data) throws -> (headers: String, body: String, parameters: [String: String]) {
+        guard raw.count <= MailBodyLimits.rawCeiling else { throw MailBodyRejection.messageTooLarge }
+        let split = try splitHeaders(raw)
+        guard !split.body.isEmpty else { throw MailBodyRejection.emptyBody }
+        let mime = try MIMEHeaders(split.header, defaultType: "text/plain")
+        let required = ["from", "to", "date", "subject", "message-id"]
+        let optional = ["cc", "reply-to", "in-reply-to", "references", "mime-version"]
+        var selected: [String: String] = [:]
+        for key in required + optional {
+            let values = mime.fields[key] ?? []
+            guard values.count <= 1, !required.contains(key) || values.count == 1 else {
+                throw MailBodyRejection.malformedMIME
+            }
+            let value = values.first ?? ""
+            if ["from", "to", "cc", "reply-to"].contains(key), !value.isEmpty {
+                guard let addresses = mailboxList(value), !addresses.isEmpty else { throw MailBodyRejection.malformedMIME }
+                if key == "from", addresses.count != 1 { throw MailBodyRejection.malformedMIME }
+                selected[key] = addresses.joined(separator: ",")
+            } else {
+                selected[key] = value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            }
+        }
+        selected["content-type"] = mime.mediaType
+        selected["content-transfer-encoding"] = mime.encoding
+        // Disposition affects whether bytes are treated as an attachment.
+        selected["content-disposition"] = mime.fields["content-disposition"]?.first ?? ""
+        let headers = try JSONSerialization.data(withJSONObject: selected, options: [.sortedKeys])
+        var body = Data()
+        var previous: UInt8?
+        for byte in split.body {
+            if previous == 13 {
+                if byte != 10 { body.append(13) }
+            }
+            if byte != 13 { body.append(byte) }
+            previous = byte
+        }
+        if previous == 13 { body.append(13) }
+        while body.last == 10 { body.removeLast() }
+        return (contentDigest(headers), contentDigest(body), mime.parameters)
+    }
+
+    /// Ignore display names, preserve mailbox order and the case-sensitive local part.
+    /// Unsupported groups/comments/quoted local parts fail closed.
+    private static func mailboxList(_ value: String) -> [String]? {
+        var tokens: [String] = [], token = "", quoted = false, escaped = false
+        for ch in value {
+            if escaped { token.append(ch); escaped = false; continue }
+            if ch == "\\", quoted { token.append(ch); escaped = true; continue }
+            if ch == "\"" { quoted.toggle() }
+            if ch == ",", !quoted { tokens.append(token); token = "" } else { token.append(ch) }
+        }
+        guard !quoted, !escaped else { return nil }
+        tokens.append(token)
+        var addresses: [String] = []
+        for token in tokens {
+            let text = token.trimmingCharacters(in: .whitespaces)
+            let address: String
+            if let open = text.firstIndex(of: "<"), let close = text.lastIndex(of: ">") {
+                guard open < close, text[text.index(after: close)...].trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+                address = String(text[text.index(after: open)..<close]).trimmingCharacters(in: .whitespaces)
+            } else { address = text }
+            let halves = address.split(separator: "@", omittingEmptySubsequences: false)
+            guard halves.count == 2, !halves[0].isEmpty, !halves[1].isEmpty,
+                  address.range(of: #"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+$"#, options: .regularExpression) != nil else { return nil }
+            addresses.append(String(halves[0]) + "@" + halves[1].lowercased())
+        }
+        return addresses
+    }
+}
+
 public enum PlainMailBody {
     public static func decode(_ raw: Data) throws -> String {
         try extract(raw).text
@@ -372,6 +464,7 @@ private enum MIMEEntity {
 }
 
 private struct MIMEHeaders {
+    var fields: [String: [String]]
     var mediaType: String
     var parameters: [String: String]
     var encoding: String
@@ -396,6 +489,7 @@ private struct MIMEHeaders {
         guard (fields["content-type"]?.count ?? 0) <= 1,
               (fields["content-transfer-encoding"]?.count ?? 0) <= 1,
               (fields["content-disposition"]?.count ?? 0) <= 1 else { throw MailBodyRejection.malformedMIME }
+        self.fields = fields
         let typeValue = fields["content-type"]?.first ?? defaultType
         let parsed = try MediaType.parse(typeValue)
         mediaType = parsed.type
