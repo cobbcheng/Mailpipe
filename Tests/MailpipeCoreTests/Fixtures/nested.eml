@@ -1,0 +1,19 @@
+Content-Type: multipart/mixed; boundary=outer
+
+--outer
+Content-Type: multipart/alternative; boundary=inner
+
+--inner
+Content-Type: text/plain; charset=utf-8
+
+Inner plain wins.
+--inner
+Content-Type: text/html; charset=utf-8
+
+<p>HTML sibling must not win.</p>
+--inner--
+--outer
+Content-Type: text/plain; charset=utf-8
+
+Outer note.
+--outer--

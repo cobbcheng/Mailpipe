@@ -1,0 +1,13 @@
+Content-Type: multipart/mixed; boundary=bound
+
+--bound
+Content-Type: text/plain; charset=utf-8
+
+See the attached report.
+--bound
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0=
+--bound--

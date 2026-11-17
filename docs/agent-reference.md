@@ -37,7 +37,7 @@
 | 待处理 UI 与账户设置 | `Mailpipe/App/PendingWorkbench.swift` |
 | 工具诊断 | `Mailpipe/App/MailpipeApp.swift` |
 | 持久化队列与调度 | `Packages/MailpipeRuntime/Sources/` |
-| 入站暂存与纯文本 MIME | `Packages/MailpipeCore/Sources/InboundCapture.swift` |
+| 入站暂存与正文提取 | `Packages/MailpipeCore/Sources/InboundCapture.swift`、`MailBody.swift` |
 | 扩展生命周期 | `Mailpipe/MailExtension/MailExtension.swift` |
 | 输入、输出与路由校验 | `Packages/MailpipeCore/Sources/Classification.swift` |
 | 回复分拣、草稿、级别与去向 | `Packages/MailpipeCore/Sources/ReplyContracts.swift` |

@@ -1,0 +1,13 @@
+Content-Type: multipart/related; boundary=bound
+
+--bound
+Content-Type: text/html; charset=utf-8
+
+<p>See the logo.</p>
+--bound
+Content-Type: image/png; name="logo.png"
+Content-Disposition: inline; filename="logo.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--bound--

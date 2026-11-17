@@ -42,7 +42,7 @@ public final class ReplyPipeline {
         for file in files {
             let capture: InboundCapture
             do {
-                capture = try JSONDecoder().decode(InboundCapture.self, from: CaptureInbox.read(file, limit: 100_000))
+                capture = try JSONDecoder().decode(InboundCapture.self, from: CaptureInbox.read(file, limit: MailBodyLimits.captureFileCeiling))
                 try capture.validate()
             } catch {
                 try store.note("invalidCapture")
@@ -236,7 +236,7 @@ public final class ReplyPipeline {
         try syntheticInbox.publish(capture)
         // Synthetic import has a separate explicit grant; production settings remain untouched.
         let persisted = try JSONDecoder().decode(InboundCapture.self, from: CaptureInbox.read(
-            temporary.appendingPathComponent(capture.id.uuidString + ".capture"), limit: 100_000))
+            temporary.appendingPathComponent(capture.id.uuidString + ".capture"), limit: MailBodyLimits.captureFileCeiling))
         let id = try store.importCapture(persisted, syntheticGrant: true)
         try FileManager.default.removeItem(at: temporary.appendingPathComponent(capture.id.uuidString + ".capture"))
         return id

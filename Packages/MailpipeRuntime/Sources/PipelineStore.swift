@@ -1,6 +1,16 @@
 import Foundation
+#if canImport(SQLite3)
 import SQLite3
+#else
+import CSQLite
+#endif
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 import MailpipeCore
 
 public struct AccountScope: Codable, Hashable, Sendable, Identifiable {
@@ -206,6 +216,7 @@ public final class PipelineStore {
         var body = "", bodyIssue = capture.issue
         if let raw = capture.raw {
             do { body = try PlainMailBody.decode(raw) }
+            catch let rejection as MailBodyRejection { bodyIssue = rejection.rawValue }
             catch { bodyIssue = "unsupportedMIME" }
         }
         var item = StoredReply(id: id, permissionID: capture.permissionID, capturedAt: capture.capturedAt,

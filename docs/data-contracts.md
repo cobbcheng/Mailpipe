@@ -325,4 +325,8 @@ Task、Run、Decision 和草稿存于同一记录中。
 
 当前有容量和派发时效上限。
 自动保留期清理未实现，不把时效校验当作删除。
+导入时把原文提取成纯文本，再交给分拣。
+模型只看最多 16 KiB。
+提取失败时记录原因，状态为 needsReview。
+格式、上限和未覆盖项见 [邮件集成](mail-integration.md) 的正文提取。
 完整验收和限制见 [持久化链路记录](validation/2026-11-16-persistent-reply-pipeline.md)。

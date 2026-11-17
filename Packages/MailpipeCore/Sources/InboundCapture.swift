@@ -1,6 +1,14 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#endif
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 
 public func mailSourceDigest(_ raw: Data) -> String? {
     guard let text = String(data: raw, encoding: .utf8) else { return nil }
@@ -8,7 +16,13 @@ public func mailSourceDigest(_ raw: Data) -> String? {
 }
 
 public enum PipelineError: String, Error, Sendable { case storage, alreadyOpen, unsupportedMIME, invalidCapture, quota, revoked, interrupted }
-public func contentDigest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+public func contentDigest(_ data: Data) -> String {
+#if canImport(CryptoKit)
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+#else
+    SHA256Fallback.hex(data)
+#endif
+}
 
 /// Account identity never comes from sender-controlled headers.
 public struct CapturePermission: Codable, Equatable, Sendable {
@@ -33,57 +47,8 @@ public struct InboundCapture: Codable, Sendable {
     }
     public func validate() throws {
         guard version == 1, subject.utf8.count <= 2_048, (messageID?.utf8.count ?? 0) <= 998,
-              (raw?.count ?? 0) <= 65_536, (issue?.count ?? 0) <= 64,
+              (raw?.count ?? 0) <= MailBodyLimits.rawCeiling, (issue?.count ?? 0) <= 64,
               capturedAt.timeIntervalSinceNow <= 60 else { throw PipelineError.invalidCapture }
-    }
-}
-
-/// Conservative decoder: attachments, HTML, multipart, and unknown charsets fail visibly.
-/// Never submits raw MIME or attachments to a model.
-public enum PlainMailBody {
-    public static func decode(_ raw: Data) throws -> String {
-        guard raw.count <= 65_536 else { throw PipelineError.unsupportedMIME }
-        guard let separator = raw.range(of: Data("\r\n\r\n".utf8)) ?? raw.range(of: Data("\n\n".utf8)),
-              let head = String(data: raw[..<separator.lowerBound], encoding: .utf8) else { throw PipelineError.unsupportedMIME }
-        let unfolded = head.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n\t", with: " ").replacingOccurrences(of: "\n ", with: " ")
-        var headers: [String: [String]] = [:]
-        for line in unfolded.split(separator: "\n") {
-            let pair = line.split(separator: ":", maxSplits: 1)
-            guard pair.count == 2 else { throw PipelineError.unsupportedMIME }
-            headers[String(pair[0]).lowercased(), default: []].append(pair[1].trimmingCharacters(in: .whitespaces))
-        }
-        guard (headers["content-type"]?.count ?? 0) <= 1,
-              (headers["content-transfer-encoding"]?.count ?? 0) <= 1,
-              headers["content-disposition"] == nil else { throw PipelineError.unsupportedMIME }
-        let type = (headers["content-type"]?.first ?? "text/plain").lowercased()
-        let parts = type.components(separatedBy: ";").map { $0.trimmingCharacters(in: .whitespaces) }
-        guard parts.first == "text/plain", parts.dropFirst().allSatisfy({
-            ["charset=utf-8", "charset=\"utf-8\"", "charset=us-ascii", "charset=\"us-ascii\""].contains($0)
-        }) else { throw PipelineError.unsupportedMIME }
-        var body = Data(raw[separator.upperBound...])
-        switch (headers["content-transfer-encoding"]?.first ?? "7bit").lowercased() {
-        case "7bit", "8bit": break
-        case "base64":
-            guard let text = String(data: body, encoding: .ascii), let decoded = Data(base64Encoded: text.filter { !$0.isWhitespace }) else { throw PipelineError.unsupportedMIME }
-            body = decoded
-        case "quoted-printable":
-            let bytes = Array(body); var result = Data(); var i = 0
-            while i < bytes.count {
-                if bytes[i] == 61 {
-                    if i + 2 < bytes.count, bytes[i + 1] == 13, bytes[i + 2] == 10 { i += 3; continue }
-                    if i + 1 < bytes.count, bytes[i + 1] == 10 { i += 2; continue }
-                    guard i + 2 < bytes.count,
-                          let value = UInt8(String(bytes: bytes[(i + 1)...(i + 2)], encoding: .ascii) ?? "", radix: 16) else { throw PipelineError.unsupportedMIME }
-                    result.append(value); i += 3
-                } else { result.append(bytes[i]); i += 1 }
-            }
-            body = result
-        default: throw PipelineError.unsupportedMIME
-        }
-        guard body.count <= 16_384, let text = String(data: body, encoding: .utf8),
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !text.contains("\0") else { throw PipelineError.unsupportedMIME }
-        return text.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .newlines)
     }
 }
 
