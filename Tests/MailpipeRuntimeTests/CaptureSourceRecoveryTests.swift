@@ -12,8 +12,10 @@ final class CaptureSourceRecoveryTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let payload = "--b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n请确认周五。\r\n--b--\r\n"
-        let captured = raw(type: "multipart/alternative", payload: payload)
-        let source = raw(type: "multipart/alternative; boundary=b", payload: payload)
+        let captured = Data(String(decoding: raw(type: "multipart/alternative", payload: payload), as: UTF8.self)
+            .replacingOccurrences(of: "Subject: Synthetic", with: "Subject: =?utf-8?B?5L2g5aW9?=").utf8)
+        let source = Data(String(decoding: raw(type: "multipart/alternative; boundary=b", payload: payload), as: UTF8.self)
+            .replacingOccurrences(of: "Subject: Synthetic", with: "Subject: =?UTF-8?Q?=E4=BD=A0=E5=A5=BD?=").utf8)
         let fake = FakeReplyModel()
         var pipeline: ReplyPipeline? = ReplyPipeline(store: try PipelineStore(directory: root.appendingPathComponent("state")),
             inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")), resolve: { _, _ in nil }, model: { _ in fake })
@@ -22,10 +24,10 @@ final class CaptureSourceRecoveryTests: XCTestCase {
             $0.scope = try? AccountScope(accountID: "test", accountName: "test", mailboxName: "INBOX")
         }
         let permission = try XCTUnwrap(pipeline!.store.settings().permission)
-        try pipeline!.inbox.publish(InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "source@example.com", raw: nil))
+        try pipeline!.inbox.publish(InboundCapture(permissionID: permission.id, subject: "你好", messageID: "source@example.com", raw: nil))
         try pipeline!.importInbox()
         let id = try XCTUnwrap(pipeline!.store.records().first?.id)
-        try pipeline!.inbox.publish(InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "source@example.com", raw: captured))
+        try pipeline!.inbox.publish(InboundCapture(permissionID: permission.id, subject: "你好", messageID: "source@example.com", raw: captured))
         try pipeline!.importInbox()
         XCTAssertEqual(try pipeline!.store.records().count, 1)
         XCTAssertEqual(try pipeline!.store.record(id)?.state, .awaitingAccount)

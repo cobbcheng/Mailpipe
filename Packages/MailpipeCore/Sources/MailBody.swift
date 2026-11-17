@@ -76,23 +76,34 @@ public struct MailSourceEvidence: Codable, Equatable, Sendable {
     private let headerDigest: String
     private let bodyDigest: String
     private let parameters: [String: String]
+    private let subjectVersion: Int?
 
     public init?(_ raw: Data) {
-        guard let value = try? Self.components(raw) else { return nil }
+        guard let value = try? Self.components(raw, subjectForm: .decoded) else { return nil }
+        subjectVersion = 1
         headerDigest = value.headers
         bodyDigest = value.body
         parameters = value.parameters
     }
 
     public func matches(_ source: Data) -> Bool {
-        guard let value = try? Self.components(source), value.headers == headerDigest,
-              value.body == bodyDigest else { return false }
-        // Missing MailKit parameters can be recovered only from the verified source.
-        // A parameter that WAS captured must never silently change.
-        return parameters.allSatisfy { value.parameters[$0.key] == $0.value }
+        let forms: [SubjectForm]
+        switch subjectVersion {
+        case 1: forms = [.decoded]
+        case nil: forms = [.original, .mailKitBase64]
+        default: return false
+        }
+        return forms.contains { form in
+            guard let value = try? Self.components(source, subjectForm: form),
+                  value.headers == headerDigest, value.body == bodyDigest else { return false }
+            // Captured MIME parameters must never silently change.
+            return parameters.allSatisfy { value.parameters[$0.key] == $0.value }
+        }
     }
 
-    private static func components(_ raw: Data) throws -> (headers: String, body: String, parameters: [String: String]) {
+    private enum SubjectForm { case original, decoded, mailKitBase64 }
+
+    private static func components(_ raw: Data, subjectForm: SubjectForm) throws -> (headers: String, body: String, parameters: [String: String]) {
         guard raw.count <= MailBodyLimits.rawCeiling else { throw MailBodyRejection.messageTooLarge }
         let split = try splitHeaders(raw)
         guard !split.body.isEmpty else { throw MailBodyRejection.emptyBody }
@@ -111,7 +122,19 @@ public struct MailSourceEvidence: Codable, Equatable, Sendable {
                 if key == "from", addresses.count != 1 { throw MailBodyRejection.malformedMIME }
                 selected[key] = addresses.joined(separator: ",")
             } else {
-                selected[key] = value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+                let unfolded = value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+                if key == "subject" {
+                    switch subjectForm {
+                    case .original: selected[key] = unfolded
+                    case .decoded: selected[key] = EncodedWords.decode(unfolded)
+                    case .mailKitBase64:
+                        // Compatibility with persisted, pre-normalization MailKit evidence.
+                        // All other headers and the complete MIME body still have to match.
+                        let decoded = EncodedWords.decode(unfolded)
+                        guard !decoded.contains("=?") else { throw MailBodyRejection.malformedMIME }
+                        selected[key] = "=?utf-8?B?\(Data(decoded.utf8).base64EncodedString())?="
+                    }
+                } else { selected[key] = unfolded }
             }
         }
         selected["content-type"] = mime.mediaType
