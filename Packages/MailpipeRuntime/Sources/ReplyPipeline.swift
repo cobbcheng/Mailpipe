@@ -64,8 +64,7 @@ public final class ReplyPipeline {
         }
     }
     public func recheckIdentity(_ id: String) throws {
-        guard var item = try store.record(id), item.runs.isEmpty, !item.input.body.isEmpty,
-              item.state == .needsReview, item.permissionID == (try store.settings()).permission?.id else { throw MailpipeError.invalidInput }
+        guard var item = try store.record(id), item.canRecheckIdentity, item.permissionID == (try store.settings()).permission?.id else { throw MailpipeError.invalidInput }
         item.accountID = nil; item.localID = nil; item.revision = nil
         item.state = .awaitingAccount; item.error = nil; try store.save(item)
     }

@@ -92,6 +92,10 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var runs: [PipelineRun] = []
     public var manualExecutable: String? // Host-only, single-message confirmation; never imported from the spool.
     public var syntheticAuthorized = false
+    public var canRecheckIdentity: Bool {
+        state == .needsReview && runs.isEmpty && (!input.body.isEmpty ||
+            (sourceEvidence != nil && ["identityUnresolved", "identityUnavailable", "identityAmbiguous"].contains(error ?? "")))
+    }
     public var triageRequest: ReplyTriageRequest { ReplyTriageRequest(requestID: id + "-triage", message: input) }
     public var decision: ReplyDecision? { decisionData.flatMap { try? ReplyDecision.validated($0, for: triageRequest) } }
     public var draft: ReplyDraft? {

@@ -389,8 +389,8 @@ struct PendingWorkbench: View {
                                     if let error = run.error { Text("结果：\(error)") }
                                 }.font(.caption).foregroundStyle(.secondary)
                             }
-                            if item.state == .needsReview && item.runs.isEmpty && !item.input.body.isEmpty {
-                                Button("重新核验账户（不重放模型调用）") { model.recheck(item.id) }
+                            if item.canRecheckIdentity {
+                                Button("重新核验并继续处理") { model.recheck(item.id) }
                             }
                             if [.queued, .triaging, .draftQueued, .drafting, .awaitingAccount, .awaitingBody].contains(item.state) {
                                 Button("取消此任务") { model.cancel(item.id) }

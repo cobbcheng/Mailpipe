@@ -32,6 +32,11 @@ final class CaptureSourceRecoveryTests: XCTestCase {
         XCTAssertEqual(try pipeline!.store.records().count, 1)
         XCTAssertEqual(try pipeline!.store.record(id)?.state, .awaitingAccount)
         XCTAssertNotNil(try pipeline!.store.record(id)?.sourceEvidence)
+        // A failed lookup must remain manually recoverable even before MIME extraction.
+        try await pipeline!.pump()
+        XCTAssertTrue(try XCTUnwrap(pipeline!.store.record(id)).canRecheckIdentity)
+        XCTAssertEqual(try pipeline!.store.record(id)?.input.body, "")
+        try pipeline!.recheckIdentity(id)
         pipeline = nil
         let resumed = ReplyPipeline(store: try PipelineStore(directory: root.appendingPathComponent("state")),
             inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")), resolve: { _, scope in
@@ -41,6 +46,8 @@ final class CaptureSourceRecoveryTests: XCTestCase {
         let item = try XCTUnwrap(resumed.store.record(id))
         XCTAssertEqual(item.input.body, "请确认周五。")
         XCTAssertEqual(item.state, .draftReady)
+        XCTAssertFalse(item.canRecheckIdentity)
+        XCTAssertThrowsError(try resumed.recheckIdentity(id))
         let count = await fake.calls; XCTAssertEqual(count, 2)
         try await resumed.pump()
         let unchanged = await fake.calls; XCTAssertEqual(unchanged, 2)
