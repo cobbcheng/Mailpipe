@@ -94,6 +94,16 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var syntheticAuthorized = false
     public var editedSubject: String?
     public var editedBody: String?
+    public var reviewedDraftVersion: String?
+    public var draftVersion: String? {
+        guard let draftData, draft != nil else { return nil }
+        let runID = runs.last { $0.destination.taskKind == .draft && $0.finishedAt != nil && $0.error == nil }?.destination.runID ?? "legacy"
+        return runID + ":" + contentDigest(draftData)
+    }
+    public var hasDraftCandidate: Bool {
+        state == .draftReady && error == nil && editedBody != nil && (regenerationCount ?? 0) > 0 &&
+        draftVersion != reviewedDraftVersion && draft?.body != editedBody && draft != nil
+    }
     public var discardedAt: Date?
     public var regenerationCount: Int?
     public var isPreparing: Bool { [.awaitingAccount, .queued, .triaging, .draftQueued, .drafting].contains(state) }
@@ -206,7 +216,19 @@ public final class PipelineStore {
     public func saveEdits(_ id: String, subject: String, body: String) throws {
         guard var item = try record(id), subject.utf8.count <= 2_048,
               body.utf8.count <= 65_536 else { throw MailpipeError.invalidInput }
+        // Editing the initial generated reply acknowledges that version, but never
+        // dismisses a later pending candidate as a side effect of typing.
+        if item.reviewedDraftVersion == nil && (item.regenerationCount ?? 0) == 0 && !item.isPreparing {
+            item.reviewedDraftVersion = item.draftVersion
+        }
         item.editedSubject = subject; item.editedBody = body
+        try save(item)
+    }
+    public func resolveDraftCandidate(_ id: String, expected: String, adopt: Bool) throws {
+        guard var item = try record(id), item.hasDraftCandidate,
+              item.draftVersion == expected, let draft = item.draft else { throw MailpipeError.invalidInput }
+        if adopt { item.editedBody = draft.body }
+        item.reviewedDraftVersion = expected
         try save(item)
     }
     public func discard(_ id: String, now: Date = Date()) throws {

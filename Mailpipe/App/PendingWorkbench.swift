@@ -35,11 +35,50 @@ final class PendingModel: ObservableObject {
     private var noticeTask: Task<Void, Never>?
     var toolName: String { installations.first { $0.executable.path == settings.executable }?.kind.displayName ?? "AI 工具" }
     func notify(_ text: String) { notice = text }
-    func saveEdits(_ id: String, subject: String, body: String) {
-        do { try pipeline?.store.saveEdits(id, subject: subject, body: body); refresh() }
-        catch { issue = "无法保存编辑，请保留当前窗口后重试。" }
+    @Published private(set) var editorBuffers: [String: DraftEditBuffer] = [:]
+    private var editTasks: [String: Task<Void, Never>] = [:]
+    func openEditor(_ item: StoredReply) {
+        if editorBuffers[item.id] == nil { editorBuffers[item.id] = DraftEditBuffer(body: item.displayedBody) }
+    }
+    func editorBody(_ item: StoredReply) -> String { editorBuffers[item.id]?.body ?? item.displayedBody }
+    func saveState(_ item: StoredReply) -> DraftSaveState { editorBuffers[item.id]?.state ?? .saved }
+    func editBody(_ item: StoredReply, body: String) {
+        openEditor(item)
+        editorBuffers[item.id]?.edit(body)
+        guard editTasks[item.id] == nil else { return }
+        // Yield once to expose saving feedback; the host owns this write even if
+        // the user switches messages or closes the workbench before it resumes.
+        editTasks[item.id] = Task { [weak self] in
+            await Task.yield()
+            guard !Task.isCancelled, let self else { return }
+            self.editTasks[item.id] = nil
+            _ = self.flushEditor(item.id)
+        }
+    }
+    @discardableResult func flushEditor(_ id: String) -> Bool {
+        editTasks.removeValue(forKey: id)?.cancel()
+        guard var buffer = editorBuffers[id] else { return true }
+        let saved = buffer.persist { body in
+            guard let pipeline, let item = try pipeline.store.record(id) else { throw PipelineError.storage }
+            try pipeline.store.saveEdits(id, subject: item.displayedSubject, body: body)
+        }
+        editorBuffers[id] = buffer
+        if saved { refresh() }
+        return saved
+    }
+    @discardableResult func resolveCandidate(_ item: StoredReply, adopt: Bool) -> Bool {
+        guard flushEditor(item.id), let version = item.draftVersion else { return false }
+        do {
+            guard let pipeline else { throw PipelineError.storage }
+            try pipeline.store.resolveDraftCandidate(item.id, expected: version, adopt: adopt)
+            if adopt, let updated = try pipeline.store.record(item.id) {
+                editorBuffers[item.id] = DraftEditBuffer(body: updated.displayedBody)
+            }
+            refresh(); return true
+        } catch { notify("未能保存选择，当前编辑和候选稿仍保留。"); return false }
     }
     func discard(_ id: String) {
+        guard flushEditor(id) else { return }
         do {
             try pipeline?.store.discard(id); undoDiscardID = id; notice = "已丢弃"
             refresh(); noticeTask?.cancel()
@@ -56,7 +95,14 @@ final class PendingModel: ObservableObject {
         catch { issue = "撤销时间已过，草稿记录仍保留在本机。" }
     }
     func regenerate(_ id: String) {
-        do { try pipeline?.regenerate(id); refresh() }
+        guard flushEditor(id) else { return }
+        do {
+            guard let pipeline, let item = try pipeline.store.record(id) else { throw PipelineError.storage }
+            // Freeze the current reply even when it has not been edited, so the
+            // next generated version can only appear as a candidate.
+            try pipeline.store.saveEdits(id, subject: item.displayedSubject, body: editorBody(item))
+            try pipeline.regenerate(id); refresh()
+        }
         catch { issue = "无法重新生成。请核对暂停、账户授权、工具和邮件有效期；每封最多重新生成三次。" }
     }
     func applyConfiguration() {
@@ -278,6 +324,11 @@ final class PendingModel: ObservableObject {
         do {
             extensionObservation = try? ExtensionObservation.read(from: pipeline.inbox)
             records = try pipeline.store.records(); settings = try pipeline.store.settings()
+            for item in records where item.draft != nil && item.editedBody == nil {
+                if let buffer = editorBuffers[item.id], buffer.body.isEmpty && buffer.state == .saved {
+                    editorBuffers[item.id] = DraftEditBuffer(body: item.displayedBody)
+                }
+            }
             if let problem = try pipeline.store.issue() { issue = "采集提示：\(problem)" }
         } catch { issue = Self.code(error) }
     }
@@ -399,7 +450,7 @@ struct PendingWorkbench: View {
                             Text(item.displayedBody.isEmpty ? "等待准备回复" : item.displayedBody)
                                 .font(.callout).foregroundStyle(.secondary).lineLimit(2)
                             HStack {
-                                Text(item.state.label)
+                                Text(DraftContentWarnings(body: model.editorBody(item)).requiresCopyConfirmation ? "待确认" : item.state.label)
                                 Spacer()
                                 Text(item.capturedAt, format: .dateTime.month(.twoDigits).day(.twoDigits))
                             }.font(.caption).foregroundStyle(.secondary)
@@ -472,119 +523,214 @@ struct PendingWorkbench: View {
 private struct DraftDetail: View {
     @ObservedObject var model: PendingModel
     let item: StoredReply
-    @State private var subject = ""
-    @State private var bodyText = ""
-    @State private var showOriginal = false
     @State private var showExplanation = false
     @State private var confirmRegeneration = false
-    @State private var confirmReplacement = false
-    private var hasDraft: Bool { item.draft != nil || item.editedBody != nil }
-    private var isExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || ["contentExpired", "policyChanged", "identityUnresolved"].contains(item.error ?? "") }
+    @State private var confirmCopy = false
+    @State private var showCandidate = false
+    @FocusState private var editorFocused: Bool
+    private var bodyText: String { model.editorBody(item) }
+    private var warnings: DraftContentWarnings { DraftContentWarnings(body: bodyText) }
+    private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
+    private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved"].contains(item.error ?? "") }
+    private var hasDraft: Bool { item.draft != nil || item.editedBody != nil || !bodyText.isEmpty }
+    private var canRegenerate: Bool {
+        !item.isPreparing && !item.runs.contains { $0.finishedAt == nil } && !model.settings.paused &&
+        (item.regenerationCount ?? 0) < 3 && item.capturedAt > Date().addingTimeInterval(-7 * 86_400)
+    }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(item.input.subject).font(.title2.weight(.semibold)).textSelection(.enabled)
-                    HStack {
-                        Text("发件人未采集")
-                        Text("·")
-                        Text(item.capturedAt, format: .dateTime.year().month().day().hour().minute())
-                    }.font(.callout).foregroundStyle(.secondary)
-                    Label(item.state.label, systemImage: item.isPreparing ? "hourglass" : item.error != nil ? "exclamationmark.circle" : "text.bubble")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                if isExpired {
-                    Label("原邮件或授权需要重新核对，当前编辑已保留。", systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
-                }
-                DisclosureGroup("来信原文", isExpanded: $showOriginal) {
-                    Text(item.input.body.isEmpty ? "尚未取得可阅读的正文。请核对 Mail 权限和邮件格式。" : item.input.body)
-                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
-                }
-                Divider()
-                if hasDraft {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("回复草稿").font(.headline)
-                            Spacer()
-                            Text("编辑自动保存在本机").font(.caption).foregroundStyle(.secondary)
-                        }
-                        TextField("回复主题", text: $subject).textFieldStyle(.roundedBorder).accessibilityLabel("回复主题")
-                        TextEditor(text: $bodyText).font(.body).frame(minHeight: 240)
-                            .accessibilityLabel("回复草稿正文")
-                        HStack {
-                            Button {
-                                NSPasteboard.general.clearContents()
-                                if NSPasteboard.general.setString(bodyText, forType: .string) {
-                                    model.notify("已复制。请到 Mail 中粘贴发送。")
-                                } else { model.notify("复制未成功，请重试。") }
-                            } label: { Label("复制草稿", systemImage: "doc.on.doc") }
-                                .buttonStyle(.borderedProminent).disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                                .keyboardShortcut("c", modifiers: [.command, .shift])
-                            Button("重新生成") { confirmRegeneration = true }
-                                .disabled(item.isPreparing || item.runs.contains { $0.finishedAt == nil } || model.settings.paused || (item.regenerationCount ?? 0) >= 3 || item.capturedAt < Date().addingTimeInterval(-7 * 86_400))
-                            Spacer()
-                            Menu {
-                                Button("丢弃草稿", role: .destructive) { model.discard(item.id) }
-                            } label: { Image(systemName: "ellipsis") }
-                                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多草稿操作").disabled(item.isPreparing)
-                        }
-                        Text("复制后，请到 Mail 中粘贴并发送。").font(.caption).foregroundStyle(.secondary)
-                        if let draft = item.draft, draft.body != bodyText, (item.regenerationCount ?? 0) > 0, item.state == .draftReady, item.error == nil {
-                            DisclosureGroup("查看生成的草稿") {
-                                Text(draft.body).textSelection(.enabled).padding(.vertical, 8)
-                                Button("使用这份草稿") { confirmReplacement = true }
-                            }
-                        }
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.input.subject).font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(2)
+                Text("发件人未采集 · \(item.capturedAt.formatted(.dateTime.year().month().day().hour().minute())) · \(TimeZone.current.identifier)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            GeometryReader { geometry in
+                if geometry.size.width >= 720 {
+                    HStack(alignment: .top, spacing: 16) {
+                        originalPane.frame(width: (geometry.size.width - 16) * 0.38)
+                        replyPane
                     }
-                } else if item.isPreparing {
-                    ProgressView("正在准备…")
                 } else {
-                    Text(item.error == nil ? "这封来信尚无回复草稿。" : "未能准备草稿，请展开处理说明核对。").foregroundStyle(.secondary)
-                    if item.canRecheckIdentity {
-                        Button("重新核对来信") { model.recheck(item.id) }.disabled(model.settings.paused)
-                    } else if item.state == .needsReview || item.state == .needsReply {
-                        Button("重新生成") { confirmRegeneration = true }.disabled(model.settings.paused || (item.regenerationCount ?? 0) >= 3)
+                    VStack(spacing: 12) {
+                        originalPane.frame(height: max(100, geometry.size.height * 0.32))
+                        replyPane
                     }
                 }
-                if item.isPreparing { Button("取消此任务") { model.cancel(item.id) } }
-                Divider()
-                DisclosureGroup("处理说明", isExpanded: $showExplanation) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if let run = item.runs.last {
-                            Text("本次经 \(run.destination.harness.displayName) 处理。邮件会到达该工具配置的模型。Mailpipe 不设服务器。")
-                        } else { Text("尚未调用 AI 工具。") }
-                        if let decision = item.decision { ForEach(decision.summary, id: \.self) { Text($0) } }
-                        if let error = item.error { Text(errorDescription(error)) }
-                        if (item.regenerationCount ?? 0) >= 3 { Text("已达本封重新生成次数上限。当前草稿仍可编辑和复制。") }
-                    }.foregroundStyle(.secondary).padding(.top, 8)
-                }
-            }.padding(28).frame(maxWidth: 820, alignment: .leading).frame(maxWidth: .infinity)
-        }
-        .onAppear { subject = item.displayedSubject; bodyText = item.displayedBody }
-        .onChange(of: item.draftData) { _ in
-            if item.editedBody == nil, let draft = item.draft { subject = draft.subject; bodyText = draft.body }
-        }
-        .onChange(of: subject) { _ in persist() }
-        .onChange(of: bodyText) { _ in persist() }
+            }.frame(minHeight: 220)
+            Divider()
+            actions
+        }.padding(20)
+        .onAppear { model.openEditor(item) }
+        .alert("草稿含未确认内容。仍要复制吗？", isPresented: $confirmCopy) {
+            Button("返回编辑", role: .cancel) { editorFocused = true }
+            Button("仍要复制") { copyReply() }
+        } message: { Text("请先核对待补充、待确认的占位或表述。复制不会发送邮件。") }
         .alert("重新生成回复？", isPresented: $confirmRegeneration) {
             Button("取消", role: .cancel) { }
-            Button("重新生成") { persist(); model.regenerate(item.id) }
+            Button("重新生成") { model.regenerate(item.id) }
         } message: {
-            Text("当前编辑会保留。新结果备好后，由你选择是否替换。最多两次模型调用，消耗所选工具额度。")
+            Text("当前编辑会保留。新结果进入候选预览，由你选择采用新稿或保留现稿。最多两次模型调用，会消耗工具额度。")
         }
-        .alert("替换当前编辑？", isPresented: $confirmReplacement) {
-            Button("保留编辑", role: .cancel) { }
-            Button("使用新草稿") { if let draft = item.draft { subject = draft.subject; bodyText = draft.body; persist() } }
-        } message: { Text("将用生成的内容替换当前主题和正文。") }
+        .sheet(isPresented: $showCandidate) { candidatePreview }
     }
-    private func persist() {
-        guard hasDraft, subject != item.displayedSubject || bodyText != item.displayedBody else { return }
-        model.saveEdits(item.id, subject: subject, body: bodyText)
+    private var originalPane: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("来信原文").font(.headline)
+            ScrollView {
+                Text(item.input.body.isEmpty ? "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。" : item.input.body)
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor), lineWidth: 1) }
+                .accessibilityLabel("来信原文，只读")
+        }.padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+    }
+    private var replyPane: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("回复正文").font(.headline).fixedSize()
+                    statusChips.fixedSize()
+                    Spacer(minLength: 0)
+                    saveStatus.fixedSize()
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("回复正文").font(.headline)
+                        Spacer(minLength: 0)
+                        saveStatus
+                    }
+                    statusChips
+                }
+            }
+            if isExpired {
+                Text("原信或授权需要重新核对。当前编辑保留。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let error = item.error {
+                Text(errorDescription(error)).font(.caption).foregroundStyle(.secondary)
+            }
+            if item.isPreparing {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("正在生成…").font(.callout)
+                    Spacer()
+                    Button("取消", action: { model.cancel(item.id) })
+                }
+            }
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: Binding(get: { bodyText }, set: { model.editBody(item, body: $0) }))
+                    .font(.body).scrollContentBackground(.hidden).padding(8)
+                    .disabled(item.isPreparing && !hasDraft)
+                    .focused($editorFocused)
+                    .accessibilityLabel("回复正文，可编辑")
+                if bodyText.isEmpty {
+                    Text(item.isPreparing ? "正在准备回复，现有编辑会保留。" : "点击此处输入回复正文…")
+                        .foregroundStyle(.secondary).padding(13).allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(editorFocused ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: editorFocused ? 2 : 1)
+                        .allowsHitTesting(false)
+                }
+            if item.hasDraftCandidate {
+                HStack {
+                    Label("新稿待选择，当前编辑未替换", systemImage: "doc.badge.clock").font(.caption)
+                    Spacer()
+                    Button("候选预览") { showCandidate = true }
+                }
+            } else if !warnings.requiresCopyConfirmation && hasDraft && !item.isPreparing && !isExpired && item.error == nil {
+                Text("可复制 · 请核对内容后发送").font(.caption).foregroundStyle(.secondary)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+    private var statusChips: some View {
+        HStack(spacing: 6) {
+            if warnings.needsSupplement { chip("待补充", symbol: "pencil.circle") }
+            if warnings.needsConfirmation { chip("待确认", symbol: "questionmark.circle") }
+            if isExpired { chip(contentExpired ? "已过期" : "需重新核对", symbol: "exclamationmark.triangle") }
+        }
+    }
+    @ViewBuilder private var saveStatus: some View {
+        if model.saveState(item) == .failed {
+            Button("未能保存，点此重试") { model.flushEditor(item.id) }
+                .font(.caption).buttonStyle(.link)
+        } else {
+            Text(!hasDraft ? "尚无草稿" : model.saveState(item).label)
+                .font(.caption).foregroundStyle(.secondary)
+                .accessibilityLabel("保存状态：\(model.saveState(item).label)")
+        }
+    }
+    private var actions: some View {
+        HStack(spacing: 12) {
+            Button {
+                if warnings.requiresCopyConfirmation { confirmCopy = true }
+                else { copyReply() }
+            } label: { Label("复制回复", systemImage: "doc.on.doc") }
+                .buttonStyle(.borderedProminent)
+                .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+            Button("重新生成") { confirmRegeneration = true }.disabled(!canRegenerate)
+            Menu {
+                Button("查看处理说明 / 数据去向") { showExplanation = true }
+                Divider()
+                Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
+            } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多草稿操作")
+            Spacer(minLength: 0)
+            Button { showExplanation = true } label: { Image(systemName: "info.circle") }
+                .buttonStyle(.borderless).accessibilityLabel("查看处理说明与数据去向")
+                .popover(isPresented: $showExplanation) { explanation }
+        }.controlSize(.regular)
+    }
+    private var explanation: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("处理说明").font(.headline)
+            if let run = item.runs.last {
+                Text("本次经 \(run.destination.harness.displayName) 处理。邮件会到达该工具配置的模型。Mailpipe 不设服务器。")
+            } else { Text("尚未调用 AI 工具。") }
+            Text("复制回复只复制当前编辑正文。请到 Mail 中粘贴并发送。")
+            if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }
+            Text("状态提示按占位符和少量待核实表述识别，不代表事实核验。")
+                .font(.caption).foregroundStyle(.secondary)
+        }.padding().frame(width: 340)
+    }
+    private var candidatePreview: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("候选预览").font(.title2.weight(.semibold))
+            Text("当前编辑保持不变。采用新稿会替换回复正文。") .foregroundStyle(.secondary)
+            ScrollView {
+                Text(item.draft?.body ?? "候选稿暂不可用。")
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack {
+                Button("稍后决定") { showCandidate = false }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("保留现稿") { if model.resolveCandidate(item, adopt: false) { showCandidate = false } }
+                Button("采用新稿") { if model.resolveCandidate(item, adopt: true) { showCandidate = false } }
+                    .buttonStyle(.borderedProminent)
+            }
+        }.padding(24).frame(width: 560, height: 440)
+    }
+    private func chip(_ text: String, symbol: String) -> some View {
+        Label(text, systemImage: symbol).font(.caption)
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(Color(nsColor: .controlBackgroundColor), in: Capsule())
+    }
+    private func copyReply() {
+        NSPasteboard.general.clearContents()
+        if NSPasteboard.general.setString(bodyText, forType: .string) {
+            model.notify("已复制回复正文。请到 Mail 中粘贴发送。")
+        } else { model.notify("复制未成功，请重试。") }
     }
     private func errorDescription(_ code: String) -> String {
         if let rejection = MailBodyRejection(rawValue: code) { return rejection.reviewLabel }
         switch code {
-        case "contentExpired": return "来信已超过处理有效期。请重新确认内容后使用逐封建议。"
+        case "contentExpired": return "来信已超过处理有效期，请重新确认内容后使用逐封建议。"
         case "policyChanged", "revoked": return "处理授权已变更，请在设置中核对。"
         case "identityUnresolved", "identityUnavailable", "identityAmbiguous": return "无法唯一核对原邮件，请检查 Mail 权限和账户。"
         case "cancelled": return "任务已取消，当前编辑保留。"
