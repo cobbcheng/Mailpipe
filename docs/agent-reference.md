@@ -48,6 +48,7 @@
 | 无模型命令行检查 | `Tools/MailpipeM0/MailpipeM0.swift` |
 | 回归 | `Tests/`、`scripts/test.sh` |
 | 工程配置 | `scripts/generate-project.py`、`Package.swift` |
+| 应用图标与菜单栏图标 | `design/icon/`、`Mailpipe/Assets.xcassets` |
 | 当前验证 | [M0 工程记录](validation/2026-11-15-m0-scaffold.md) |
 
 ## 数据与诊断入口

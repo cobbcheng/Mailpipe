@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Deterministic, dependency-free generator for the two-target M0 Xcode host project."""
+"""Deterministic, dependency-free generator for the two-target M0 Xcode host project.
+
+Both targets compile Mailpipe/Assets.xcassets. AppIcon is the bundle icon;
+MenuBarIcon is the host menu-bar template image.
+"""
 import hashlib
 import json
 from pathlib import Path
@@ -33,6 +37,8 @@ app_product = obj('app-product', 'PBXFileReference', explicitFileType='wrapper.a
 ext_product = obj('ext-product', 'PBXFileReference', explicitFileType='wrapper.app-extension',
                   path='MailpipeMailExtension.appex', sourceTree='BUILT_PRODUCTS_DIR', includeInIndex='0')
 package = obj('package', 'XCLocalSwiftPackageReference', relativePath='.')
+asset_catalog = obj('asset-catalog', 'PBXFileReference', lastKnownFileType='folder.assetcatalog',
+                    path='Mailpipe/Assets.xcassets', sourceTree='SOURCE_ROOT')
 source_groups = []
 target_ids = []
 for label, source_dir, product, product_type in (
@@ -58,7 +64,10 @@ for label, source_dir, product, product_type in (
         framework_files.append(obj(label + '-link-' + library, 'PBXBuildFile', productRef=dep))
     frameworks = obj(label + '-frameworks', 'PBXFrameworksBuildPhase', buildActionMask='2147483647',
                      files=framework_files, runOnlyForDeploymentPostprocessing='0')
-    phases, dependencies = [sources, frameworks], []
+    asset_build = obj(label + '-asset', 'PBXBuildFile', fileRef=asset_catalog)
+    resources = obj(label + '-resources', 'PBXResourcesBuildPhase', buildActionMask='2147483647',
+                    files=[asset_build], runOnlyForDeploymentPostprocessing='0')
+    phases, dependencies = [sources, frameworks, resources], []
     if label == 'Mailpipe':
         embed = obj('embed-extension-file', 'PBXBuildFile', fileRef=ext_product, settings={'ATTRIBUTES':['RemoveHeadersOnCopy']})
         phases.append(obj('embed-extensions', 'PBXCopyFilesBuildPhase', buildActionMask='2147483647',
@@ -68,6 +77,7 @@ for label, source_dir, product, product_type in (
         dependencies.append(obj('extension-dependency', 'PBXTargetDependency', target=ident('target-MailpipeMailExtension'), targetProxy=proxy))
     settings = dict(PRODUCT_NAME='$(TARGET_NAME)', PRODUCT_BUNDLE_IDENTIFIER='com.mailpipe.app' + ('.MailExtension' if label != 'Mailpipe' else ''),
                     INFOPLIST_FILE=source_dir + '/Info.plist', GENERATE_INFOPLIST_FILE='NO',
+                    ASSETCATALOG_COMPILER_APPICON_NAME='AppIcon',
                     SWIFT_VERSION='6.0', MACOSX_DEPLOYMENT_TARGET='13.0', CODE_SIGN_STYLE='Automatic',
                     ENABLE_HARDENED_RUNTIME='YES', MAILPIPE_APP_GROUP='$(DEVELOPMENT_TEAM).com.mailpipe.validation', LD_RUNPATH_SEARCH_PATHS=['$(inherited)', '@executable_path/../Frameworks'],
                     SKIP_INSTALL='YES' if label != 'Mailpipe' else 'NO')
@@ -82,7 +92,7 @@ for label, source_dir, product, product_type in (
                           buildPhases=phases, buildRules=[], dependencies=dependencies, name=label, productName=label,
                           productReference=product, productType=product_type, packageProductDependencies=package_products))
 products = obj('products', 'PBXGroup', children=[app_product, ext_product], name='Products', sourceTree='<group>')
-main = obj('main', 'PBXGroup', children=source_groups + [products], sourceTree='<group>')
+main = obj('main', 'PBXGroup', children=source_groups + [asset_catalog, products], sourceTree='<group>')
 project = obj('project', 'PBXProject', attributes={'LastUpgradeCheck':'1600','BuildIndependentTargetsInParallel':'YES'},
               buildConfigurationList=configs('project', {'SDKROOT':'macosx', 'CLANG_ENABLE_MODULES':'YES', 'SWIFT_VERSION':'6.0'}),
               compatibilityVersion='Xcode 14.0', developmentRegion='en', hasScannedForEncodings='0', knownRegions=['en','Base'],
