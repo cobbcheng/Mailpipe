@@ -94,6 +94,7 @@
         "CODE_SIGN_ENTITLEMENTS" = "Mailpipe/MailExtension/MailExtension.entitlements";
         "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
         "SWIFT_COMPILATION_MODE" = "singlefile";
+        "ONLY_ACTIVE_ARCH" = "YES";
       };
     };
     "CAE8583EEBC86F22296AA4CD" = {
@@ -301,6 +302,7 @@
         "CODE_SIGN_ENTITLEMENTS" = "Mailpipe/App/Mailpipe.entitlements";
         "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
         "SWIFT_COMPILATION_MODE" = "singlefile";
+        "ONLY_ACTIVE_ARCH" = "YES";
       };
     };
     "C48833160C26BA9D4B0D6E70" = {
@@ -362,6 +364,7 @@
         "SWIFT_VERSION" = "6.0";
         "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
         "SWIFT_COMPILATION_MODE" = "singlefile";
+        "ONLY_ACTIVE_ARCH" = "YES";
       };
     };
     "0B0C687DF8B6B8DC790B519C" = {

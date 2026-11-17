@@ -21,6 +21,9 @@ def configs(label, settings):
         flags = dict(settings)
         flags.update(SWIFT_OPTIMIZATION_LEVEL='-Onone' if name == 'Debug' else '-O',
                      SWIFT_COMPILATION_MODE='singlefile' if name == 'Debug' else 'wholemodule')
+        if name == 'Debug':
+            # Local Swift package products build for the destination's active arch only.
+            flags['ONLY_ACTIVE_ARCH'] = 'YES'
         ids.append(obj(label + name, 'XCBuildConfiguration', name=name, buildSettings=flags))
     return obj(label + 'configs', 'XCConfigurationList', buildConfigurations=ids,
                defaultConfigurationIsVisible='0', defaultConfigurationName='Release')
