@@ -206,13 +206,14 @@ public final class PipelineStore {
               capture.capturedAt > Date().addingTimeInterval(-86_400) else { throw PipelineError.revoked }
         }
         guard try records().count < 1_000 else { throw PipelineError.quota }
-        // Header-only entries are candidates, not account identities. Merge a body reentry
+        // Header-only entries are candidates, not account identities. Merge a body result
         // only into a single matching empty candidate; never merge two full messages here.
         let candidates = try records().filter {
             $0.permissionID == capture.permissionID && $0.messageID != nil && $0.messageID == capture.messageID &&
             $0.input.subject == capture.subject && $0.state == .awaitingBody
         }
-        let id = capture.raw != nil && candidates.count == 1 ? candidates[0].id : UUID().uuidString
+        let hasBodyResult = capture.raw != nil || capture.issue != nil
+        let id = hasBodyResult && candidates.count == 1 ? candidates[0].id : UUID().uuidString
         var body = "", bodyIssue = capture.issue
         if let raw = capture.raw {
             do { body = try PlainMailBody.decode(raw) }

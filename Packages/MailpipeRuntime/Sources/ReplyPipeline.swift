@@ -111,6 +111,9 @@ public final class ReplyPipeline {
                         item.state = .needsReview; try store.save(item); return
                     }
                     item.accountID = verified.accountID; item.localID = verified.localID; item.scopeID = scope.id
+                } catch MailBodyRejection.messageTooLarge {
+                    item.error = MailBodyRejection.messageTooLarge.rawValue
+                    item.state = .needsReview; try store.save(item); return
                 } catch {
                     item.error = "identityUnavailable"; item.state = .needsReview; try store.save(item); return
                 }

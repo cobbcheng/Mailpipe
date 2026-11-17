@@ -231,6 +231,64 @@ extension PipelineTests {
         XCTAssertTrue(try pipeline.store.records().isEmpty)
         XCTAssertTrue(try pipeline.inbox.files().isEmpty)
     }
+
+    func testBodyRejectionCompletesSingleCandidateAndSurvivesRestart() async throws {
+        let root = try temporary(), fake = FakeReplyModel()
+        var pipeline: ReplyPipeline? = try setup(root, fake: fake)
+        let permission = try XCTUnwrap(pipeline!.store.settings().permission)
+        let header = InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "oversize@example.com", raw: nil)
+        let id = try pipeline!.store.importCapture(header)
+        let rejection = InboundCapture(permissionID: permission.id, subject: header.subject, messageID: header.messageID,
+            raw: nil, issue: MailBodyRejection.messageTooLarge.rawValue)
+        XCTAssertEqual(try pipeline!.store.importCapture(rejection), id)
+        XCTAssertEqual(try pipeline!.store.records().count, 1)
+        XCTAssertEqual(try pipeline!.store.record(id)?.state, .needsReview)
+        XCTAssertEqual(try pipeline!.store.record(id)?.error, "messageTooLarge")
+        // Both prior ingests still map to the same record after a crash/restart.
+        pipeline = nil
+        let store = try PipelineStore(directory: root.appendingPathComponent("state"))
+        XCTAssertEqual(try store.importCapture(header), id)
+        XCTAssertEqual(try store.importCapture(rejection), id)
+        let resumed = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")),
+            resolve: { _, _ in XCTFail("Rejected body must not resolve identity"); return nil }, model: { _ in fake })
+        try await resumed.pump()
+        XCTAssertEqual(try store.records().count, 1)
+        let calls = await fake.calls; XCTAssertEqual(calls, 0)
+    }
+
+    func testBodyRejectionDoesNotMergeAmbiguousOrUnrelatedCandidates() throws {
+        let pipeline = try setup(try temporary())
+        let permission = try XCTUnwrap(pipeline.store.settings().permission)
+        for id in ["ambiguous@example.com", "ambiguous@example.com", "other@example.com"] {
+            _ = try pipeline.store.importCapture(InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: id, raw: nil))
+        }
+        _ = try pipeline.store.importCapture(InboundCapture(permissionID: permission.id, subject: "Other subject", messageID: "other@example.com", raw: nil))
+        let reject = InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "ambiguous@example.com", raw: nil, issue: "messageTooLarge")
+        _ = try pipeline.store.importCapture(reject)
+        XCTAssertEqual(try pipeline.store.records().filter { $0.state == .awaitingBody }.count, 4)
+        XCTAssertEqual(try pipeline.store.records().filter { $0.state == .needsReview }.count, 1)
+        let unrelated = InboundCapture(permissionID: permission.id, subject: "Changed", messageID: "other@example.com", raw: nil, issue: "messageTooLarge")
+        _ = try pipeline.store.importCapture(unrelated)
+        XCTAssertEqual(try pipeline.store.records().count, 6)
+        let denied = InboundCapture(permissionID: UUID(), subject: "Synthetic", messageID: "other@example.com", raw: nil, issue: "messageTooLarge")
+        XCTAssertThrowsError(try pipeline.store.importCapture(denied))
+        XCTAssertEqual(try pipeline.store.records().count, 6)
+    }
+
+    func testOversizeMailSourceStopsBeforeHarnessAndDoesNotRetry() async throws {
+        let root = try temporary(), fake = FakeReplyModel()
+        let configured = try setup(root, fake: fake)
+        let pipeline = ReplyPipeline(store: configured.store, inbox: configured.inbox,
+            resolve: { _, _ in throw MailBodyRejection.messageTooLarge }, model: { _ in fake })
+        try pipeline.inbox.publish(try capture(pipeline))
+        for _ in 0..<2 { try await pipeline.pump() }
+        let item = try XCTUnwrap(pipeline.store.records().first)
+        XCTAssertEqual(item.state, .needsReview)
+        XCTAssertEqual(item.error, "messageTooLarge")
+        XCTAssertNil(item.accountID)
+        XCTAssertTrue(item.runs.isEmpty)
+        let calls = await fake.calls; XCTAssertEqual(calls, 0)
+    }
 }
 
 @MainActor

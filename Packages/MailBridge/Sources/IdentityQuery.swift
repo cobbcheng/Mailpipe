@@ -166,7 +166,7 @@ public enum AppleMailReplyIdentity {
                 if (subject of hit) is not expectedSubject then return {"unresolved"}
                 if (id of account of mailbox of hit) is not accountID then return {"unresolved"}
                 set rawSource to source of hit
-                if (count of characters of rawSource) > 4194304 then return {"unresolved"}
+                if (count of characters of rawSource) > 4194304 then return {"messageTooLarge"}
                 return {"unique", id of chosenAccount as text, id of hit as text, rawSource}
             end tell
         end timeout
@@ -181,14 +181,22 @@ public enum AppleMailReplyIdentity {
         let path = mailboxPath ?? []
         guard (mailboxPath == nil || !path.isEmpty), path.count <= 33, path.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 }) else { throw IdentityQueryError.invalidScope }
         let result = try call(source: scriptSource, handler: "resolveReply", arguments: values, path: path)
-        guard result.atIndex(1)?.stringValue == "unique", result.numberOfItems == 4,
-              let account = result.atIndex(2)?.stringValue, account == accountID,
-              let local = result.atIndex(3)?.stringValue,
-              let source = result.atIndex(4)?.stringValue, source.utf8.count <= MailBodyLimits.rawCeiling else { return nil }
-        return Match(accountID: account, localID: local, source: source)
+        return try decodeMatch(result, accountID: accountID)
 #endif
     }
 #if os(macOS)
+    static func decodeMatch(_ result: NSAppleEventDescriptor, accountID: String) throws -> Match? {
+        if result.atIndex(1)?.stringValue == MailBodyRejection.messageTooLarge.rawValue {
+            guard result.numberOfItems == 1 else { throw IdentityQueryError.invalidResult }
+            throw MailBodyRejection.messageTooLarge
+        }
+        guard result.atIndex(1)?.stringValue == "unique", result.numberOfItems == 4,
+              let account = result.atIndex(2)?.stringValue, account == accountID,
+              let local = result.atIndex(3)?.stringValue,
+              let source = result.atIndex(4)?.stringValue else { return nil }
+        guard source.utf8.count <= MailBodyLimits.rawCeiling else { throw MailBodyRejection.messageTooLarge }
+        return Match(accountID: account, localID: local, source: source)
+    }
     private static func call(source: String, handler: String, arguments: [String], path: [String]? = nil) throws -> NSAppleEventDescriptor {
         guard let script = NSAppleScript(source: source) else { throw IdentityQueryError.invalidResult }
         let event = NSAppleEventDescriptor(eventClass: 0x61736372, eventID: 0x70736272, targetDescriptor: nil, returnID: -1, transactionID: 0)
