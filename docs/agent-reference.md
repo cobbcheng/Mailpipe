@@ -29,7 +29,7 @@
 | 安装 / 更新 / 发布 | [部署方法](deployment.md) | README 中的真实命令 |
 | 排期 / 接手 | [路线图重排](product/roadmap-v0.5.md)、[里程碑](roadmap.md)（已被路线图重排取代）、[已知限制](known-issues.md) | 已完成证据与未决项 |
 | 假设与对外措辞 | [假设确认与措辞修订](product/assumptions-and-wording.md) | 待定项保持原句 |
-| 草稿质量与画像 | [好回复标准](product/good-reply-standard.md) | 评测标尺与画像字段 |
+| 草稿质量与记忆提示 | [好回复标准](product/good-reply-standard.md) | 评测标尺。不自建画像 |
 | 核对外部事实 | [来源](sources.md) | 核查日期和证据等级 |
 
 ## 源码与检查入口

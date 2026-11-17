@@ -34,13 +34,15 @@ Notion 与本仓库没有自动同步。
 ### 2026-11-17 产品文档同步
 
 读取 PRD v0.5 下的三页，写入 `docs/product/`。
+同日修订：口吻对齐改为提示 harness 使用既有记忆。
+Mailpipe 不自建、不维护、不注入用户画像。
 页面仍是草稿。标为待定的事项没有在仓库里代为决定。
 
 | 页面 | 仓库 |
 |---|---|
 | [路线图重排](https://app.notion.com/p/41b632b374f581208b9dce67dede593a) | [roadmap-v0.5.md](product/roadmap-v0.5.md) |
 | [假设确认与措辞修订](https://app.notion.com/p/41b632b374f58192b5e7e7255a3e02b9) | [assumptions-and-wording.md](product/assumptions-and-wording.md) |
-| [好回复标准与用户画像](https://app.notion.com/p/41b632b374f5812fb446e2cd575b5631) | [good-reply-standard.md](product/good-reply-standard.md) |
+| [好回复标准与 harness 记忆提示](https://app.notion.com/p/41b632b374f5812fb446e2cd575b5631) | [good-reply-standard.md](product/good-reply-standard.md) |
 
 [里程碑](roadmap.md) 顶部改为指向路线图重排。
 正文没有按该文第四节改写。

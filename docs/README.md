@@ -11,8 +11,8 @@
 |---|---|
 | [产品方案](product.md) | 定位、级别、范围与工程差异 |
 | [路线图重排](product/roadmap-v0.5.md) | 对照 PRD v0.5 的阶段与门槛 |
-| [假设确认与措辞修订](product/assumptions-and-wording.md) | 43 条假设，以及「不经中间服务器」的候选措辞 |
-| [好回复标准与用户画像](product/good-reply-standard.md) | 草稿质量标尺与画像字段 |
+| [假设确认与措辞修订](product/assumptions-and-wording.md) | 44 条假设，以及「不经中间服务器」的候选措辞 |
+| [好回复标准与 harness 记忆提示](product/good-reply-standard.md) | 草稿质量标尺。口吻用 harness 既有记忆，不自建画像 |
 | [里程碑](roadmap.md) | 2026-11-16 原文。已被路线图重排取代 |
 
 ## 设计与契约
