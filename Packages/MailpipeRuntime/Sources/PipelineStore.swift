@@ -33,7 +33,7 @@ public struct PipelineSettings: Codable, Sendable {
 }
 public enum ReplyState: String, Codable, Sendable {
     case awaitingBody, awaitingAccount, queued, triaging, draftQueued, drafting
-    case needsReply, draftReady, noReply, needsReview, failed, cancelled
+    case needsReply, draftReady, noReply, needsReview, cancelled
     public var label: String {
         switch self {
         case .awaitingBody: "等待正文"
@@ -46,7 +46,6 @@ public enum ReplyState: String, Codable, Sendable {
         case .draftReady: "草稿已备好"
         case .noReply: "无需准备回复"
         case .needsReview: "需要核对"
-        case .failed: "处理失败"
         case .cancelled: "已取消"
         }
     }

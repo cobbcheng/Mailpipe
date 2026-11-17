@@ -14,7 +14,7 @@ final class OnboardingTests: XCTestCase {
         var store: PipelineStore? = try PipelineStore(directory: path)
         var active = PipelineSettings(); active.paused = true
         try store!.saveSettings(active)
-        var draft = OnboardingDraft(); draft.step = 4; draft.accountName = "Synthetic"; draft.mailboxName = "INBOX"
+        var draft = OnboardingDraft(); draft.step = 4
         try store!.saveOnboarding(draft); store = nil
         let reopened = try PipelineStore(directory: path)
         XCTAssertEqual(try reopened.onboarding(), draft)
@@ -25,7 +25,7 @@ final class OnboardingTests: XCTestCase {
         let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
         var active = PipelineSettings(); active.paused = true; try store.saveSettings(active)
         let session = try OnboardingSession(store: store, model: { _ in fake })
-        var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.accountName = "Synthetic"; draft.mailboxName = "INBOX"; draft.extensionAcknowledged = true
+        var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.extensionAcknowledged = true
         try session.save(draft)
         let scope = try AccountScope(accountID: "synthetic", accountName: "Synthetic", mailboxName: "INBOX")
         let scopes = [scope, try AccountScope(accountID: "second", accountName: "Other", mailboxName: "INBOX")]

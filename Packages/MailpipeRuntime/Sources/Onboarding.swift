@@ -7,8 +7,6 @@ public struct OnboardingDraft: Codable, Equatable, Sendable {
     public var step = 1
     public var selectedScopes: [AccountScope]?
     public var selections: [AccountScope] { selectedScopes ?? [] }
-    public var accountName = "" // Legacy draft fields; never infer selection from typed names.
-    public var mailboxName = ""
     public var exactSubject = ""
     public var executable = ""
     public var level: ServiceLevel = .default

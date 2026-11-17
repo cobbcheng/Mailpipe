@@ -56,21 +56,6 @@ struct MailpipeApp: App {
     }
 }
 
-private struct MenuContent: View {
-    @Environment(\.openWindow) private var openWindow
-    var body: some View {
-        Text("Mailpipe · M0 工程预览")
-        Text("尚未连接邮件")
-        Divider()
-        Button("打开工作台") {
-            openWindow(id: "workbench")
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        Button("M0 身份验证") { openWindow(id: "identity-probe"); NSApp.activate(ignoringOtherApps: true) }
-        Button("退出 Mailpipe") { NSApp.terminate(nil) }.keyboardShortcut("q")
-    }
-}
-
 private struct WorkbenchView: View {
     @ObservedObject var model: WorkbenchModel
     var body: some View {
