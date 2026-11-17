@@ -74,31 +74,24 @@ final class ProcessRunnerTests: XCTestCase {
         let output = try await POSIXProcessRunner().run(ProcessInvocation(executable: file, arguments: [], workingDirectory: root.url, environment: [:]))
         XCTAssertEqual(output.exitCode, 7); XCTAssertTrue(String(decoding: output.stderr, as: UTF8.self).contains("diagnostic"))
     }
-    func testCodexAdapterAgainstFakeExecutable() async throws {
+    func testCodexInspectAgainstFakeExecutable() async throws {
         let root = try TemporaryDirectory(), dialect = CodexCLIDialect()
-        let response = String(decoding: try codexEvents(), as: UTF8.self)
         let file = try root.script("""
-        case "$1" in
+        case "$*" in
           --version) echo 'fake-codex 1.2.3'; exit 0;;
+          *--help*) echo '\(dialect.requiredFlags.joined(separator: " "))'; exit 0;;
         esac
-        if [ "$2" = '--help' ]; then
-          echo '\(dialect.requiredFlags.joined(separator: " "))'
-          exit 0
-        fi
-        /bin/cat >/dev/null
-        /bin/cat <<'MAILPIPE_SYNTHETIC_OUTPUT'
-        \(response)
-        MAILPIPE_SYNTHETIC_OUTPUT
+        exit 1
         """)
         let adapter = CodexCLIAdapter(executable: file, dialect: dialect, temporaryRoot: root.url, environment: [:])
-        let output = try await adapter.runSyntheticProbe()
-        XCTAssertEqual(output.response.results.first?.category, .billing)
-        XCTAssertEqual(output.inputTokens, 12)
+        let report = try await adapter.inspect()
+        XCTAssertEqual(report.version, "fake-codex 1.2.3")
+        XCTAssertTrue(report.supportsHeadlessRun)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
     }
     func testDeepSeekAdapterAgainstFakeExecutable() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
-        let response = String(decoding: try deepseekEvents(), as: UTF8.self)
+        let response = String(decoding: try deepseekEvents(ReplySyntheticFixture.decision), as: UTF8.self)
         let file = try root.script("""
         case "$*" in
           --version) echo '0.2.2-rc.1'; exit 0;;
@@ -110,8 +103,10 @@ final class ProcessRunnerTests: XCTestCase {
         MAILPIPE_SYNTHETIC_OUTPUT
         """)
         let adapter = DeepSeekHarnessAdapter(executable: file, dialect: dialect, temporaryRoot: root.url, environment: [:])
-        let output = try await adapter.runSyntheticProbe()
-        XCTAssertEqual(output.response.results.first?.category, .billing)
+        let output = try await adapter.run(.triage(ReplySyntheticFixture.triage),
+                                           route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
+        XCTAssertEqual(try ReplyDecision.validated(output.content, for: ReplySyntheticFixture.triage).shouldReply, .yes)
+        XCTAssertEqual(output.inputTokens, 12)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
     }
 }

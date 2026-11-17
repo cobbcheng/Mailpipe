@@ -14,7 +14,7 @@ Apple Mail 主动回复助手。
 仓库核查日期：2026-11-17。
 已有新邮件暂存、SQLite 队列、分拣和 L2 草稿。
 菜单栏与工作台共用待处理数据。
-仅 DeepSeek 回复链路接入授权账户；Codex 仍限探针。
+仅 DeepSeek 回复链路接入授权账户；Codex 仅做工具检测。
 当前只接受有界纯文本，复杂 MIME 转待核对。
 尚无发布安装包或发布流水线。
 
@@ -84,7 +84,6 @@ L0/L1 只测试分拣，L2 另测备稿。
 ```sh
 ./scripts/swift.sh build
 ./scripts/test.sh
-./scripts/swift.sh run mailpipe-m0 offline
 ./scripts/swift.sh run mailpipe-m0 discover
 ./scripts/build-app.sh
 ```
@@ -96,10 +95,8 @@ L0/L1 只测试分拣，L2 另测备稿。
 生成器是工程配置的维护入口，不手改生成文件。
 
 `inspect dsh|codex /absolute/path` 只检查版本和帮助。
-App 的“运行样例”和 CLI 的 `offline` 都不调用模型。
-库中的 `runSyntheticProbe()` 会消耗模型额度。
-它仅接受固定合成样本；Codex 已完成真实合成探测。
-App 不暴露真实模型探测入口。
+工具诊断只发现本机工具并检查参数，不调用模型。
+Codex 目前没有模型调用入口。
 
 ## 验证状态
 

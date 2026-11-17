@@ -46,34 +46,6 @@ public struct CLIAdapter<Dialect: HarnessDialect>: Sendable {
         }
     }
 
-    /// Deliberately no caller-supplied prompt: only the checked-in synthetic fixture can run.
-    /// The caller must explicitly start this probe; it can consume the user's model quota.
-    public func runSyntheticProbe() async throws -> AdapterResult {
-        let report = try await inspect()
-        guard report.supportsSyntheticProbe else { throw MailpipeError.unsupportedVersion }
-        return try await withWorkspace { directory in
-            let environment = try dialect.prepare(directory: directory, executable: executable, environment: self.environment)
-            let schema = directory.appendingPathComponent("response-schema.json")
-            try Data(ClassificationSchema.json.utf8).write(to: schema, options: .atomic)
-            let request = SyntheticFixture.request
-            try request.validate()
-            let requestData = try JSONEncoder().encode(request)
-            let instruction = dialect.instruction
-            var stdin = Data(instruction.utf8); stdin.append(requestData)
-            let result = try await runner.run(ProcessInvocation(executable: executable, arguments: dialect.arguments(schemaFile: schema),
-                stdin: stdin, workingDirectory: directory, environment: environment, timeout: 120))
-            try Task.checkCancellation()
-            guard result.exitCode == 0 else { throw classifyFailure(result.stderr + result.stdout) }
-            return try dialect.decode(result.stdout, request: request)
-        }
-    }
-
-    /// The method exists to make the mail boundary testable. No version is certified in this PR.
-    public func classifyMail(_ request: ClassificationRequest, route: AccountRoute) async throws -> AdapterResult {
-        try route.authorize(dialect.kind)
-        try request.validate()
-        throw MailpipeError.unsafeCapability
-    }
 }
 
 public enum ReplyModelTask: Sendable {
@@ -107,7 +79,7 @@ extension CLIAdapter: ReplyModelRunning where Dialect == DeepSeekHarnessDialect 
         case .draft(let request): try request.validate(); payload = try JSONEncoder().encode(request); schema = ReplySchemas.draft
         }
         let capability = try await inspect()
-        guard capability.supportsSyntheticProbe else { throw MailpipeError.unsupportedVersion }
+        guard capability.supportsHeadlessRun else { throw MailpipeError.unsupportedVersion }
         return try await withWorkspace { directory in
             let environment = try dialect.prepare(directory: directory, executable: executable, environment: self.environment)
             let schemaFile = directory.appendingPathComponent("response-schema.json")

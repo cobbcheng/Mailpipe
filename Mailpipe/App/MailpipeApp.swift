@@ -8,7 +8,6 @@ final class WorkbenchModel: ObservableObject {
     @Published var installations: [HarnessInstallation] = []
     @Published var reports: [String: String] = [:]
     @Published var busyIDs: Set<String> = []
-    @Published var offlineResult = "尚未运行"
 
     func discover() { installations = HarnessDiscovery.find() }
     func inspect(_ installation: HarnessInstallation) {
@@ -23,17 +22,11 @@ final class WorkbenchModel: ObservableObject {
                 case .codex:
                     report = try await CodexCLIAdapter(executable: installation.executable, dialect: CodexCLIDialect()).inspect()
                 }
-                reports[installation.id] = "\(report.version) · \(report.supportsSyntheticProbe ? "探测参数齐全" : "缺少必要参数") · 真实邮件未验收"
+                reports[installation.id] = "\(report.version) · \(report.supportsHeadlessRun ? "运行参数齐全" : "缺少必要参数") · 真实邮件未验收"
             } catch {
                 reports[installation.id] = "检测失败：\((error as? MailpipeError)?.rawValue ?? "operationFailed")"
             }
         }
-    }
-    func runOffline() {
-        do {
-            let responses = try OfflineProbe.run()
-            offlineResult = "通过：\(responses.count) 个 Adapter · 账单分类 · 无需行动"
-        } catch { offlineResult = "样例校验失败" }
     }
 }
 
@@ -73,7 +66,7 @@ private struct WorkbenchView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("尚未连接真实邮件", systemImage: "lock.shield")
                         .font(.headline)
-                    Text("当前可检查本机工具，运行离线合成样例。邮件采集、自动整理与发送尚未接入。")
+                    Text("当前可检查本机工具的版本与参数。邮件采集、自动整理与发送尚未接入。")
                     Text("模型及数据去向未知，由 Harness 配置决定。")
                         .foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
@@ -103,17 +96,6 @@ private struct WorkbenchView: View {
                         }.padding().background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
                     }
                 }
-            }
-            Divider()
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("离线合成样例").font(.headline)
-                    Text(model.offlineResult).font(.callout)
-                    Text("不启动 Harness，不消耗模型额度，不访问 Mail。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("运行样例", action: model.runOffline).buttonStyle(.borderedProminent)
             }
         }.padding(24).onAppear { model.discover() }
     }

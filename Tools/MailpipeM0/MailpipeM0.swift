@@ -15,9 +15,6 @@ struct MailpipeM0 {
                 let inboxes = try AppleMailReplyIdentity.inboxes()
                 guard !inboxes.isEmpty, Set(inboxes.map(\.accountID)).count == inboxes.count else { throw MailpipeError.invalidInput }
                 print("PASS: \(inboxes.count) accounts map to unique system inboxes; no messages read or model calls")
-            case "offline":
-                let results = try OfflineProbe.run()
-                print("PASS: \(results.count) adapter decoders; synthetic data; no model or Mail calls")
             case "discover":
                 for item in HarnessDiscovery.find() { print("\(item.kind.rawValue)\t\(item.executable.path)") }
             case "onboarding-probe":
@@ -52,10 +49,10 @@ struct MailpipeM0 {
                 if kind == .deepseek { report = try await DeepSeekHarnessAdapter(executable: path, dialect: DeepSeekHarnessDialect()).inspect() }
                 else { report = try await CodexCLIAdapter(executable: path, dialect: CodexCLIDialect()).inspect() }
                 print("\(kind.displayName): \(report.version)")
-                print("Synthetic probe flags: \(report.supportsSyntheticProbe ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
+                print("Headless flags: \(report.supportsHeadlessRun ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
                 print(report.realMailStatus)
             case nil, "--help", "-h":
-                print("mailpipe-m0 offline | discover | inspect <dsh|codex> </absolute/path>\npipeline-seed </absolute/dsh> </new/private/directory> persists one fixed synthetic input.")
+                print("mailpipe-m0 discover | inspect <dsh|codex> </absolute/path>\npipeline-seed </absolute/dsh> </new/private/directory> persists one fixed synthetic input.")
             default: throw MailpipeError.invalidInput
             }
         } catch {
