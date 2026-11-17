@@ -14,7 +14,6 @@ Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 | `HarnessDiscovery.find()` | 只查可执行文件，不读取凭据 |
 | `inspect()` | 执行版本和帮助，检查完整参数名 |
 | `runSyntheticProbe()` | 固定合成请求；stdin 输入；结构化输出 |
-| `runSyntheticReplyProbe()` | DeepSeek 固定合成分拣；L2 + yes 才调用草稿 |
 | `run(ReplyModelTask, route, authorize)` | DeepSeek 受限回复；调用前重查宿主授权 |
 | `classifyMail()` | 校验账户后返回 `unsafeCapability`；零进程调用 |
 | `OfflineProbe.run()` | 本地包装解析；无子进程或模型 |

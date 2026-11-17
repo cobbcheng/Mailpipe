@@ -174,24 +174,6 @@ public enum AppleMailReplyIdentity {
               let source = result.atIndex(4)?.stringValue, source.utf8.count <= 65_536 else { return nil }
         return Match(accountID: account, localID: local, source: source)
     }
-    public static func accountID(named name: String, mailbox: String) throws -> String {
-        let source = """
-        on selectScope(accountName, mailboxName)
-            with timeout of 15 seconds
-                tell application id "com.apple.mail"
-                    set candidates to every account whose name is accountName
-                    if (count of candidates) is not 1 then return ""
-                    set selectedAccount to item 1 of candidates
-                    set boxes to every mailbox of selectedAccount whose name is mailboxName
-                    if (count of boxes) is not 1 then return ""
-                    return id of selectedAccount as text
-                end tell
-            end timeout
-        end selectScope
-        """
-        guard let id = try call(source: source, handler: "selectScope", arguments: [name, mailbox]).stringValue, !id.isEmpty else { throw IdentityQueryError.invalidScope }
-        return id
-    }
     private static func call(source: String, handler: String, arguments: [String], path: [String]? = nil) throws -> NSAppleEventDescriptor {
         guard let script = NSAppleScript(source: source) else { throw IdentityQueryError.invalidResult }
         let event = NSAppleEventDescriptor(eventClass: 0x61736372, eventID: 0x70736272, targetDescriptor: nil, returnID: -1, transactionID: 0)

@@ -4,7 +4,7 @@ public enum MailpipeError: String, Error, Sendable, LocalizedError {
     case invalidInput, invalidOutput, unsupportedVersion, unsafeCapability
     case notInstalled, launchFailed, processFailed, timedOut, outputLimit, cancelled
     case authRequired, rateLimited, quotaExhausted, unknownAccount, routeNotAllowed, paused
-    case mailBridgeUnavailable, ambiguousMessage, messageNotFound
+    case mailBridgeUnavailable
 
     public var errorDescription: String? { rawValue }
 }
