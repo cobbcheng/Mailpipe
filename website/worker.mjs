@@ -42,7 +42,7 @@ function homepage() {
           <a class="button button-secondary" href="#workbench">看看工作台</a>
           <a class="button button-primary" href="#release">下载</a>
         </div>
-        <p class="note">公开安装包尚在准备中。</p>
+        <p class="note">版本 0.0.1 · build 18 · 已通过 Apple 公证。</p>
       </div>
       <figure class="showcase">
         <div class="app-window">
@@ -87,8 +87,9 @@ function homepage() {
     <div class="rails">
       <div class="band-body stack release-copy">
         <p class="kicker">MACOS 下载</p>
-        <h2>公开安装包尚在准备中。</h2>
-        <p>通过 Developer ID 签名和 Apple 公证的 DMG 准备好后，将在这里提供下载。</p>
+        <h2>下载 Mailpipe for Mac</h2>
+        <p>版本 0.0.1（build 18），5.38 MB。安装包已通过 Developer ID 签名和 Apple 公证。</p>
+        <p><a class="button button-primary" download href="/downloads/Mailpipe-0.0.1-build18-77be446.dmg">下载 macOS 安装包</a></p>
       </div>
     </div>
   </section>
