@@ -19,6 +19,17 @@ import MailpipeCore
 #endif
     }
 #if os(macOS)
+    func testMailEditorTerminalCharacterDoesNotMaskOtherEdits() {
+        XCTAssertTrue(AppleMailComposer.matchesMailBody("文。 ", expected: "文。"))
+        XCTAssertTrue(AppleMailComposer.matchesMailBody("文。\r\n", expected: "文。"))
+        XCTAssertFalse(AppleMailComposer.matchesMailBody(" 文。", expected: "文。"))
+        XCTAssertFalse(AppleMailComposer.matchesMailBody("文。", expected: "文。\n"))
+        XCTAssertFalse(AppleMailComposer.matchesMailBody("文。  ", expected: "文。"))
+        XCTAssertTrue(AppleMailComposer.matchesMailBody("文。  ", expected: "文。 "))
+        XCTAssertFalse(AppleMailComposer.matchesMailBody("文。", expected: "文。 "))
+        XCTAssertTrue(AppleMailComposer.matchesMailBody("文。\n\n ", expected: "文。\n\n"))
+        XCTAssertFalse(AppleMailComposer.matchesMailBody("文。\n", expected: "文。\n\n"))
+    }
     func testReceiptRequiresExactAddressesSubjectAndBody() throws {
         let request = try MailComposeRequest(recordID: "1", accountID: "a", accountName: "Test", sender: "me@example.com", recipients: ["reply@example.com"], subject: "Re: 中文", body: "一行\n二行", originalSubject: "中文", messageID: "id", localID: "1", sourceDigest: "digest", settingsRevision: UUID())
         let result = NSAppleEventDescriptor.list()

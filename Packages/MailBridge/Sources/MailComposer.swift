@@ -102,12 +102,19 @@ public enum AppleMailComposer {
               MailCorrespondents(Data(("From: " + sender + "\n\nbody").utf8))?.sender == request.sender,
               result.atIndex(3)?.stringValue == request.subject,
               let body = result.atIndex(4)?.stringValue,
-              body.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .newlines) == request.body.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .newlines),
+              matchesMailBody(body, expected: request.body),
               let recipients = result.atIndex(5), recipients.numberOfItems == request.recipients.count else { throw MailComposeError.outcomeUnknown }
         for (index, expected) in request.recipients.enumerated() {
             guard recipients.atIndex(index + 1)?.stringValue == expected else { throw MailComposeError.outcomeUnknown }
         }
         return MailComposeReceipt(outgoingID: id)
+    }
+    // Mail's editor appends one terminal space or newline on some versions.
+    // Preserve user-authored leading/trailing whitespace and reject other changes.
+    static func matchesMailBody(_ actual: String, expected: String) -> Bool {
+        let a = actual.replacingOccurrences(of: "\r\n", with: "\n")
+        let e = expected.replacingOccurrences(of: "\r\n", with: "\n")
+        return a == e || a == e + " " || a == e + "\n"
     }
     private static func logFailure(stage: String, code: Int) {
         let known = ["account", "create", "recipients", "show", "activate", "readback", "sender", "execute"]
