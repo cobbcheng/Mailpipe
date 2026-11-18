@@ -52,20 +52,18 @@ public enum AppleMailComposer {
                 if (email addresses of item 1 of matches) does not contain expectedSender then error "Sender changed" number -2700
                 my verifiedSender(accountID, expectedSender)
                 set stage to "create"
-                set outgoing to make new outgoing message with properties {visible:false, subject:draftSubject, content:draftBody, sender:expectedSender}
+                set outgoing to make new outgoing message with properties {visible:true, subject:draftSubject, content:draftBody, sender:expectedSender}
                 set stage to "recipients"
                 tell outgoing
                     repeat with target in targets
                         make new to recipient at end of to recipients with properties {address:contents of target}
                     end repeat
-                    set stage to "show"
-                    set visible to true
                 end tell
                 set stage to "activate"
                 activate
                 set stage to "readback"
                 set actualTargets to address of every to recipient of outgoing
-                return {id of outgoing as text, sender of outgoing as text, subject of outgoing as text, content of outgoing as text, actualTargets}
+                return {id of outgoing as text, sender of outgoing as text, subject of outgoing as text, content of outgoing as text, actualTargets, visible of outgoing}
             end tell
         end timeout
         on error errorMessage number errorNumber
@@ -99,7 +97,7 @@ public enum AppleMailComposer {
     }
 #if os(macOS)
     static func decodeReceipt(_ result: NSAppleEventDescriptor, request: MailComposeRequest) throws -> MailComposeReceipt {
-        guard result.numberOfItems == 5, let id = result.atIndex(1)?.stringValue, !id.isEmpty,
+        guard result.numberOfItems == 6, result.atIndex(6)?.booleanValue == true, let id = result.atIndex(1)?.stringValue, !id.isEmpty,
               let sender = result.atIndex(2)?.stringValue,
               MailCorrespondents(Data(("From: " + sender + "\n\nbody").utf8))?.sender == request.sender,
               result.atIndex(3)?.stringValue == request.subject,

@@ -5,7 +5,7 @@ import MailpipeCore
 @MainActor final class MailComposerTests: XCTestCase {
     func testScriptIsComposeOnlyAndDataNotInterpolated() throws {
         XCTAssertTrue(AppleMailComposer.composeScript.contains("make new outgoing message"))
-        XCTAssertTrue(AppleMailComposer.composeScript.contains("set visible to true"))
+        XCTAssertTrue(AppleMailComposer.composeScript.contains("visible:true"))
         XCTAssertFalse(AppleMailComposer.composeScript.contains("send outgoing"))
         XCTAssertFalse(AppleMailComposer.composeScript.contains("do shell script"))
 #if os(macOS)
@@ -25,6 +25,11 @@ import MailpipeCore
         for (index, value) in ["123", "Me <me@example.com>", request.subject, request.body + "\n"].enumerated() { result.insert(.init(string: value), at: index + 1) }
         let recipients = NSAppleEventDescriptor.list(); recipients.insert(.init(string: "reply@example.com"), at: 1)
         result.insert(recipients, at: 5)
+        XCTAssertThrowsError(try AppleMailComposer.decodeReceipt(result, request: request))
+        result.insert(.init(boolean: false), at: 6)
+        XCTAssertThrowsError(try AppleMailComposer.decodeReceipt(result, request: request))
+        result.remove(at: 6)
+        result.insert(.init(boolean: true), at: 6)
         XCTAssertEqual(try AppleMailComposer.decodeReceipt(result, request: request).outgoingID, "123")
         result.insert(.init(string: "wrong@example.com"), at: 2)
         XCTAssertThrowsError(try AppleMailComposer.decodeReceipt(result, request: request))
