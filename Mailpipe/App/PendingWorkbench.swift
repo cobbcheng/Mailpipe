@@ -452,16 +452,6 @@ struct PendingWorkbench: View {
                 }
             }
             .listStyle(.sidebar)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                Picker("视图", selection: $filter) {
-                    ForEach(WorkbenchFilter.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 6)
-            }
             .navigationSplitViewColumnWidth(min: 240, ideal: 290, max: 380)
             .overlay {
                 if visible.isEmpty { Text("暂时没有\(filter == .failed ? "失败的任务" : "待处理的草稿")").foregroundStyle(.secondary).padding() }
@@ -513,6 +503,13 @@ struct PendingWorkbench: View {
             }.frame(minWidth: 440).background(Color(nsColor: .textBackgroundColor))
         }
         .navigationTitle("Mailpipe")
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("视图", selection: $filter) {
+                    ForEach(WorkbenchFilter.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).fixedSize()
+            }
+        }
         .sheet(isPresented: $showManual) { ManualSuggestionView(model: model) }
     }
 }
