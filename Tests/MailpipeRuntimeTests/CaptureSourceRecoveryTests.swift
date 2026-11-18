@@ -18,7 +18,7 @@ final class CaptureSourceRecoveryTests: XCTestCase {
             .replacingOccurrences(of: "Subject: Synthetic", with: "Subject: =?UTF-8?Q?=E4=BD=A0=E5=A5=BD?=").utf8)
         let fake = FakeReplyModel()
         var pipeline: ReplyPipeline? = ReplyPipeline(store: try PipelineStore(directory: root.appendingPathComponent("state")),
-            inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")), resolve: { _, _ in nil }, model: { _ in fake })
+            inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")), resolve: { _, _ in nil }, inAuthorizedInbox: { _, _, _ in true }, model: { _ in fake })
         try pipeline!.updateSettings {
             $0.permission = CapturePermission(); $0.executable = "/fake/dsh"
             $0.scope = try? AccountScope(accountID: "test", accountName: "test", mailboxName: "INBOX")
@@ -41,7 +41,7 @@ final class CaptureSourceRecoveryTests: XCTestCase {
         let resumed = ReplyPipeline(store: try PipelineStore(directory: root.appendingPathComponent("state")),
             inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")), resolve: { _, scope in
                 VerifiedMail(accountID: scope.accountID, localID: "one", source: source)
-            }, model: { _ in fake })
+            }, inAuthorizedInbox: { _, _, _ in true }, model: { _ in fake })
         try await resumed.pump()
         let item = try XCTUnwrap(resumed.store.record(id))
         XCTAssertEqual(item.input.body, "请确认周五。")

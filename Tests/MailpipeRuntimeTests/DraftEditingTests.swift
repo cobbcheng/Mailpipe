@@ -4,6 +4,30 @@ import MailpipeCore
 
 @MainActor
 final class DraftEditingTests: XCTestCase {
+    func testMultiAccountUnknownDoesNotBecomeConfirmedExclusion() {
+        XCTAssertNil(InboxMembershipDecision.combine([false, nil]))
+        XCTAssertNil(InboxMembershipDecision.combine([true, true]))
+        XCTAssertNil(InboxMembershipDecision.combine([]))
+        XCTAssertEqual(InboxMembershipDecision.combine([false, false]), false)
+        XCTAssertEqual(InboxMembershipDecision.combine([true, nil]), true)
+    }
+    func testRegenerationRequiresBodyAndCurrentAccountAuthorization() throws {
+        let permission = CapturePermission()
+        let scope = try AccountScope(accountID: "test", accountName: "test", mailboxName: "INBOX")
+        var settings = PipelineSettings()
+        settings.permission = permission; settings.scope = scope; settings.executable = "/fake/dsh"
+        var item = StoredReply(id: "candidate", permissionID: permission.id, capturedAt: Date(), messageID: "test@example.com",
+            input: MailInput(messageRef: "candidate", subject: "Synthetic", body: ""), state: .awaitingBody)
+        XCTAssertFalse(item.canRequestRegeneration(settings: settings))
+        item.state = .needsReview
+        XCTAssertFalse(item.canRequestRegeneration(settings: settings))
+        item.accountID = scope.accountID; item.scopeID = scope.id; item.state = .draftReady
+        XCTAssertTrue(item.canRequestRegeneration(settings: settings))
+        settings.paused = true
+        XCTAssertFalse(item.canRequestRegeneration(settings: settings))
+        settings.paused = false; settings.permission = nil
+        XCTAssertFalse(item.canRequestRegeneration(settings: settings))
+    }
     func testSaveFailureKeepsBufferAndRetryWritesLatestBody() {
         var buffer = DraftEditBuffer(body: "Saved reply")
         buffer.edit("Unsaved reply")

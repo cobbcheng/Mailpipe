@@ -92,6 +92,16 @@ public struct CaptureInbox: Sendable {
         close(fd)
         return true
     }
+    /// A failed publication must not consume the only body callback request.
+    public func publishBodyRequest(permission: CapturePermission, subject: String, messageID: String?, publish: () throws -> Void) throws -> Bool {
+        guard try claimBody(permission: permission, subject: subject, messageID: messageID), let messageID else { return false }
+        do { try publish(); return true }
+        catch {
+            let digest = contentDigest(Data((permission.id.uuidString + messageID + subject).utf8))
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(digest + ".claim"))
+            throw error
+        }
+    }
     public func recordIssue(_ code: String) throws {
         try JSONEncoder().encode(String(code.prefix(64))).write(to: directory.appendingPathComponent("issue.json"), options: .atomic)
     }

@@ -72,6 +72,14 @@ public struct PipelineRun: Codable, Sendable {
     public var error: String?
     public var actualCost: Double?
 }
+public enum InboxMembershipDecision {
+    public static func combine(_ results: [Bool?]) -> Bool? {
+        let included = results.filter { $0 == true }.count
+        if included == 1 { return true }
+        if included > 1 || results.isEmpty || results.contains(where: { $0 == nil }) { return nil }
+        return false
+    }
+}
 public struct StoredReply: Codable, Identifiable, Sendable {
     public let id: String
     public let permissionID: UUID
@@ -82,6 +90,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var error: String?
     public var sourceDigest: String?
     public var sourceEvidence: MailSourceEvidence?
+    public var correspondents: MailCorrespondents?
     public var accountID: String?
     public var localID: String?
     public var scopeID: String?
@@ -92,6 +101,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var runs: [PipelineRun] = []
     public var manualExecutable: String? // Host-only, single-message confirmation; never imported from the spool.
     public var syntheticAuthorized = false
+    public var excludedFromAuthorizedInbox: Bool?
     public var editedSubject: String?
     public var editedBody: String?
     public var reviewedDraftVersion: String?
@@ -109,6 +119,23 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var isPreparing: Bool { [.awaitingAccount, .queued, .triaging, .draftQueued, .drafting].contains(state) }
     public var displayedSubject: String { editedSubject ?? draft?.subject ?? input.subject }
     public var displayedBody: String { editedBody ?? draft?.body ?? "" }
+    /// UI preflight only; dispatch still rechecks the authoritative policy.
+    public func canRequestRegeneration(settings: PipelineSettings, now: Date = Date()) -> Bool {
+        guard excludedFromAuthorizedInbox != true, state != .awaitingBody, !settings.paused, !isPreparing, discardedAt == nil,
+              !runs.contains(where: { $0.finishedAt == nil }), (regenerationCount ?? 0) < 3,
+              capturedAt > now.addingTimeInterval(-7 * 86_400), let executable = settings.executable else { return false }
+        if let tool = manualExecutable { return settings.suggestionsOnly == true && tool == executable }
+        if syntheticAuthorized { return true }
+        return settings.permission?.id == permissionID && settings.authorizedScopes.contains {
+            $0.id == scopeID || (scopeID == nil && $0.accountID == accountID)
+        }
+    }
+    public var canDisplayInWorkbench: Bool {
+        guard excludedFromAuthorizedInbox != true else { return false }
+        // Keep existing substantive content during a transient scope lookup failure.
+        return syntheticAuthorized || manualExecutable != nil || excludedFromAuthorizedInbox == false ||
+            draft != nil || !input.body.isEmpty || !(editedBody ?? "").isEmpty
+    }
     public var canRecheckIdentity: Bool {
         state == .needsReview && runs.isEmpty && (!input.body.isEmpty ||
             (sourceEvidence != nil && ["identityUnresolved", "identityUnavailable", "identityAmbiguous"].contains(error ?? "")))
@@ -281,6 +308,7 @@ public final class PipelineStore {
             state: bodyIssue != nil ? .needsReview : (body.isEmpty && evidence == nil ? .awaitingBody : .awaitingAccount), error: bodyIssue)
         item.sourceDigest = capture.raw.flatMap(mailSourceDigest)
         item.sourceEvidence = evidence
+        item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
         item.syntheticAuthorized = syntheticGrant
         try execute("BEGIN IMMEDIATE")
         do {
