@@ -19,11 +19,16 @@ public final class ReplyPipeline {
     private let resolve: MailIdentityResolver
     private let model: @Sendable (String) -> any ReplyModelRunning
     private var pumping = false
+    private let inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) throws -> Bool?)?
+    private var scopeChecked: Set<String> = []
+    private var nextCaptureCheck: [String: Date] = [:]
+    private var nextRecordCheck: [String: Date] = [:]
     public init(store: PipelineStore, inbox: CaptureInbox, resolve: @escaping MailIdentityResolver,
+                inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) throws -> Bool?)? = nil,
                 model: @escaping @Sendable (String) -> any ReplyModelRunning = {
                     DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: $0), dialect: DeepSeekHarnessDialect())
                 }) {
-        self.store = store; self.inbox = inbox; self.resolve = resolve; self.model = model
+        self.store = store; self.inbox = inbox; self.resolve = resolve; self.model = model; self.inAuthorizedInbox = inAuthorizedInbox
     }
     public func updateSettings(_ change: (inout PipelineSettings) -> Void) throws {
         let previous = try store.settings()
@@ -42,6 +47,7 @@ public final class ReplyPipeline {
             let b = (try? FileManager.default.attributesOfItem(atPath: $1.path)[.modificationDate] as? Date) ?? .distantPast
             return a < b
         }
+        var membershipQueries = 0
         for file in files {
             let capture: InboundCapture
             do {
@@ -53,7 +59,42 @@ public final class ReplyPipeline {
                 if values.isDirectory != true || values.isSymbolicLink == true { try FileManager.default.removeItem(at: file) }
                 continue
             }
-            do { try store.importCapture(capture) }
+            if let inAuthorizedInbox {
+                let settings = try store.settings()
+                guard capture.permissionID == settings.permission?.id,
+                      capture.capturedAt > Date().addingTimeInterval(-86_400) else {
+                    try store.note("captureExpiredOrRevoked")
+                    nextCaptureCheck.removeValue(forKey: file.path)
+                    try FileManager.default.removeItem(at: file); continue
+                }
+                if let next = nextCaptureCheck[file.path], next > Date() { continue }
+                guard let messageID = capture.messageID else { continue }
+                guard membershipQueries < 2 else { break }
+                membershipQueries += 1
+                let membership: Bool?
+                do { membership = try inAuthorizedInbox(messageID, capture.subject, settings.authorizedScopes) }
+                catch {
+                    // A Mail timeout must not starve unrelated candidates or authorize this one.
+                    nextCaptureCheck[file.path] = Date().addingTimeInterval(30)
+                    continue
+                }
+                guard let included = membership else {
+                    nextCaptureCheck[file.path] = Date().addingTimeInterval(30)
+                    // Mail indexing can lag the callback. Keep the bounded staging file, not a visible record.
+                    continue
+                }
+                nextCaptureCheck.removeValue(forKey: file.path)
+                if !included {
+                    // Only discard a confirmed outside-scope staging file, never an existing record or Mail message.
+                    try FileManager.default.removeItem(at: file); continue
+                }
+            }
+            do {
+                let id = try store.importCapture(capture)
+                if inAuthorizedInbox != nil, var imported = try store.record(id) {
+                    imported.excludedFromAuthorizedInbox = false; try store.save(imported)
+                }
+            }
             catch PipelineError.quota { try store.note("quota"); break }
             catch PipelineError.revoked {
                 try store.note("captureExpiredOrRevoked")
@@ -102,9 +143,36 @@ public final class ReplyPipeline {
         guard !pumping else { return }
         pumping = true; defer { pumping = false }
         try importInbox()
-        for item in try store.records().prefix(1_000) {
+        var membershipQueries = 0
+        for var item in try store.records().prefix(1_000) {
             try Task.checkCancellation()
-            if try store.settings().paused { return }
+            let settings = try store.settings()
+            if !item.syntheticAuthorized, item.manualExecutable == nil, let inAuthorizedInbox {
+                let key = item.id + settings.revision.uuidString
+                if !scopeChecked.contains(key) {
+                    if let next = nextRecordCheck[key], next > Date() { continue }
+                    guard membershipQueries < 2 else { continue }
+                    membershipQueries += 1
+                    let included: Bool?
+                    do { included = try item.messageID.flatMap { try inAuthorizedInbox($0, item.input.subject, settings.authorizedScopes) } }
+                    catch {
+                        nextRecordCheck[key] = Date().addingTimeInterval(30)
+                        continue
+                    }
+                    guard let included else {
+                        // Unknown is not exclusion. Preserve substantive existing content but do not dispatch.
+                        item.excludedFromAuthorizedInbox = nil; try store.save(item)
+                        nextRecordCheck[key] = Date().addingTimeInterval(30)
+                        continue
+                    }
+                    nextRecordCheck.removeValue(forKey: key)
+                    item.excludedFromAuthorizedInbox = !included
+                    try store.save(item)
+                    scopeChecked.insert(key)
+                }
+                if item.excludedFromAuthorizedInbox == true { continue }
+            }
+            if try store.settings().paused { continue }
             if [.awaitingAccount, .queued, .draftQueued].contains(item.state) { try await process(item.id) }
         }
     }
