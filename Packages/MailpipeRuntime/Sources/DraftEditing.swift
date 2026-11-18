@@ -40,8 +40,8 @@ public struct DraftContentWarnings: Equatable, Sendable {
     public let needsConfirmation: Bool
     public var requiresCopyConfirmation: Bool { needsSupplement || needsConfirmation }
     public init(body: String) {
-        needsSupplement = body.contains("【待补充")
-        needsConfirmation = body.contains("【待确认") || body.contains("待核实") ||
-            body.contains("需要先核实") || body.contains("需要核实") || body.contains("暂无法给出结论")
+        let hits = DraftPhraseHits.found(in: body)
+        needsSupplement = hits.contains { $0.kind == .supplement }
+        needsConfirmation = hits.contains { $0.kind == .confirmation }
     }
 }
