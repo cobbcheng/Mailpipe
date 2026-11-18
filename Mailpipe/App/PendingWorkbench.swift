@@ -118,6 +118,32 @@ final class PendingModel: ObservableObject {
         }
         catch { issue = "无法重新生成。请核对暂停、账户授权、工具和邮件有效期；每封最多重新生成三次。" }
     }
+    @Published var composeBusy = false
+    func prepareCompose(_ item: StoredReply) async -> MailComposeRequest? {
+        guard !composeBusy, flushEditor(item.id), let pipeline else { return nil }
+        composeBusy = true; defer { composeBusy = false }
+        do {
+            return try await pipeline.prepareMailCompose(id: item.id, subject: item.displayedSubject, body: editorBody(item),
+                senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) })
+        } catch {
+            notify("无法准备 Mail 撰写窗口。请核对原邮件仍在授权收件箱、地址和账户权限；当前编辑已保留。")
+            return nil
+        }
+    }
+    func openCompose(_ request: MailComposeRequest) async -> Bool {
+        guard !composeBusy, let pipeline else { return false }
+        composeBusy = true; defer { composeBusy = false }
+        do {
+            _ = try await pipeline.openMailCompose(confirmedRequest: request,
+                senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) },
+                open: { try AppleMailComposer.open($0) })
+            notify("撰写窗口已交给 Mail，尚未发送。请在 Mail 中核对收件人和内容，再决定是否发送。")
+            refresh(); return true
+        } catch {
+            notify("未能确认撰写窗口。请先查看 Mail，避免重复创建；原邮件或授权变化时需重新确认。当前编辑已保留。")
+            refresh(); return false
+        }
+    }
     func applyConfiguration() {
         guard !onboardingBusy else { return }
         onboarding.completed = false; saveOnboarding(); finishOnboarding()
@@ -564,6 +590,8 @@ private struct DraftDetail: View {
     @State private var showExplanation = false
     @State private var confirmRegeneration = false
     @State private var confirmCopy = false
+    @State private var showCompose = false
+    @State private var composeRequest: MailComposeRequest?
     @State private var showCandidate = false
     @State private var incomingExpanded = false
     @State private var editorHeight: CGFloat = 96
@@ -626,6 +654,9 @@ private struct DraftDetail: View {
             Text("当前编辑会保留。新结果进入候选预览，由你选择采用新稿或保留现稿。最多两次模型调用，会消耗工具额度。")
         }
         .sheet(isPresented: $showCandidate) { candidatePreview }
+        .sheet(isPresented: $showCompose) {
+            if let request = composeRequest { composePreview(request) }
+        }
     }
     private var originalCard: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -661,6 +692,10 @@ private struct DraftDetail: View {
             Divider()
             VStack(alignment: .leading, spacing: 0) {
                 attentionLine
+                if let handoff = item.composeHandoff {
+                    Text(handoff.receipt == nil ? "已尝试打开 Mail，但结果待核对。请先检查 Mail，避免重复创建。" : "已创建 Mail 撰写窗口，后续请在 Mail 中核对和编辑；尚未发送。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if isExpired {
                     Text("原信或授权需要重新核对。当前编辑保留。")
                         .font(.caption).foregroundStyle(.secondary).padding(.top, 6)
@@ -754,13 +789,46 @@ private struct DraftDetail: View {
             }
         }
     }
+    private func composePreview(_ request: MailComposeRequest) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("在 Mail 中打开撰写窗口").font(.title2.weight(.semibold))
+            Text("发件账户：\(request.accountName)")
+            Text("发件人：\(request.sender)")
+            Text("收件人：\(request.recipients.joined(separator: "、"))")
+                .textSelection(.enabled)
+            Text("主题：\(request.subject)").textSelection(.enabled)
+            ScrollView { Text(request.body).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
+                .frame(minHeight: 140, maxHeight: 260).padding(12)
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)) }
+            if DraftContentWarnings(body: request.body).requiresCopyConfirmation {
+                Text("草稿含待补充或待核实内容，请在发送前检查。").font(.callout).foregroundStyle(.orange)
+            }
+            Text("只新建撰写窗口，不会发送。使用原邮件 Reply-To（如有）或 From；不会自动添加其他收件人。请在 Mail 中最终核对并自行发送。")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Button("取消") { showCompose = false }.disabled(model.composeBusy)
+                Spacer()
+                if model.composeBusy { ProgressView().controlSize(.small) }
+                Button("打开撰写窗口") {
+                    Task { _ = await model.openCompose(request); showCompose = false }
+                }.buttonStyle(.borderedProminent).disabled(model.composeBusy)
+            }
+        }.padding(24).frame(width: 560).interactiveDismissDisabled(model.composeBusy)
+    }
     private var actions: some View {
         HStack(spacing: 12) {
+            Button {
+                Task {
+                    if let request = await model.prepareCompose(item) { composeRequest = request; showCompose = true }
+                }
+            } label: { Label(model.composeBusy ? "正在核对…" : (item.composeHandoff == nil ? "在 Mail 中打开" : "已尝试交给 Mail"), systemImage: "envelope") }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.composeBusy || item.composeHandoff != nil || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button {
                 if warnings.requiresCopyConfirmation { confirmCopy = true }
                 else { copyReply() }
             } label: { Label("复制回复", systemImage: "doc.on.doc") }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
                 .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
             Button("重新生成") { confirmRegeneration = true }.disabled(!canRegenerate)
@@ -782,7 +850,7 @@ private struct DraftDetail: View {
             if let run = item.runs.last {
                 Text("本次经 \(run.destination.harness.displayName) 处理。邮件会到达该工具配置的模型。Mailpipe 不设服务器。")
             } else { Text("尚未调用 AI 工具。") }
-            Text("复制回复只复制当前编辑正文。请到 Mail 中粘贴并发送。")
+            Text("在 Mail 中打开会先核对原邮件及收件地址，再由你确认创建撰写窗口；不会发送。复制回复仅复制当前正文。")
             if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }
             Text("状态提示按占位符和少量待核实表述识别，不代表事实核验。")
                 .font(.caption).foregroundStyle(.secondary)

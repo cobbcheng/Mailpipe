@@ -28,6 +28,22 @@ public struct DeepSeekHarnessDialect: HarnessDialect {
         result["DSH_TELEMETRY_DISABLED"] = "1"
         let userHome = environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
         result["MAILPIPE_DSH_AUTH_HOME"] = URL(fileURLWithPath: userHome).appendingPathComponent(".dsh").path
+        // Reuse only the harness's native global instruction files. No profile,
+        // credentials, transcript store, project scan or separate Mailpipe memory DB.
+        let agents = directory.appendingPathComponent("agents-home", isDirectory: true)
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        result["DSH_AGENTS_HOME"] = agents.path
+        for (sourceRoot, targetRoot) in [(".dsh", home), (".agents", agents)] {
+            let source = URL(fileURLWithPath: userHome).appendingPathComponent(sourceRoot).appendingPathComponent("AGENTS.md")
+            // Reject symlinks, oversized/nonregular files and invalid UTF-8. A missing
+            // or unreadable memory is neutral fallback, never a model/tool retry.
+            if let bytes = try? CaptureInbox.read(source, limit: 16_384),
+               let text = String(data: bytes, encoding: .utf8), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let target = targetRoot.appendingPathComponent("AGENTS.md")
+                try bytes.write(to: target, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+            }
+        }
         return result
     }
     public func arguments(schemaFile: URL) -> [String] {

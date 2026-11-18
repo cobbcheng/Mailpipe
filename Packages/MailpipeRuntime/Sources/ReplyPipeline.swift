@@ -56,6 +56,71 @@ public final class ReplyPipeline {
         current.correspondents = correspondents
         try store.save(current)
     }
+    public func prepareMailCompose(id: String, subject: String, body: String,
+        senderAddress: @MainActor (String, [String]) throws -> String) async throws -> MailComposeRequest {
+        guard let item = try store.record(id), item.excludedFromAuthorizedInbox != true,
+              item.manualExecutable == nil, !item.syntheticAuthorized, item.discardedAt == nil,
+              !item.isPreparing, item.state != .cancelled, !item.input.body.isEmpty,
+              item.displayedSubject == subject, item.displayedBody == body,
+              item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
+              let messageID = item.messageID else { throw MailComposeError.unavailable }
+        let settings = try store.settings()
+        guard !settings.paused, settings.permission?.id == item.permissionID else { throw MailComposeError.unavailable }
+        let scopes = settings.authorizedScopes.filter { item.accountID == nil || $0.accountID == item.accountID }
+        var matches: [(AccountScope, VerifiedMail)] = []
+        for scope in scopes {
+            guard let verified = try await resolve(item, scope), verified.accountID == scope.accountID,
+                  item.localID == nil || verified.localID == item.localID, let source = verified.source,
+                  item.sourceEvidence?.matches(source) ?? (item.sourceDigest != nil && item.sourceDigest == mailSourceDigest(source)) else { continue }
+            matches.append((scope, verified))
+        }
+        guard matches.count == 1, let (scope, match) = matches.first, let source = match.source,
+              try store.settings().revision == settings.revision else { throw MailComposeError.unavailable }
+        let latestSettings = try store.settings()
+        guard !latestSettings.paused, latestSettings.permission?.id == item.permissionID,
+              let latest = try store.record(id), latest.discardedAt == nil, !latest.isPreparing, latest.state != .cancelled,
+              latest.excludedFromAuthorizedInbox != true, latest.displayedSubject == subject,
+              latest.displayedBody == body else { throw MailComposeError.changedSinceConfirmation }
+        let recipients = try MailReplyRecipients.parse(source)
+        let addresses = MailCorrespondents(source)
+        let sender = try senderAddress(scope.accountID, (addresses?.recipients ?? []) + (addresses?.cc ?? []))
+        return try MailComposeRequest(recordID: id, accountID: scope.accountID, accountName: scope.accountName,
+            sender: sender, recipients: recipients, subject: subject, body: body,
+            originalSubject: item.input.subject, messageID: messageID, localID: match.localID,
+            sourceDigest: contentDigest(source), settingsRevision: settings.revision)
+    }
+
+    public func openMailCompose(confirmedRequest: MailComposeRequest,
+        senderAddress: @MainActor (String, [String]) throws -> String,
+        open: @MainActor (MailComposeRequest) async throws -> MailComposeReceipt) async throws -> MailComposeReceipt {
+        let fresh = try await prepareMailCompose(id: confirmedRequest.recordID, subject: confirmedRequest.subject,
+            body: confirmedRequest.body, senderAddress: senderAddress)
+        guard fresh == confirmedRequest else { throw MailComposeError.changedSinceConfirmation }
+        let finalSettings = try store.settings()
+        guard !finalSettings.paused, finalSettings.revision == fresh.settingsRevision,
+              var current = try store.record(fresh.recordID), current.permissionID == finalSettings.permission?.id,
+              current.discardedAt == nil, current.state != .cancelled, !current.isPreparing,
+              current.excludedFromAuthorizedInbox != true,
+              current.displayedSubject == fresh.subject, current.displayedBody == fresh.body else {
+            throw MailComposeError.changedSinceConfirmation
+        }
+        if let handoff = current.composeHandoff {
+            if handoff.fingerprint == fresh.fingerprint, let receipt = handoff.receipt { return receipt }
+            throw MailComposeError.alreadyAttempted
+        }
+        // Persist before crossing the process boundary. Any throw/crash remains a non-replayable attempt.
+        current.composeHandoff = MailComposeHandoff(fingerprint: fresh.fingerprint)
+        try store.save(current)
+        let receipt: MailComposeReceipt
+        do { receipt = try await open(fresh) }
+        catch { throw MailComposeError.outcomeUnknown }
+        guard !receipt.outgoingID.isEmpty, var latest = try store.record(fresh.recordID),
+              latest.composeHandoff?.fingerprint == fresh.fingerprint else { throw MailComposeError.outcomeUnknown }
+        latest.composeHandoff?.receipt = receipt
+        try store.save(latest)
+        return receipt
+    }
+
     public func updateSettings(_ change: (inout PipelineSettings) -> Void) throws {
         let previous = try store.settings()
         var settings = previous; change(&settings)

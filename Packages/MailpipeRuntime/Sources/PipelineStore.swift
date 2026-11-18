@@ -91,6 +91,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var sourceDigest: String?
     public var sourceEvidence: MailSourceEvidence?
     public var correspondents: MailCorrespondents?
+    public var composeHandoff: MailComposeHandoff?
     public var accountID: String?
     public var localID: String?
     public var scopeID: String?
