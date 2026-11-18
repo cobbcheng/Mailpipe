@@ -4,6 +4,40 @@ import MailpipeCore
 
 @MainActor
 final class AdapterTests: XCTestCase {
+    func testNativeInstructionsAreBoundedEphemeralAndNotProjectOrCredentials() throws {
+        let root = try TemporaryDirectory()
+        let user = root.url.appendingPathComponent("user")
+        let dsh = user.appendingPathComponent(".dsh")
+        let agents = user.appendingPathComponent(".agents")
+        try FileManager.default.createDirectory(at: dsh, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+        try Data("Prefer short replies.".utf8).write(to: dsh.appendingPathComponent("AGENTS.md"))
+        try Data("Use a warm closing.".utf8).write(to: agents.appendingPathComponent("AGENTS.md"))
+        try Data("must not copy".utf8).write(to: dsh.appendingPathComponent("credentials.yaml"))
+        let work = root.url.appendingPathComponent("work")
+        let env = try DeepSeekHarnessDialect().prepare(directory: work, executable: root.url.appendingPathComponent("dsh"), environment: ["HOME": user.path])
+        XCTAssertEqual(try String(contentsOfFile: env["DSH_HOME"]! + "/AGENTS.md", encoding: .utf8), "Prefer short replies.")
+        XCTAssertEqual(try String(contentsOfFile: env["DSH_AGENTS_HOME"]! + "/AGENTS.md", encoding: .utf8), "Use a warm closing.")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: env["DSH_HOME"]! + "/credentials.yaml"))
+        let patch = try String(contentsOf: work.appendingPathComponent("deepseek-restricted.yml"), encoding: .utf8)
+        XCTAssertTrue(patch.contains("instructionFileCandidates: []"))
+        XCTAssertTrue(patch.contains("localInstructionFileCandidates: []"))
+        XCTAssertTrue(patch.contains("- id: tool-fs\n  disabled: true"))
+    }
+    func testMissingOversizedAndSymlinkNativeInstructionsFallBackWithoutReadingTarget() throws {
+        let root = try TemporaryDirectory()
+        let user = root.url.appendingPathComponent("user")
+        try FileManager.default.createDirectory(at: user.appendingPathComponent(".dsh"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: user.appendingPathComponent(".agents"), withIntermediateDirectories: true)
+        let large = user.appendingPathComponent(".dsh/AGENTS.md")
+        try Data(repeating: 65, count: 16_385).write(to: large)
+        try FileManager.default.createSymbolicLink(at: user.appendingPathComponent(".agents/AGENTS.md"), withDestinationURL: large)
+        let env = try DeepSeekHarnessDialect().prepare(directory: root.url.appendingPathComponent("work"), executable: root.url.appendingPathComponent("dsh"), environment: ["HOME": user.path])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: env["DSH_HOME"]! + "/AGENTS.md"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: env["DSH_AGENTS_HOME"]! + "/AGENTS.md"))
+        let missing = try DeepSeekHarnessDialect().prepare(directory: root.url.appendingPathComponent("empty"), executable: root.url.appendingPathComponent("dsh"), environment: ["HOME": root.url.appendingPathComponent("absent").path])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing["DSH_HOME"]! + "/AGENTS.md"))
+    }
     func testDeepSeekRunUsesStdinAndCleansWorkspace() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let runner = RecordingRunner(inspectionOutputs(dialect) + [ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.decision))])

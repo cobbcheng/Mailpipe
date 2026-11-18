@@ -208,6 +208,22 @@ public struct MailCorrespondents: Codable, Equatable, Sendable {
     }
 }
 
+/// Reply-To takes precedence. Malformed/ambiguous Reply-To never falls back to From.
+public enum MailReplyRecipients {
+    public static func parse(_ raw: Data) throws -> [String] {
+        guard raw.count <= MailBodyLimits.rawCeiling else { throw MailComposeError.invalidRecipient }
+        let split = try splitHeaders(raw)
+        let headers = try MIMEHeaders(split.header, defaultType: "text/plain")
+        let key = headers.fields["reply-to"] == nil ? "from" : "reply-to"
+        guard let values = headers.fields[key], values.count == 1,
+              let addresses = MailSourceEvidence.mailboxList(values[0]),
+              (1...20).contains(addresses.count), key != "from" || addresses.count == 1 else {
+            throw MailComposeError.invalidRecipient
+        }
+        return addresses
+    }
+}
+
 public enum PlainMailBody {
     public static func decode(_ raw: Data) throws -> String {
         try extract(raw).text
