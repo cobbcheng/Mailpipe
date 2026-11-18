@@ -90,6 +90,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var error: String?
     public var sourceDigest: String?
     public var sourceEvidence: MailSourceEvidence?
+    public var correspondents: MailCorrespondents?
     public var accountID: String?
     public var localID: String?
     public var scopeID: String?
@@ -307,6 +308,7 @@ public final class PipelineStore {
             state: bodyIssue != nil ? .needsReview : (body.isEmpty && evidence == nil ? .awaitingBody : .awaitingAccount), error: bodyIssue)
         item.sourceDigest = capture.raw.flatMap(mailSourceDigest)
         item.sourceEvidence = evidence
+        item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
         item.syntheticAuthorized = syntheticGrant
         try execute("BEGIN IMMEDIATE")
         do {

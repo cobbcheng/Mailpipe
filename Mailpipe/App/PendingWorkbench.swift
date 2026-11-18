@@ -37,6 +37,15 @@ final class PendingModel: ObservableObject {
     func notify(_ text: String) { notice = text }
     @Published private(set) var editorBuffers: [String: DraftEditBuffer] = [:]
     private var editTasks: [String: Task<Void, Never>] = [:]
+    private var addressLoads: Set<String> = []
+    func loadCorrespondents(_ item: StoredReply) async {
+        guard item.correspondents == nil, addressLoads.insert(item.id + settings.revision.uuidString).inserted, let pipeline else { return }
+        // One attempt per visible row/session, not a background mailbox scan.
+        try? await pipeline.loadCorrespondents(item.id)
+        if let updated = try? pipeline.store.record(item.id), let index = records.firstIndex(where: { $0.id == item.id }) {
+            records[index] = updated
+        }
+    }
     func openEditor(_ item: StoredReply) {
         if editorBuffers[item.id] == nil { editorBuffers[item.id] = DraftEditBuffer(body: item.displayedBody) }
     }
@@ -458,8 +467,9 @@ struct PendingWorkbench: View {
                     let row = WorkbenchRowPresentation(
                         reply: model.editorBody(item), incoming: item.input.body,
                         preparing: item.isPreparing, failed: item.error != nil && item.state != .cancelled)
-                    WorkbenchMessageRow(subject: item.input.subject, summary: row.summary, status: row.status, date: item.capturedAt)
+                    WorkbenchMessageRow(subject: item.input.subject, sender: item.correspondents?.sender ?? "发件地址未采集", status: row.status, date: item.capturedAt)
                         .tag(item.id)
+                        .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item) }
                 }
             }
             .listStyle(.sidebar)
@@ -527,14 +537,14 @@ struct PendingWorkbench: View {
 
 private struct WorkbenchMessageRow: View {
     let subject: String
-    let summary: String
+    let sender: String
     let status: String?
     let date: Date
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
-                Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                Text(sender).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
             if let status {
@@ -568,6 +578,10 @@ private struct DraftDetail: View {
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
     private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved"].contains(item.error ?? "") }
     private var hasDraft: Bool { item.draft != nil || item.editedBody != nil || !bodyText.isEmpty }
+    private var recipientAddresses: String {
+        guard let recipients = item.correspondents?.recipients, !recipients.isEmpty else { return "收件地址未采集" }
+        return recipients.joined(separator: "、")
+    }
     private var canRegenerate: Bool {
         item.canRequestRegeneration(settings: model.settings)
     }
@@ -577,8 +591,18 @@ private struct DraftDetail: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
                         .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("发件人：\(item.correspondents?.sender ?? "发件地址未采集")")
+                        Text("收件人（To）：\(recipientAddresses)")
+                        if let cc = item.correspondents?.cc, !cc.isEmpty {
+                            Text("抄送（Cc）：\(cc.joined(separator: "、"))")
+                        }
+                    }
+                    .font(.caption).foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
                     Text(item.capturedAt.formatted(.dateTime.month().day().hour().minute()))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption2).foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 originalCard
@@ -590,6 +614,7 @@ private struct DraftDetail: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .onAppear { model.openEditor(item) }
+        .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item) }
         .alert("草稿含未确认内容。仍要复制吗？", isPresented: $confirmCopy) {
             Button("返回编辑", role: .cancel) { focusRequest += 1 }
             Button("仍要复制") { copyReply() }

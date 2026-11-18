@@ -30,6 +30,32 @@ public final class ReplyPipeline {
                 }) {
         self.store = store; self.inbox = inbox; self.resolve = resolve; self.model = model; self.inAuthorizedInbox = inAuthorizedInbox
     }
+    /// Read-only enrichment for older rows, using the same source/account proof as dispatch.
+    /// No state transition, body replacement, model call or email mutation.
+    public func loadCorrespondents(_ id: String) async throws {
+        guard let item = try store.record(id), item.correspondents == nil,
+              !item.syntheticAuthorized, item.manualExecutable == nil,
+              item.excludedFromAuthorizedInbox != true else { return }
+        let settings = try store.settings()
+        guard settings.permission?.id == item.permissionID else { return }
+        let scopes = settings.authorizedScopes.filter { item.accountID == nil || $0.accountID == item.accountID }
+        var matches: [VerifiedMail] = []
+        for scope in scopes {
+            guard let verified = try await resolve(item, scope), verified.accountID == scope.accountID,
+                  item.localID == nil || verified.localID == item.localID,
+                  let source = verified.source else { continue }
+            let valid = item.sourceEvidence?.matches(source)
+                ?? (item.sourceDigest != nil && mailSourceDigest(source) == item.sourceDigest)
+            if valid { matches.append(verified) }
+        }
+        guard matches.count == 1, let source = matches.first?.source,
+              let correspondents = MailCorrespondents(source),
+              try store.settings().revision == settings.revision,
+              var current = try store.record(id), current.correspondents == nil,
+              current.excludedFromAuthorizedInbox != true else { return }
+        current.correspondents = correspondents
+        try store.save(current)
+    }
     public func updateSettings(_ change: (inout PipelineSettings) -> Void) throws {
         let previous = try store.settings()
         var settings = previous; change(&settings)
@@ -211,6 +237,7 @@ public final class ReplyPipeline {
                         }
                         item.input = MailInput(messageRef: item.id, subject: item.input.subject, body: try PlainMailBody.decode(source))
                     }
+                    if let source = verified.source { item.correspondents = MailCorrespondents(source) }
                     item.accountID = verified.accountID; item.localID = verified.localID; item.scopeID = scope.id
                 } catch let rejection as MailBodyRejection {
                     item.error = rejection.rawValue

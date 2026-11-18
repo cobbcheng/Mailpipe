@@ -158,7 +158,7 @@ public struct MailSourceEvidence: Codable, Equatable, Sendable {
 
     /// Ignore display names, preserve mailbox order and the case-sensitive local part.
     /// Unsupported groups/comments/quoted local parts fail closed.
-    private static func mailboxList(_ value: String) -> [String]? {
+    fileprivate static func mailboxList(_ value: String) -> [String]? {
         var tokens: [String] = [], token = "", quoted = false, escaped = false
         for ch in value {
             if escaped { token.append(ch); escaped = false; continue }
@@ -182,6 +182,29 @@ public struct MailSourceEvidence: Codable, Equatable, Sendable {
             addresses.append(String(halves[0]) + "@" + halves[1].lowercased())
         }
         return addresses
+    }
+}
+
+/// Display-only original header addresses. Never an account identity or send destination.
+/// To/Cc do not prove the envelope recipient (Bcc and aliases may be absent).
+public struct MailCorrespondents: Codable, Equatable, Sendable {
+    public let sender: String?
+    public let recipients: [String]
+    public let cc: [String]
+    public init?(_ raw: Data) {
+        guard raw.count <= MailBodyLimits.rawCeiling,
+              let split = try? splitHeaders(raw),
+              let headers = try? MIMEHeaders(split.header, defaultType: "text/plain") else { return nil }
+        func addresses(_ key: String) -> [String] {
+            guard let values = headers.fields[key], values.count == 1,
+                  values[0].utf8.count <= 16_384,
+                  let result = MailSourceEvidence.mailboxList(values[0]) else { return [] }
+            return Array(result.prefix(100))
+        }
+        let from = addresses("from")
+        sender = from.count == 1 ? from[0] : nil
+        recipients = addresses("to")
+        cc = addresses("cc")
     }
 }
 
