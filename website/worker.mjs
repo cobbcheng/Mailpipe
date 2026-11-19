@@ -115,6 +115,7 @@ function homepage() {
   <div class="rails">
     <a class="brand" href="/">Mailpipe</a>
     <span>Apple Mail 回复助手</span>
+    <a class="support" href="mailto:support@mailpipeai.com">support@mailpipeai.com</a>
   </div>
 </footer>
 </body>
