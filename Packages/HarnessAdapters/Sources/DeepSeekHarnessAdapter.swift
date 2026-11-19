@@ -151,3 +151,30 @@ public struct DeepSeekEnvelope: Sendable {
     public let outputTokens: Int?
     public let readPullRequestDiff: Bool?
 }
+
+extension DeepSeekHarnessDialect: ReplyHarnessDialect {
+    public func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
+                                executable: URL, environment: [String: String]) throws -> ProcessInvocation {
+        let schemaFile = directory.appendingPathComponent("response-schema.json")
+        try Data(schema.utf8).write(to: schemaFile, options: .atomic)
+        var environment = environment
+        if case .draft(let request) = task, let target = ReplyDraftRequest.linkedPullRequest(in: request.message.body) {
+            try configurePullRequest(target, confirmed: request.approvedPullRequest == target, directory: directory)
+            environment["MAILPIPE_PR_REVIEW"] = "1"
+        }
+        return ProcessInvocation(executable: executable, arguments: arguments(schemaFile: schemaFile),
+            stdin: stdin, workingDirectory: directory, environment: environment, timeout: 120)
+    }
+
+    public func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int) throws -> ReplyModelOutput {
+        let review: Bool
+        switch task {
+        case .draft(let request): review = ReplyDraftRequest.linkedPullRequest(in: request.message.body) != nil
+        case .triage: review = false
+        }
+        let envelope = try decodeEnvelope(stdout, review: review)
+        return ReplyModelOutput(content: envelope.content, inputTokens: envelope.inputTokens, outputTokens: envelope.outputTokens,
+            inputCharacters: inputCharacters, outputCharacters: String(decoding: envelope.content, as: UTF8.self).count,
+            readPullRequestDiff: envelope.readPullRequestDiff, actualModel: "deepseek-flash")
+    }
+}

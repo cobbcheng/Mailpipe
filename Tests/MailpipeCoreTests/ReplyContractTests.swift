@@ -73,6 +73,10 @@ final class ReplyContractTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(DataDestination.self, from: JSONEncoder().encode(value)), value)
         XCTAssertThrowsError(try DataDestination(messageRef: "synthetic", runID: "run", taskKind: .draft, harness: .deepseek, vendor: "local"))
         XCTAssertThrowsError(try DataDestination(messageRef: "synthetic", runID: "run", taskKind: .draft, harness: .deepseek, evidence: .detected))
+        let modelOnly = try DataDestination(messageRef: "synthetic", runID: "run", taskKind: .draft,
+                                            harness: .claude, model: "deepseek-v4.1-flash", evidence: .detected)
+        XCTAssertNil(modelOnly.vendor)
+        XCTAssertEqual(try JSONDecoder().decode(DataDestination.self, from: JSONEncoder().encode(modelOnly)), modelOnly)
         var row = try JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as! [String: Any]
         row["vendor"] = "local"
         XCTAssertThrowsError(try JSONDecoder().decode(DataDestination.self, from: JSONSerialization.data(withJSONObject: row)))

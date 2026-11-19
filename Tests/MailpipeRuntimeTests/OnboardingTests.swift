@@ -98,6 +98,51 @@ final class OnboardingTests: XCTestCase {
         XCTAssertNil(try store.onboarding().testID)
         XCTAssertNil(try store.settings().executable)
     }
+    func testSwitchToClaudeRequiresNewTestAndGrantAndSkipsOldMail() async throws {
+        let path = try root(), store = try PipelineStore(directory: path)
+        let dsh = FakeReplyModel()
+        let claude = FakeReplyModel(harness: .claude, actualModel: "fixture-flash")
+        let session = try OnboardingSession(store: store, model: { $0.kind == .claude ? claude : dsh })
+        var draft = OnboardingDraft()
+        draft.executable = "/fake/dsh"; draft.extensionAcknowledged = true
+        try session.save(draft)
+        _ = try session.beginTest(); try await session.testPipeline.pump(); try session.activate()
+        let oldGrant = try XCTUnwrap(store.settings().permission)
+        let raw = Data("Content-Type: text/plain\r\n\r\nPlease reply.".utf8)
+        let oldRecord = try store.importCapture(InboundCapture(permissionID: oldGrant.id, subject: "First",
+            messageID: "first@example.com", raw: raw))
+        draft = try store.onboarding(); draft.harnessKind = .claude
+        try session.save(draft)
+        XCTAssertNil(try session.testResult())
+        XCTAssertThrowsError(try session.activate(updatingConfiguration: true))
+        XCTAssertEqual(try store.settings().permission, oldGrant)
+        draft.executable = "/fake/claude"; try session.save(draft)
+        _ = try session.beginTest(); try await session.testPipeline.pump()
+        try session.activate(updatingConfiguration: true)
+        let active = try store.settings()
+        XCTAssertEqual(active.harnessKind, .claude)
+        let newGrant = try XCTUnwrap(active.permission)
+        XCTAssertNotEqual(newGrant.id, oldGrant.id)
+        let nextID = try store.importCapture(InboundCapture(permissionID: newGrant.id, subject: "Second",
+            messageID: "second@example.com", raw: raw))
+        let pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: path.appendingPathComponent("inbox")),
+            resolve: { _, _ in XCTFail("Direct delivery cannot query Mail"); return nil }, model: { selection in
+                XCTAssertEqual(selection.kind, .claude); XCTAssertEqual(selection.executable.path, "/fake/claude"); return claude
+            })
+        try await pipeline.pump()
+        XCTAssertEqual(try store.record(oldRecord)?.state, .cancelled)
+        let next = try XCTUnwrap(store.record(nextID))
+        XCTAssertEqual(next.state, .draftReady)
+        let run = try XCTUnwrap(next.runs.last)
+        XCTAssertEqual(run.destination.harness, .claude)
+        XCTAssertEqual(run.destination.model, "fixture-flash")
+        XCTAssertNil(run.destination.vendor)
+        XCTAssertEqual(run.destination.evidence, .detected)
+        XCTAssertNil(run.actualCost)
+        XCTAssertThrowsError(try pipeline.regenerate(nextID, approvedPullRequest: "https://github.com/example/example/pull/1"))
+        let calls = await claude.calls
+        XCTAssertEqual(calls, 2)
+    }
     func testAbandonedTestDoesNotRunWithReplacement() async throws {
         let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
         let session = try OnboardingSession(store: store, model: { _ in fake })

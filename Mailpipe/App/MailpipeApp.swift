@@ -16,13 +16,7 @@ final class WorkbenchModel: ObservableObject {
         Task {
             defer { busyIDs.remove(installation.id) }
             do {
-                let report: CapabilityReport
-                switch installation.kind {
-                case .deepseek:
-                    report = try await DeepSeekHarnessAdapter(executable: installation.executable, dialect: DeepSeekHarnessDialect()).inspect()
-                case .codex:
-                    report = try await CodexCLIAdapter(executable: installation.executable, dialect: CodexCLIDialect()).inspect()
-                }
+                let report = try await installation.inspect()
                 reports[installation.id] = "\(report.version) · \(report.supportsHeadlessRun ? "运行参数齐全" : "缺少必要参数")"
             } catch {
                 reports[installation.id] = "检测失败：\((error as? MailpipeError)?.rawValue ?? "operationFailed")"
@@ -158,8 +152,10 @@ private struct InitialSetupSettings: View {
 struct MailpipeSettings: View {
     @ObservedObject var model: PendingModel
     @ObservedObject var diagnostics: WorkbenchModel
+    @State private var selectedTab = Tab.general
+    private enum Tab { case general, scope, agent, privacy }
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             Form {
                 Section("回复草稿") {
                     Text(model.settings.paused ? "已暂停向 Agent 提交来信。" : "Agent 只能为你授权的来信起草回复。")
@@ -168,33 +164,28 @@ struct MailpipeSettings: View {
                         .foregroundStyle(.secondary)
                 }
                 configurationFooter()
-            }.formStyle(.grouped).tabItem { Label("通用", systemImage: "gearshape") }
+            }.formStyle(.grouped).tabItem { Label("通用", systemImage: "gearshape") }.tag(Tab.general)
             Form {
                 Section("来信处理") {
-                    Text("授权后，\(selectedToolName) 会用 Apple Mail 所有账户的新来信主题和正文起草回复。填写主题后，仅处理主题完全匹配的新来信。").foregroundStyle(.secondary)
+                    Text("授权后，Mailpipe 会将 Apple Mail 所有账户的新来信主题和正文交给 \(model.onboarding.harnessKind.displayName)，由它发送至\(model.onboarding.harnessKind.modelServiceDescription)。填写主题后，仅处理主题完全匹配的新来信。").foregroundStyle(.secondary)
                     TextField("限定邮件主题（可选）", text: $model.onboarding.exactSubject)
                     Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings)
                     Toggle("我已在 Mail 中启用扩展", isOn: $model.onboarding.extensionAcknowledged)
                 }
                 configurationFooter(confirmsScope: true)
-            }.formStyle(.grouped).tabItem { Label("来信处理", systemImage: "envelope") }
+            }.formStyle(.grouped).tabItem { Label("来信处理", systemImage: "envelope") }.tag(Tab.scope)
             Form {
                 Section("起草回复的 Agent") {
-                    Picker("Agent", selection: $model.onboarding.executable) {
-                        Text("选择 Agent").tag("")
-                        ForEach(Array(model.installations.enumerated()), id: \.element.id) { index, tool in
-                            Text(tool.kind.displayName + (model.installations.count > 1 ? " \(index + 1)" : "")).tag(tool.executable.path)
-                        }
-                    }.disabled(model.onboardingBusy)
-                    Text("连接测试使用一封示例邮件，让 Agent 调用一次 DeepSeek 云端模型，会消耗额度。").foregroundStyle(.secondary)
+                    ReplyToolPicker(model: model)
+                    Text("连接测试会将一封示例邮件交给\(model.onboarding.harnessKind.modelServiceDescription)试写回复，会消耗额度。").foregroundStyle(.secondary)
                     if model.onboardingBusy {
                         ProgressView("正在连接…")
                         Button("取消测试", action: model.cancelOnboardingTest)
                     } else if model.onboardingTestPassed {
-                        Label("已连接到 \(selectedToolName)", systemImage: "checkmark.circle")
-                        Button("重新测试") { model.resetOnboardingTest(); model.testOnboarding() }
+                        Label(model.connectionLabel, systemImage: "checkmark.circle")
+                        Button("重新测试", action: model.testOnboarding)
                     } else {
-                        Button("确认并测试连接") { model.resetOnboardingTest(); model.testOnboarding() }.disabled(model.onboarding.executable.isEmpty)
+                        Button("确认并测试连接", action: model.testOnboarding).disabled(model.selectedTool == nil)
                     }
                 }
                 configurationFooter()
@@ -215,25 +206,28 @@ struct MailpipeSettings: View {
                         }
                     }
                 }
-            }.formStyle(.grouped).tabItem { Label("Agent", systemImage: "sparkles") }
+            }.formStyle(.grouped).tabItem { Label("Agent", systemImage: "sparkles") }.tag(Tab.agent)
             Form {
                 Section("隐私与数据") {
                     Text("Mailpipe 在这台 Mac 上保存来信、草稿和设置，只把获准起草的邮件主题和正文交给你连接的 Agent。")
-                    Text("DeepSeek Harness 会把这些内容发给 DeepSeek 云端模型。邮件不经 Mailpipe 服务器中转，附件内容也不会交给模型。")
-                    Text("来信含 GitHub PR 链接时，Agent 可核对公开变更。使用你的 GitHub 账户读取变更，需要你另行确认。")
+                    Text("当前配置由\(model.settings.harnessKind.displayName) 将这些内容发给\(model.settings.harnessKind.modelServiceDescription)。Mailpipe 不会向模型发送附件内容。")
+                    if model.settings.harnessKind == .deepseek {
+                        Text("来信含 GitHub PR 链接时，Agent 可核对公开变更。使用你的 GitHub 账户读取变更，需要你另行确认。")
+                    }
                     Button("撤销来信处理授权", role: .destructive, action: model.revoke)
                     Text("撤销后，Agent 不再处理新来信。已有草稿仍可在本机查看。").foregroundStyle(.secondary)
                 }
-            }.formStyle(.grouped).tabItem { Label("隐私与数据", systemImage: "hand.raised") }
+            }.formStyle(.grouped).tabItem { Label("隐私与数据", systemImage: "hand.raised") }.tag(Tab.privacy)
         }.frame(width: 660, height: 520)
             .onChange(of: model.onboarding) { _ in model.saveOnboarding() }
     }
-    private var selectedToolName: String { model.installations.first { $0.executable.path == model.onboarding.executable }?.kind.displayName ?? "所选 Agent" }
     private func configurationFooter(confirmsScope: Bool = false) -> some View {
         Section {
             if let issue = model.onboardingIssue { Text(issue).foregroundStyle(.secondary) }
-            if confirmsScope || !model.needsPermissionRecovery {
-                Button(model.needsPermissionRecovery ? "授权 Agent 处理新来信" : "保存配置", action: model.applyConfiguration)
+            if !confirmsScope && (model.requiresToolConsent || model.needsPermissionRecovery) {
+                Button("确认来信范围与授权") { selectedTab = .scope }
+            } else {
+                Button(model.requiresToolConsent || model.needsPermissionRecovery ? "授权 \(model.onboarding.harnessKind.displayName) 处理新来信" : "保存配置", action: model.applyConfiguration)
                     .disabled(model.onboardingBusy || !model.onboardingTestPassed || !model.onboarding.extensionAcknowledged || !model.hasSharedInbox)
             }
         }

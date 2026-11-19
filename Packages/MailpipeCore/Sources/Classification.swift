@@ -11,8 +11,14 @@ public enum MailpipeError: String, Error, Sendable, LocalizedError {
 }
 
 public enum HarnessKind: String, CaseIterable, Codable, Sendable {
-    case deepseek = "dsh", codex
-    public var displayName: String { self == .deepseek ? "DeepSeek Harness" : "Codex CLI" }
+    case deepseek = "dsh", codex, claude
+    public var displayName: String {
+        switch self {
+        case .deepseek: "DeepSeek Harness"
+        case .codex: "Codex CLI"
+        case .claude: "Claude Code"
+        }
+    }
 }
 
 public struct MailInput: Codable, Equatable, Sendable {

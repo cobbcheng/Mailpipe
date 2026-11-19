@@ -1,10 +1,8 @@
 # Harness Adapter 契约
 
-状态：一期支持 DeepSeek Harness 与 Codex CLI。
-两个 Adapter 已通过隔离回归和真实合成探测。
-Mailpipe 工具挂载仍未开放；Codex 真实邮件入口未接入。
-更新：2026-11-16。入站调用改为无工具的分拣和草稿。
-更新：2026-11-17。移除旧分类探测与离线样例。
+普通草稿支持 Claude Code 与 DeepSeek Harness。
+Codex CLI 仅提供安装与能力检查。
+Claude Code 的实测范围见[合成草稿验收](validation/2026-11-19-claude-code-drafts.md)。
 证据见 [DeepSeek 实测](validation/2026-11-16-deepseek-harness.md)。
 Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 
@@ -14,11 +12,12 @@ Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
 |---|---|
 | `HarnessDiscovery.find()` | 只查可执行文件，不读取凭据 |
 | `inspect()` | 执行版本和帮助，检查完整参数名 |
-| `run(ReplyModelTask, route, authorize)` | DeepSeek 受限回复；调用前重查宿主授权 |
+| `run(ReplyModelTask, route, authorize)` | 所选工具起草回复；调用前重查宿主授权 |
 
 DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
 每次创建独立 DSH_HOME，加载应用自有配置。
-禁用内置工具、MCP、skills、指令及子代理。
+普通草稿禁用内置工具、MCP、skills 和子代理。
+个人措辞参考见[原生上下文验收](validation/2026-11-18-native-harness-memory.md)。
 禁用后台任务、热更新、遥测和推理重试。
 推理前核对注册及广告工具均为空。
 工具 guard 拒绝所有调用，并限制一次模型请求。
@@ -30,8 +29,8 @@ DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
 
 Codex 目前只做发现、版本和参数检查。
 真实邮件调用尚未接入，也没有可用入口。
-DeepSeek 回复路径已接入单账户授权与持久化队列。
-未知账户不能派发；不使用其他 Harness 自动回退。
+DeepSeek 和 Claude 共用宿主的授权与持久化队列。
+切换工具须试写并重新授权。旧授权不能转投新工具。
 
 Runner 使用独立进程组、非阻塞管道和单个工作线程。
 原因是 stderr 堵塞会阻止 stdin 写入和取消。
@@ -50,7 +49,7 @@ stdout 与 stderr 总上限为 1 MiB。
 证据必须来自输入的 subject 或 body。
 错误展示只返回错误码，不展示原始输出。
 参数齐全只用于启动前检查，不构成安全认证。
-当前代码仍使用空工具集；Codex 真实邮件入口未接入。
+Claude 普通起草全程使用空工具集。
 下文第 8 节是已确认、尚未实现的工具边界。
 
 ## 1. 问题与接入选择
@@ -61,12 +60,11 @@ stdout 与 stderr 总上限为 1 MiB。
 | 本地 HTTP / Gateway | 可复用连接 | 鉴权、服务发现、权限隔离 | P1 验证 |
 | 直连模型 API | 可自建简单调用 | 引入凭据与计费管理 | 不采用 |
 
-P0 使用 DeepSeek Harness 与 Codex CLI。
-入口分别为 `dsh --profile headless` 和 `codex exec`。
-完整调用参数由 Adapter 源码维护。
-Claude 已移出一期，不迁移其账户授权。
-落地时读取安装版本的帮助与官方文档。
-禁止猜测无工具、沙盒和 JSON 参数。
+回复入口为 `dsh` 和 `claude --print`。
+Claude 仅支持已验收的 CLI 2.1.296。
+模型与认证由 CLI 从用户配置加载。
+App 从成功回执记录模型名和 token。
+代理的模型名不足以确定供应方或实付费用。
 
 ## 2. 能力探测与生命周期
 
@@ -118,7 +116,7 @@ DeepSeek 使用 `approval-policy never` 且工具全禁用。
 下文简称 triage 与 draft。
 `parse_rule` 和批次调度尚未实现。
 `triage` 用类别和摘要回答“要不要回复”。
-`draft` 只在分拣通过后调用。
+当前回复流水线对已授权来信直接调用 `draft`。
 这次调用只读、无工具，输出只能是草稿。
 classify 与 summarize 不再作为独立交付，只作为 triage 的输入字段。
 历史搜索和写意图不走这些批次。

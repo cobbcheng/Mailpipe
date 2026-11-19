@@ -6,6 +6,17 @@ public struct HarnessInstallation: Identifiable, Sendable, Equatable {
     public let executable: URL
     public var id: String { "\(kind.rawValue):\(executable.path)" }
     public init(kind: HarnessKind, executable: URL) { self.kind = kind; self.executable = executable }
+
+    public func inspect() async throws -> CapabilityReport {
+        switch kind {
+        case .deepseek:
+            try await DeepSeekHarnessAdapter(executable: executable, dialect: DeepSeekHarnessDialect()).inspect()
+        case .claude:
+            try await ClaudeCodeHarnessAdapter(executable: executable, dialect: ClaudeCodeDialect()).inspect()
+        case .codex:
+            try await CodexCLIAdapter(executable: executable, dialect: CodexCLIDialect()).inspect()
+        }
+    }
 }
 public enum HarnessDiscovery {
     private static func isExecutable(_ url: URL) -> Bool {
@@ -14,18 +25,18 @@ public enum HarnessDiscovery {
             && !isDirectory.boolValue && FileManager.default.isExecutableFile(atPath: url.path)
     }
 
-    /// Setup offers the first entry. Settings can still inspect distinct installed copies.
-    public static func deepSeekLaunchers(in installations: [HarnessInstallation], keeping executable: String?) -> [HarnessInstallation] {
-        let candidates = installations.filter { $0.kind == .deepseek }
-        guard let executable, executable.hasPrefix("/") else { return candidates }
+    /// Retain the launcher the user chose across GUI PATH changes and CLI upgrades.
+    public static func replyLaunchers(in installations: [HarnessInstallation], keeping executable: String?,
+                                      kind: HarnessKind = .deepseek) -> [HarnessInstallation] {
+        let candidates = installations.filter { $0.kind == .deepseek || $0.kind == .claude }
+        guard kind != .codex, let executable, executable.hasPrefix("/") else { return candidates }
         let saved = URL(fileURLWithPath: executable)
         let resolved = saved.resolvingSymlinksInPath()
-        // GUI launches can have a different PATH. Keep the exact launcher originally
-        // selected, including a legacy resolved npm entry point from a discovered dsh.
-        guard isExecutable(saved), saved.lastPathComponent == HarnessKind.deepseek.rawValue ||
-                candidates.contains(where: { $0.executable.resolvingSymlinksInPath() == resolved }) else { return candidates }
-        return [HarnessInstallation(kind: .deepseek, executable: saved)] +
-            candidates.filter { $0.executable.resolvingSymlinksInPath() != resolved }
+        guard isExecutable(saved), saved.lastPathComponent == kind.rawValue ||
+                candidates.contains(where: { $0.kind == kind && $0.executable.resolvingSymlinksInPath() == resolved })
+        else { return candidates }
+        return [HarnessInstallation(kind: kind, executable: saved)] +
+            candidates.filter { $0.kind != kind || $0.executable.resolvingSymlinksInPath() != resolved }
     }
 
     /// Finds files only. Does not launch a binary, inspect auth, or silently select among installations.
@@ -44,7 +55,7 @@ public enum HarnessDiscovery {
             for directory in directories {
                 let launchPath = URL(fileURLWithPath: directory).appendingPathComponent(kind.rawValue)
                 let resolved = launchPath.resolvingSymlinksInPath()
-                let file = kind == .deepseek ? launchPath : resolved
+                let file = kind == .codex ? resolved : launchPath
                 guard isExecutable(file), seen.insert("\(kind.rawValue):\(resolved.path)").inserted else { continue }
                 found.append(HarnessInstallation(kind: kind, executable: file))
             }
@@ -59,5 +70,5 @@ public struct CapabilityReport: Sendable {
     public let missingFlags: [String]
     public var supportsHeadlessRun: Bool { missingFlags.isEmpty }
     /// CLI flags alone are never a safety certification.
-    public var realMailStatus: String { "unsafeCapability: M0-08 尚未验收" }
+    public var realMailStatus: String { "此检查仅核验 CLI 版本和参数；回复授权与示例试写见 App 设置。" }
 }

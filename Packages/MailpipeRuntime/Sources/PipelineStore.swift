@@ -35,6 +35,11 @@ public struct PipelineSettings: Codable, Sendable {
     public var scope: AccountScope? // Legacy single-scope payloads remain readable.
     public var scopes: [AccountScope]?
     public var authorizedScopes: [AccountScope] { scopes ?? scope.map { [$0] } ?? [] }
+    private var selectedHarness: HarnessKind?
+    public var harnessKind: HarnessKind {
+        get { selectedHarness ?? .deepseek }
+        set { selectedHarness = newValue }
+    }
     public var executable: String?
     public var level: ServiceLevel = .default
     var suggestionsOnly: Bool? // Decode the old manual-only policy without granting capture.
@@ -262,13 +267,13 @@ public final class PipelineStore {
             var completed = draft; completed.completed = true
             let subject = draft.exactSubject.isEmpty ? nil : draft.exactSubject
             if let previous = settings.permission,
-               previous.exactSubject == subject, settings.executable == draft.executable {
+               previous.exactSubject == subject, settings.harnessKind == draft.harnessKind, settings.executable == draft.executable {
                 settings.permission = CapturePermission(renewing: previous)
             } else {
                 settings.scope = nil; settings.scopes = nil
                 settings.permission = CapturePermission(exactSubject: subject, delivery: .mailKit)
             }
-            settings.executable = draft.executable; settings.level = draft.level
+            settings.harnessKind = draft.harnessKind; settings.executable = draft.executable; settings.level = draft.level
             settings.revision = UUID() // Preserve existing pause; never resume implicitly.
             try saveSettings(settings); try saveOnboarding(completed)
             try execute("COMMIT")
@@ -340,6 +345,9 @@ public final class PipelineStore {
         item.sourceEvidence = evidence
         item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
         item.syntheticAuthorized = syntheticGrant
+        if syntheticGrant {
+            item.revision = settings.revision; item.level = settings.level
+        }
         return try commitIngest(capture.id, recordID: id, saving: item)
     }
 

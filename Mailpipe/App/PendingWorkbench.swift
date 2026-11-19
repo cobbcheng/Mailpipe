@@ -25,6 +25,12 @@ final class PendingModel: ObservableObject {
     private var display: Task<Void, Never>?
     private(set) var hasSharedInbox = false
     var needsPermissionRecovery: Bool { onboarding.completed && settings.permission?.delivery != .mailKit }
+    var requiresToolConsent: Bool {
+        onboarding.completed && (onboarding.harnessKind != settings.harnessKind || onboarding.executable != settings.executable)
+    }
+    var selectedTool: HarnessInstallation? {
+        installations.first { $0.kind == onboarding.harnessKind && $0.executable.path == onboarding.executable }
+    }
     var pending: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench && ($0.state.isPending || $0.isPreparing || $0.state == .needsReview || $0.state == .awaitingBody) } }
     var workbenchRecords: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench } }
     var unreadCount: Int { workbenchRecords.lazy.filter { self.isUnread($0) }.count }
@@ -115,7 +121,8 @@ final class PendingModel: ObservableObject {
                 return
             }
             guard flushEditor(id) else { return }
-            try pipeline.regenerate(id, approvedPullRequest: ReplyDraftRequest.linkedPullRequest(in: item.input.body)); refresh()
+            let approved = settings.harnessKind == .deepseek ? ReplyDraftRequest.linkedPullRequest(in: item.input.body) : nil
+            try pipeline.regenerate(id, approvedPullRequest: approved); refresh()
         }
         catch { issue = "无法重新生成。请检查暂停状态、来信授权、Agent 连接和邮件有效期。每封最多重新生成三次。" }
     }
@@ -218,11 +225,25 @@ final class PendingModel: ObservableObject {
     }
     func rediscoverTools() {
         let preferred = onboarding.executable.isEmpty ? settings.executable : onboarding.executable
-        installations = HarnessDiscovery.deepSeekLaunchers(in: HarnessDiscovery.find(), keeping: preferred)
+        let kind = onboarding.executable.isEmpty ? settings.harnessKind : onboarding.harnessKind
+        installations = HarnessDiscovery.replyLaunchers(in: HarnessDiscovery.find(), keeping: preferred, kind: kind)
+        if onboarding.executable.isEmpty, let first = installations.first {
+            selectTool(first)
+        }
+    }
+    func selectTool(_ tool: HarnessInstallation) {
+        guard !onboardingBusy else { return }
+        var draft = onboarding
+        draft.harnessKind = tool.kind
+        draft.executable = tool.executable.path
+        guard onboarding != draft else { return }
+        onboardingIssue = nil
+        onboardingResult = nil
+        onboarding = draft
     }
     func testOnboarding() {
         guard !onboardingBusy, let session = onboardingSession,
-              installations.contains(where: { $0.executable.path == onboarding.executable }) else { return }
+              selectedTool != nil else { return }
         guard saveOnboarding() else { return }
         onboardingBusy = true; onboardingIssue = nil
         onboardingTask = Task {
@@ -232,9 +253,13 @@ final class PendingModel: ObservableObject {
                 onboardingResult = try? session.testResult()
             }
             do {
+                if onboarding.testID != nil { try session.resetTest() }
                 _ = try session.beginTest()
                 onboarding = try session.store.onboarding()
                 try await session.testPipeline.pump()
+                if let code = try session.testResult()?.error {
+                    onboardingIssue = "示例邮件试写未完成（\(code)）。"
+                }
             } catch { onboardingIssue = "测试未完成：\(Self.code(error))" }
         }
     }
@@ -242,17 +267,12 @@ final class PendingModel: ObservableObject {
         onboardingTask?.cancel()
         if let id = onboarding.testID { try? onboardingSession?.testPipeline.cancel(id) }
     }
-    func resetOnboardingTest() {
-        guard let session = onboardingSession else { return }
-        do { try session.resetTest(); onboarding = try session.store.onboarding(); onboardingResult = nil }
-        catch { onboardingIssue = Self.code(error) }
-    }
     func finishOnboarding() {
         guard !onboarding.completed else { return }
         saveConfiguration(updating: false)
     }
     private func saveConfiguration(updating: Bool) {
-        guard !onboardingBusy, let session = onboardingSession, let pipeline else { return }
+        guard !onboardingBusy, let session = onboardingSession, let tool = selectedTool, let pipeline else { return }
         guard hasSharedInbox else {
             onboardingIssue = "无法访问 Mail 扩展的共享目录。请检查 Mailpipe 的安装。"; return
         }
@@ -263,7 +283,7 @@ final class PendingModel: ObservableObject {
         configurationSave = Task {
             defer { onboardingBusy = false; configurationSave = nil }
             do {
-                let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
+                let report = try await tool.inspect()
                 try Task.checkCancellation()
                 guard report.supportsHeadlessRun, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
                 try Task.checkCancellation()
@@ -281,7 +301,16 @@ final class PendingModel: ObservableObject {
         }
     }
 
-    var onboardingTestPassed: Bool { OnboardingSession.testPassed(onboardingResult, level: onboarding.level) }
+    var onboardingTestPassed: Bool {
+        selectedTool != nil && onboarding.testedExecutable == onboarding.executable &&
+            onboardingResult?.runs.last?.destination.harness == onboarding.harnessKind &&
+            OnboardingSession.testPassed(onboardingResult, level: onboarding.level)
+    }
+    var connectionLabel: String {
+        let tool = onboarding.harnessKind.displayName
+        if let model = onboardingResult?.runs.last?.destination.model { return "已连接到 \(tool) · \(model)" }
+        return "已连接到 \(tool)"
+    }
     func openExtensionSettings() {
         guard let url = URL(string: "mail-pref-pane://extensionspref") else { return }
         if !NSWorkspace.shared.open(url) {
@@ -599,8 +628,10 @@ private struct DraftDetail: View {
             Button("取消", role: .cancel) { }
             Button("重新生成") { model.regenerate(item.id) }
         } message: {
-            if let link = ReplyDraftRequest.linkedPullRequest(in: item.input.body) {
+            if model.settings.harnessKind == .deepseek, let link = ReplyDraftRequest.linkedPullRequest(in: item.input.body) {
                 Text("继续即允许 Mailpipe 使用你的 GitHub 账户读取 \(link) 的变更，交给 DeepSeek Harness 核对并起草。新草稿会替换当前回复。")
+            } else if model.settings.harnessKind == .claude, ReplyDraftRequest.linkedPullRequest(in: item.input.body) != nil {
+                Text("Claude Code 会仅依据邮件内容重新起草，无法核对 PR 的代码变更。新草稿会替换当前回复。")
             } else {
                 Text("Agent 会再次调用模型，消耗你的额度。新草稿生成后会替换当前回复。")
             }
@@ -755,9 +786,9 @@ private struct DraftDetail: View {
             Text("这封来信的数据去向").font(.headline)
             if let run = item.runs.last {
                 Text("本次选择的 Agent 是 \(run.destination.harness.displayName)。")
-                if let model = run.destination.model, let vendor = run.destination.vendor {
-                    Text("模型服务：\(vendor) · \(model)")
-                } else { Text("本次记录未确认具体模型。") }
+                if let vendor = run.destination.vendor { Text("模型服务：\(vendor)") }
+                if let model = run.destination.model { Text("模型：\(model)") }
+                else { Text("本次记录未确认具体模型。") }
             } else { Text("这封来信尚无 Agent 调用记录。") }
             Text("来信和草稿由 Mailpipe 保存在这台 Mac 上。点回复箭头可在 Apple Mail 打开撰写窗口，由你检查并发送。")
             if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }

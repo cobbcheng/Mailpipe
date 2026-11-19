@@ -174,6 +174,21 @@ final class AdapterTests: XCTestCase {
         XCTAssertEqual(matches.first?.kind, .deepseek)
     }
 
+    func testClaudeDiscoveryKeepsStableLauncherAndOnlyOffersDraftTools() throws {
+        let root = try TemporaryDirectory()
+        let binary = try root.script("exit 1", name: "2.1.296")
+        let bin = root.url.appendingPathComponent(".local/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let launcher = bin.appendingPathComponent("claude")
+        try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: binary)
+        _ = try root.script("exit 1", name: "codex")
+        let found = HarnessDiscovery.find(path: root.url.path, home: root.url)
+        let choices = HarnessDiscovery.replyLaunchers(in: found, keeping: launcher.path, kind: .claude)
+        XCTAssertEqual(choices.first, HarnessInstallation(kind: .claude, executable: launcher))
+        XCTAssertFalse(choices.contains { $0.kind == .codex })
+        XCTAssertEqual(choices.filter { $0.executable == launcher }.count, 1)
+    }
+
     func testDeepSeekSetupLauncherRespectsPATHAndRestoresSavedAlias() throws {
         let root = try TemporaryDirectory()
         let versions = root.url.appendingPathComponent(".nvm/versions/node")
@@ -194,15 +209,15 @@ final class AdapterTests: XCTestCase {
         let nvm = discover("")
         XCTAssertEqual(nvm.map(\.executable), [newer, older])
         let viaPath = discover(older.deletingLastPathComponent().path)
-        XCTAssertEqual(HarnessDiscovery.deepSeekLaunchers(in: viaPath, keeping: nil).first?.executable, older)
+        XCTAssertEqual(HarnessDiscovery.replyLaunchers(in: viaPath, keeping: nil).first?.executable, older)
 
         let alias = root.url.appendingPathComponent("dsh")
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: newer)
         for saved in [alias, newer.resolvingSymlinksInPath()] {
-            let matches = HarnessDiscovery.deepSeekLaunchers(in: viaPath, keeping: saved.path)
+            let matches = HarnessDiscovery.replyLaunchers(in: viaPath, keeping: saved.path)
             XCTAssertEqual(matches.map(\.executable), [saved, older])
         }
         try FileManager.default.removeItem(at: alias)
-        XCTAssertEqual(HarnessDiscovery.deepSeekLaunchers(in: viaPath, keeping: alias.path), viaPath)
+        XCTAssertEqual(HarnessDiscovery.replyLaunchers(in: viaPath, keeping: alias.path), viaPath)
     }
 }

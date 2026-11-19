@@ -6,11 +6,15 @@ import HarnessAdapters
 actor FakeReplyModel: ReplyModelRunning {
     private(set) var calls = 0
     let shouldReply: String
+    let harness: HarnessKind
+    let actualModel: String?
     var afterRun: (@Sendable () async throws -> Void)?
     func setAfterRun(_ action: @escaping @Sendable () async throws -> Void) { afterRun = action }
-    init(shouldReply: String = "yes") { self.shouldReply = shouldReply }
+    init(shouldReply: String = "yes", harness: HarnessKind = .deepseek, actualModel: String? = nil) {
+        self.shouldReply = shouldReply; self.harness = harness; self.actualModel = actualModel
+    }
     func run(_ task: ReplyModelTask, route: AccountRoute, authorize: @escaping @Sendable () async throws -> Void) async throws -> ReplyModelOutput {
-        try route.authorize(.deepseek); try await authorize(); calls += 1
+        try route.authorize(harness); try await authorize(); calls += 1
         var object: [String: Any]
         switch task {
         case .triage(let request):
@@ -22,7 +26,7 @@ actor FakeReplyModel: ReplyModelRunning {
             object["request_id"] = request.requestID; object["triage_request_id"] = request.triageRequestID; object["message_ref"] = request.message.messageRef
         }
         try await afterRun?()
-        return ReplyModelOutput(content: try JSONSerialization.data(withJSONObject: object), inputTokens: 10, outputTokens: 20)
+        return ReplyModelOutput(content: try JSONSerialization.data(withJSONObject: object), inputTokens: 10, outputTokens: 20, actualModel: actualModel)
     }
 }
 

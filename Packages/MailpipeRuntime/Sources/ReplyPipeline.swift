@@ -12,13 +12,23 @@ public struct VerifiedMail: Sendable {
 }
 public typealias MailIdentityResolver = @MainActor @Sendable (StoredReply, AccountScope) async throws -> VerifiedMail?
 
+public typealias ReplyModelFactory = @Sendable (HarnessInstallation) throws -> any ReplyModelRunning
+
+public func makeReplyModel(for installation: HarnessInstallation) throws -> any ReplyModelRunning {
+    switch installation.kind {
+    case .deepseek: return DeepSeekHarnessAdapter(executable: installation.executable, dialect: DeepSeekHarnessDialect())
+    case .claude: return ClaudeCodeHarnessAdapter(executable: installation.executable, dialect: ClaudeCodeDialect())
+    case .codex: throw MailpipeError.unsafeCapability
+    }
+}
+
 @MainActor
 public final class ReplyPipeline {
     public let store: PipelineStore
     public let inbox: CaptureInbox
     private let composeInboxes: @MainActor () async throws -> [AccountScope]
     private let resolve: MailIdentityResolver
-    private let model: @Sendable (String) -> any ReplyModelRunning
+    private let model: ReplyModelFactory
     private var pumping = false
     private let inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) async throws -> Bool?)?
     private var scopeChecked: Set<String> = []
@@ -27,9 +37,7 @@ public final class ReplyPipeline {
     public init(store: PipelineStore, inbox: CaptureInbox, resolve: @escaping MailIdentityResolver,
                 composeInboxes: @escaping @MainActor () async throws -> [AccountScope] = { [] },
                 inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) async throws -> Bool?)? = nil,
-                model: @escaping @Sendable (String) -> any ReplyModelRunning = {
-                    DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: $0), dialect: DeepSeekHarnessDialect())
-                }) {
+                model: @escaping ReplyModelFactory = makeReplyModel) {
         self.composeInboxes = composeInboxes
         self.store = store; self.inbox = inbox; self.resolve = resolve; self.model = model; self.inAuthorizedInbox = inAuthorizedInbox
     }
@@ -147,8 +155,12 @@ public final class ReplyPipeline {
     public func updateSettings(_ change: (inout PipelineSettings) -> Void) throws {
         let previous = try store.settings()
         var settings = previous; change(&settings)
+        let changedTool = settings.harnessKind != previous.harnessKind || settings.executable != previous.executable
+        if changedTool, previous.executable != nil, let oldGrant = previous.permission, oldGrant.id == settings.permission?.id {
+            throw PipelineError.revoked
+        }
         if settings.permission != previous.permission || settings.authorizedScopes != previous.authorizedScopes ||
-            settings.executable != previous.executable || settings.level != previous.level { settings.revision = UUID() }
+            changedTool || settings.level != previous.level { settings.revision = UUID() }
         // DB is authoritative. A crash before the extension snapshot changes cannot grant a model call.
         try store.saveSettings(settings)
         try inbox.setPermission(settings.paused ? nil : settings.permission)
@@ -248,6 +260,7 @@ public final class ReplyPipeline {
               item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
               settings.executable != nil else { throw MailpipeError.invalidInput }
         guard item.manualExecutable == nil else { throw PipelineError.revoked }
+        guard approvedPullRequest == nil || settings.harnessKind == .deepseek else { throw MailpipeError.unsafeCapability }
         if item.mailKitBody == true {
             guard item.canRequestRegeneration(settings: settings) else { throw PipelineError.revoked }
             item.state = .queued; item.revision = settings.revision
@@ -396,14 +409,20 @@ public final class ReplyPipeline {
             guard item.input.subject == ReplySyntheticFixture.triage.message.subject,
                   item.input.body == ReplySyntheticFixture.triage.message.body else { throw PipelineError.invalidCapture }
             item.accountID = "synthetic-validation"; item.localID = "synthetic-" + item.id
-            if item.revision == nil { item.revision = settings.revision; item.level = settings.level; item.state = .queued; try store.save(item) }
+            // Before harness selection existed, a pending fixture was authorized only for DSH.
+            if item.revision == nil && settings.harnessKind == .deepseek {
+                item.revision = settings.revision; item.level = settings.level
+            }
+            item.state = .queued
+            try store.save(item)
         }
         guard item.revision == settings.revision else {
             item.state = .needsReview; item.error = "policyChanged"; try store.save(item); return
         }
         var request = try ReplyDraftRequest(message: item.input)
         request.approvedPullRequest = item.approvedPullRequest
-        try await generateDraft(id: id, request: request, executable: executable)
+        let installation = HarnessInstallation(kind: settings.harnessKind, executable: URL(fileURLWithPath: executable))
+        try await generateDraft(id: id, request: request, installation: installation)
     }
     private func authorize(_ id: String, revision: UUID) throws {
         try Task.checkCancellation()
@@ -413,22 +432,26 @@ public final class ReplyPipeline {
               item.state == .triaging || item.state == .drafting,
               (item.mailKitBody == true && settings.permission?.delivery == .mailKit && settings.permission?.id == item.permissionID) || item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
     }
-    private func generateDraft(id: String, request: ReplyDraftRequest, executable: String) async throws {
+    private func generateDraft(id: String, request: ReplyDraftRequest, installation: HarnessInstallation) async throws {
         guard var item = try store.record(id), let revision = item.revision else { throw PipelineError.storage }
         item.state = .drafting
-        let destination = try DataDestination(messageRef: id, runID: UUID().uuidString, taskKind: .draft, harness: .deepseek)
+        let destination = try DataDestination(messageRef: id, runID: UUID().uuidString, taskKind: .draft, harness: installation.kind)
         item.runs.append(PipelineRun(destination: destination, startedAt: Date()))
         try store.save(item)
         do {
-            let route = item.mailKitBody == true ? AccountRoute(mailKitPermission: item.permissionID, allowedHarnesses: [.deepseek])
-                : AccountRoute(accountID: item.accountID, allowedHarnesses: [.deepseek])
-            let output = try await model(executable).run(.draft(request), route: route) { [self] in
+            let route = item.mailKitBody == true ? AccountRoute(mailKitPermission: item.permissionID, allowedHarnesses: [installation.kind])
+                : AccountRoute(accountID: item.accountID, allowedHarnesses: [installation.kind])
+            let output = try await model(installation).run(.draft(request), route: route) { [self] in
                 try await MainActor.run { try self.authorize(id, revision: revision) }
             }
             guard var current = try store.record(id) else { throw PipelineError.storage }
             let last = current.runs.count - 1
-            current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft, harness: .deepseek,
-                vendor: "deepseek-official", model: "deepseek-flash", evidence: .detected)
+            let fixedRoute = installation.kind == .deepseek
+            if fixedRoute || output.actualModel != nil {
+                current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft,
+                    harness: installation.kind, vendor: fixedRoute ? "deepseek-official" : nil,
+                    model: fixedRoute ? "deepseek-flash" : output.actualModel, evidence: .detected)
+            }
             current.runs[last].readPullRequestDiff = output.readPullRequestDiff
             current.runs[last].inputTokens = output.inputTokens; current.runs[last].outputTokens = output.outputTokens
             current.runs[last].inputCharacters = output.inputCharacters; current.runs[last].outputCharacters = output.outputCharacters
@@ -455,7 +478,7 @@ public final class ReplyPipeline {
             try store.save(current)
         }
     }
-    /// Explicit user action authorizes only this fixed synthetic input and the selected dsh.
+    /// Explicit user action authorizes only this fixed synthetic input and the selected harness.
     /// Uses the same spool importer, durable states, model path and pending view as mail.
     @discardableResult public func enqueueSynthetic() throws -> String {
         let settings = try store.settings()

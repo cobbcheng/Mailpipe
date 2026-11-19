@@ -8,6 +8,11 @@ public struct OnboardingDraft: Codable, Equatable, Sendable {
     public var selectedScopes: [AccountScope]?
     public var selections: [AccountScope] { selectedScopes ?? [] }
     public var exactSubject = ""
+    private var selectedHarness: HarnessKind?
+    public var harnessKind: HarnessKind {
+        get { selectedHarness ?? .deepseek }
+        set { selectedHarness = newValue }
+    }
     public var executable = ""
     public var level: ServiceLevel = .default
     public var automationDenied: Bool?
@@ -24,12 +29,16 @@ public struct OnboardingDraft: Codable, Equatable, Sendable {
 /// Host-owned progress. Saving a draft never grants capture or changes active policy.
 @MainActor
 public final class OnboardingSession {
-    public static let evidenceVersion = "dsh-0.2.2-rc.1/restricted-v1/reply-fixture-v1"
+    private static func evidenceVersion(for kind: HarnessKind) -> String? {
+        switch kind {
+        case .deepseek: "dsh-0.2.2-rc.1/restricted-v1/reply-fixture-v1"
+        case .claude: "claude-2.1.296/restricted-v1/reply-fixture-v1"
+        case .codex: nil
+        }
+    }
     public let store: PipelineStore
     public let testPipeline: ReplyPipeline
-    public init(store: PipelineStore, model: @escaping @Sendable (String) -> any ReplyModelRunning = {
-        DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: $0), dialect: DeepSeekHarnessDialect())
-    }) throws {
+    public init(store: PipelineStore, model: @escaping ReplyModelFactory = makeReplyModel) throws {
         self.store = store
         let root = store.directory.appendingPathComponent("onboarding-test")
         testPipeline = ReplyPipeline(store: try PipelineStore(directory: root),
@@ -40,7 +49,7 @@ public final class OnboardingSession {
         // Progress edits cannot complete initial setup or clear a prior consent receipt.
         draft.completed = try store.onboarding().completed
         draft.step = min(5, max(1, draft.step))
-        if draft.testedExecutable != draft.executable || draft.evidenceVersion != Self.evidenceVersion || (draft.testedLevel ?? .l2) != draft.level {
+        if draft.testedExecutable != draft.executable || draft.evidenceVersion != Self.evidenceVersion(for: draft.harnessKind) || (draft.testedLevel ?? .l2) != draft.level {
             draft.testID = nil; draft.testedExecutable = nil; draft.evidenceVersion = nil
         }
         try store.saveOnboarding(draft)
@@ -52,15 +61,18 @@ public final class OnboardingSession {
     /// Explicit click only; never pump this queue on launch or window reopening.
     public func beginTest() throws -> String {
         var draft = try store.onboarding()
-        guard draft.executable.hasPrefix("/"), draft.testID == nil else { throw MailpipeError.invalidInput }
+        guard draft.executable.hasPrefix("/"), let evidence = Self.evidenceVersion(for: draft.harnessKind),
+              draft.testID == nil else { throw MailpipeError.invalidInput }
         // Abandoned tests never join a later explicitly authorized test.
         for item in try testPipeline.store.records() where [.awaitingAccount, .queued, .draftQueued].contains(item.state) {
             try testPipeline.cancel(item.id)
         }
-        try testPipeline.updateSettings { $0.executable = draft.executable; $0.level = draft.level }
+        try testPipeline.updateSettings {
+            $0.harnessKind = draft.harnessKind; $0.executable = draft.executable; $0.level = draft.level
+        }
         let id = try testPipeline.enqueueSynthetic()
         draft.testedLevel = draft.level
-        draft.testID = id; draft.testedExecutable = draft.executable; draft.evidenceVersion = Self.evidenceVersion
+        draft.testID = id; draft.testedExecutable = draft.executable; draft.evidenceVersion = evidence
         try save(draft)
         return id
     }
@@ -79,8 +91,9 @@ public final class OnboardingSession {
         if draft.completed && !updatingConfiguration { return }
         if updatingConfiguration && !draft.completed { throw MailpipeError.invalidInput }
         guard draft.testedExecutable == draft.executable,
-              draft.evidenceVersion == Self.evidenceVersion,
-              Self.testPassed(try testResult(), level: draft.level) else { throw MailpipeError.invalidInput }
+              let evidence = Self.evidenceVersion(for: draft.harnessKind), draft.evidenceVersion == evidence,
+              let test = try testResult(), test.runs.last?.destination.harness == draft.harnessKind,
+              Self.testPassed(test, level: draft.level) else { throw MailpipeError.invalidInput }
         try store.activateOnboarding(draft)
     }
 }

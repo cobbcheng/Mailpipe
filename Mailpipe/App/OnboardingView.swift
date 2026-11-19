@@ -1,19 +1,43 @@
 import SwiftUI
 import HarnessAdapters
+import MailpipeCore
+
+extension HarnessKind {
+    var modelServiceDescription: String {
+        switch self {
+        case .deepseek: "DeepSeek 云端模型"
+        case .claude: "Claude Code 配置的模型服务"
+        case .codex: "Codex CLI 配置的模型服务"
+        }
+    }
+}
+
+struct ReplyToolPicker: View {
+    @ObservedObject var model: PendingModel
+
+    var body: some View {
+        Picker("起草回复的 Agent", selection: Binding(get: { model.selectedTool?.id ?? "" }, set: { id in
+            if let tool = model.installations.first(where: { $0.id == id }) { model.selectTool(tool) }
+        })) {
+            if model.selectedTool == nil { Text("选择 Agent").tag("") }
+            ForEach(model.installations) { tool in
+                if model.installations.filter({ $0.kind == tool.kind }).count > 1 {
+                    Text("\(tool.kind.displayName) · \((tool.executable.path as NSString).abbreviatingWithTildeInPath)").tag(tool.id)
+                } else { Text(tool.kind.displayName).tag(tool.id) }
+            }
+        }
+        .disabled(model.onboardingBusy)
+    }
+}
 
 struct OnboardingView: View {
     @ObservedObject var model: PendingModel
     @AccessibilityFocusState private var titleFocused: Bool
 
     private var step: Int { model.onboarding.step }
-    private var tool: HarnessInstallation? { model.installations.first }
-    private var toolName: String { tool?.kind.displayName ?? "DeepSeek Harness" }
-    private var tested: Bool {
-        guard let tool else { return false }
-        return model.onboardingTestPassed
-            && model.onboarding.testedExecutable == tool.executable.path
-            && model.onboarding.executable == tool.executable.path
-    }
+    private var tool: HarnessInstallation? { model.selectedTool }
+    private var toolName: String { tool?.kind.displayName ?? "所选 Agent" }
+    private var tested: Bool { model.onboardingTestPassed }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,7 +90,7 @@ struct OnboardingView: View {
         case 1:
             return "Mailpipe 在你的 Mac 上保存来信和草稿，只把你授权的内容交给所选 Agent 写回复。你审阅草稿，再决定是否发送。"
         case 2:
-            return "点击连接，Agent 会用一封示例邮件试写回复。起草时，它会把邮件主题和正文发给 DeepSeek 云端模型，使用你的额度。"
+            return "连接时，Mailpipe 会用一封示例邮件试写回复。示例主题和正文将发给\(model.onboarding.harnessKind.modelServiceDescription)，会消耗你的额度。"
         case 3:
             return "在 Apple Mail 的「邮件」→「设置」→「扩展」中勾选 Mailpipe，再回来确认。"
         case 4:
@@ -104,28 +128,22 @@ struct OnboardingView: View {
     }
 
     @ViewBuilder private var connection: some View {
+        if model.installations.count > 1 || (tool == nil && !model.installations.isEmpty) {
+            ReplyToolPicker(model: model)
+        }
         if model.onboardingBusy {
             ProgressView("正在用示例邮件测试连接…").controlSize(.small)
             Button("取消测试", action: model.cancelOnboardingTest)
                 .modifier(WorkbenchActionStyle())
         } else if let tool {
             if tested {
-                Label("已连接到 \(toolName)", systemImage: "checkmark.circle")
-            } else if model.onboardingResult != nil {
-                Text("连接失败。请检查 \(toolName) 的登录状态和网络，再试一次。")
-                    .foregroundStyle(.secondary)
+                Label(model.connectionLabel, systemImage: "checkmark.circle")
             }
-            Button(tested ? "重新测试连接" : "连接 \(toolName)") {
-                if model.onboarding.testedExecutable == tool.executable.path {
-                    model.resetOnboardingTest()
-                }
-                model.onboarding.executable = tool.executable.path
-                model.testOnboarding()
-            }
+            Button(tested ? "重新测试连接" : "连接 \(toolName)", action: model.testOnboarding)
             .modifier(WorkbenchActionStyle())
             .help(tool.executable.path)
-        } else {
-            Text("这台 Mac 上还没找到 DeepSeek Harness。请先安装并登录。")
+        } else if model.installations.isEmpty {
+            Text("未找到可用的 Agent。请先安装并配置 Claude Code 或 DeepSeek Harness。")
             Button("重新查找 Agent", action: model.rediscoverTools)
                 .modifier(WorkbenchActionStyle())
         }
@@ -159,6 +177,9 @@ struct OnboardingView: View {
     private var review: some View {
         VStack(alignment: .leading, spacing: 9) {
             LabeledContent("起草回复的 Agent", value: toolName)
+            if let modelName = model.onboardingResult?.runs.last?.destination.model {
+                LabeledContent("试写使用的模型", value: modelName)
+            }
             if !model.onboarding.executable.isEmpty {
                 LabeledContent("安装位置") {
                     Text((model.onboarding.executable as NSString).abbreviatingWithTildeInPath)

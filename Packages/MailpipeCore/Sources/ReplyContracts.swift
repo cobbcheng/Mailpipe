@@ -157,7 +157,8 @@ public struct DataDestination: Codable, Equatable, Sendable {
     public init(messageRef: String, runID: String, taskKind: ReplyTaskKind, harness: HarnessKind,
                 vendor: String? = nil, model: String? = nil, evidence: DestinationEvidence = .unknown) throws {
         guard !messageRef.isEmpty, !runID.isEmpty,
-              evidence == .unknown ? (vendor == nil && model == nil) : (vendor?.isEmpty == false),
+              evidence == .unknown ? (vendor == nil && model == nil) : (vendor != nil || model != nil),
+              vendor == nil || vendor?.isEmpty == false,
               model == nil || model?.isEmpty == false else { throw MailpipeError.invalidInput }
         self.messageRef = messageRef; self.runID = runID; self.taskKind = taskKind
         self.harness = harness; self.vendor = vendor; self.model = model; self.evidence = evidence
