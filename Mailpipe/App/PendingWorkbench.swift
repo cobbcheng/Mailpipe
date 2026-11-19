@@ -39,11 +39,11 @@ final class PendingModel: ObservableObject {
     @Published private(set) var editorBuffers: [String: DraftEditBuffer] = [:]
     private var editTasks: [String: Task<Void, Never>] = [:]
     private var addressLoads: Set<String> = []
-    func loadCorrespondents(_ item: StoredReply) async {
-        let key = item.id + settings.revision.uuidString
-        guard !Task.isCancelled, item.correspondents == nil, let pipeline, addressLoads.insert(key).inserted else { return }
+    func loadCorrespondents(_ item: StoredReply, includeBody: Bool = false) async {
+        let key = item.id + settings.revision.uuidString + (includeBody ? ".detail" : "")
+        guard !Task.isCancelled, (item.correspondents == nil || (includeBody && item.displayBody == nil)), let pipeline, addressLoads.insert(key).inserted else { return }
         // One attempt per visible row/session, not a background mailbox scan.
-        try? await pipeline.loadCorrespondents(item.id)
+        try? await pipeline.loadCorrespondents(item.id, includeBody: includeBody)
         if Task.isCancelled {
             addressLoads.remove(key)
             return
@@ -627,7 +627,6 @@ private struct DraftDetail: View {
     @State private var showCompose = false
     @State private var composeRequest: MailComposeRequest?
     @State private var showCandidate = false
-    @State private var incomingExpanded = false
     @State private var editorHeight: CGFloat = 96
     @State private var locateRequest = 0
     @State private var focusRequest = 0
@@ -635,8 +634,7 @@ private struct DraftDetail: View {
     private var bodyText: String { model.editorBody(item) }
     private var warnings: DraftContentWarnings { DraftContentWarnings(body: bodyText) }
     private var attention: DraftAttention { DraftAttention.resolve(in: bodyText) }
-    private var incoming: IncomingPreview { IncomingPreview(body: item.input.body, expanded: incomingExpanded) }
-    private var canCollapseIncoming: Bool { IncomingPreview(body: item.input.body, expanded: false).omitsRemainder }
+    private var incoming: String { item.displayBody ?? item.input.body }
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
     private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved"].contains(item.error ?? "") }
     private var hasDraft: Bool { item.draft != nil || item.editedBody != nil || !bodyText.isEmpty }
@@ -676,7 +674,7 @@ private struct DraftDetail: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .onAppear { model.openEditor(item) }
-        .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item) }
+        .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item, includeBody: true) }
         .alert("草稿含未确认内容。仍要复制吗？", isPresented: $confirmCopy) {
             Button("返回编辑", role: .cancel) { focusRequest += 1 }
             Button("仍要复制") { copyReply() }
@@ -702,14 +700,13 @@ private struct DraftDetail: View {
             }.padding(16)
             Divider()
             VStack(alignment: .leading, spacing: 10) {
-                Text(incoming.text.isEmpty ? (item.state == .awaitingBody ? "等待 Mail 提供邮件正文。收到正文前不会调用 AI，也无法重新生成。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming.text)
+                if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
+                    Text("完整原文尚未取得，以下为已保存的正文。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text(incoming.isEmpty ? (item.state == .awaitingBody ? "等待 Mail 提供邮件正文。收到正文前不会调用 AI，也无法重新生成。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
                     .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if !incomingExpanded && incoming.omitsRemainder {
-                    Button("展开全文") { incomingExpanded = true }.buttonStyle(.borderless)
-                } else if incomingExpanded && canCollapseIncoming {
-                    Button("收起") { incomingExpanded = false }.buttonStyle(.borderless)
-                }
             }.padding(16)
         }
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))

@@ -220,6 +220,21 @@ final class MailBodyTests: XCTestCase {
         }
     }
 
+    func testDisplayPreservesLongTextAndParagraphBreaks() throws {
+        let history = String(repeating: "quoted history ", count: 20_000)
+        let body = "First line\r\nSecond line\r\n\r\n\r\nOn Friday, Ada wrote:\r\n> " + history + "END"
+        XCTAssertEqual(try PlainMailBody.displayText(plain(body)), body.replacingOccurrences(of: "\r\n", with: "\n"))
+        let model = try PlainMailBody.decode(plain(body))
+        XCTAssertLessThanOrEqual(model.utf8.count, MailBodyLimits.modelBudget)
+        XCTAssertFalse(model.contains("END"))
+    }
+
+    func testDisplayConvertsHTMLDocumentWithPlainContentType() throws {
+        let html = "<html><body><p>One<br>Two</p><p>Three</p></body></html>"
+        XCTAssertEqual(try PlainMailBody.displayText(plain(html)), "One\nTwo\n\nThree")
+        XCTAssertEqual(try PlainMailBody.decode(plain(html)), html)
+    }
+
     private func plain(_ body: String) -> Data {
         Data(("Content-Type: text/plain; charset=utf-8\r\n\r\n" + body).utf8)
     }

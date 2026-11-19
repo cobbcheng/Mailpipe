@@ -90,6 +90,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var error: String?
     public var sourceDigest: String?
     public var sourceEvidence: MailSourceEvidence?
+    public var displayBody: String?
     public var correspondents: MailCorrespondents?
     public var composeHandoff: MailComposeHandoff?
     public var accountID: String?
@@ -313,6 +314,7 @@ public final class PipelineStore {
             messageID: capture.messageID, input: MailInput(messageRef: id, subject: capture.subject, body: body),
             state: bodyIssue != nil ? .needsReview : (body.isEmpty && evidence == nil ? .awaitingBody : .awaitingAccount), error: bodyIssue)
         item.sourceDigest = capture.raw.flatMap(mailSourceDigest)
+        if !body.isEmpty, let raw = capture.raw { item.displayBody = try? PlainMailBody.displayText(raw) }
         item.sourceEvidence = evidence
         item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
         item.syntheticAuthorized = syntheticGrant

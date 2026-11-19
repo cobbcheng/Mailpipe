@@ -230,9 +230,22 @@ public enum PlainMailBody {
     }
 
     public static func extract(_ raw: Data) throws -> MailBodyExtraction {
+        let (readable, entity) = try readableBody(raw, forDisplay: false)
+        let bounded = BodyBound.fit(readable, attachments: entity.attachments, alreadyCut: entity.truncated)
+        guard !bounded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MailBodyRejection.emptyBody
+        }
+        return MailBodyExtraction(text: bounded.text, truncated: bounded.truncated, attachments: entity.attachments)
+    }
+
+    public static func displayText(_ raw: Data) throws -> String {
+        try readableBody(raw, forDisplay: true).0
+    }
+
+    private static func readableBody(_ raw: Data, forDisplay: Bool) throws -> (String, EntityResult) {
         guard raw.count <= MailBodyLimits.rawCeiling else { throw MailBodyRejection.messageTooLarge }
         var counter = 0
-        let entity = try MIMEEntity.parse(raw, depth: 0, defaultType: "text/plain", counter: &counter)
+        let entity = try MIMEEntity(forDisplay: forDisplay).parse(raw, depth: 0, defaultType: "text/plain", counter: &counter)
         let readable = entity.body.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
         if readable.isEmpty {
             if entity.encrypted { throw MailBodyRejection.encryptedContent }
@@ -247,11 +260,7 @@ public enum PlainMailBody {
             if entity.calendar { throw MailBodyRejection.calendarOnly }
             throw MailBodyRejection.emptyBody
         }
-        let bounded = BodyBound.fit(readable, attachments: entity.attachments, alreadyCut: entity.truncated)
-        guard !bounded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw MailBodyRejection.emptyBody
-        }
-        return MailBodyExtraction(text: bounded.text, truncated: bounded.truncated, attachments: entity.attachments)
+        return (readable, entity)
     }
 }
 
@@ -400,8 +409,10 @@ private struct EntityResult {
     }
 }
 
-private enum MIMEEntity {
-    static func parse(_ data: Data, depth: Int, defaultType: String, counter: inout Int) throws -> EntityResult {
+private struct MIMEEntity {
+    let forDisplay: Bool
+
+    func parse(_ data: Data, depth: Int, defaultType: String, counter: inout Int) throws -> EntityResult {
         counter += 1
         if counter > MailBodyLimits.maxParts || depth > MailBodyLimits.maxDepth { throw MailBodyRejection.malformedMIME }
         let split = try splitHeaders(data)
@@ -452,17 +463,21 @@ private enum MIMEEntity {
         return EntityResult(mediaType: type, unsupported: true)
     }
 
-    static func textPart(_ payload: Data, headers: MIMEHeaders) throws -> EntityResult {
+    func textPart(_ payload: Data, headers: MIMEHeaders) throws -> EntityResult {
         if payload.contains(0) { throw MailBodyRejection.malformedMIME }
         let charset = try charsetFor(headers: headers, payload: payload)
-        let decoded = try CharsetText.decode(payload, charset: charset, limit: MailBodyLimits.extractCap)
+        let limit = forDisplay ? max(1, payload.count * 4) : MailBodyLimits.extractCap
+        let decoded = try CharsetText.decode(payload, charset: charset, limit: limit)
         let converted: String
-        if headers.mediaType == "text/html" {
+        let htmlDocument = forDisplay && decoded.text.range(
+            of: #"^\s*(?:<!doctype\s+html\b|<html(?:\s|>))"#,
+            options: [.regularExpression, .caseInsensitive]) != nil
+        if headers.mediaType == "text/html" || htmlDocument {
             converted = HTMLText.convert(decoded.text)
         } else {
             converted = try Armor.unwrap(decoded.text)
         }
-        let text = BodyBound.normalize(converted)
+        let text = forDisplay ? converted.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n") : BodyBound.normalize(converted)
         if text.contains("\0") { throw MailBodyRejection.malformedMIME }
         var result = EntityResult(mediaType: headers.mediaType, truncated: decoded.truncated)
         if headers.mediaType == "text/html" {
@@ -475,7 +490,7 @@ private enum MIMEEntity {
         return result
     }
 
-    static func alternative(_ children: [EntityResult], mediaType: String) -> EntityResult {
+    func alternative(_ children: [EntityResult], mediaType: String) -> EntityResult {
         var result = EntityResult(mediaType: mediaType)
         for child in children { child.mergedFlags(into: &result) }
         let plain = children.compactMap(\.plain).first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -487,7 +502,7 @@ private enum MIMEEntity {
         return result
     }
 
-    static func mixed(_ children: [EntityResult], mediaType: String) -> EntityResult {
+    func mixed(_ children: [EntityResult], mediaType: String) -> EntityResult {
         var result = EntityResult(mediaType: mediaType)
         var texts: [String] = []
         for child in children {
@@ -504,7 +519,7 @@ private enum MIMEEntity {
         return result
     }
 
-    static func parts(_ payload: Data, headers: MIMEHeaders, depth: Int, counter: inout Int, defaultChild: String) throws -> [EntityResult] {
+    func parts(_ payload: Data, headers: MIMEHeaders, depth: Int, counter: inout Int, defaultChild: String) throws -> [EntityResult] {
         guard let boundary = headers.parameters["boundary"], !boundary.isEmpty, boundary.utf8.count <= 70 else {
             throw MailBodyRejection.malformedMIME
         }
@@ -520,7 +535,7 @@ private enum MIMEEntity {
         return children
     }
 
-    static func note(_ headers: MIMEHeaders) -> MailAttachmentNote {
+    func note(_ headers: MIMEHeaders) -> MailAttachmentNote {
         MailAttachmentNote(filename: headers.filename, mediaType: headers.mediaType)
     }
 }
