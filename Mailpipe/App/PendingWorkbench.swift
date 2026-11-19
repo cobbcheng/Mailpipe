@@ -44,7 +44,11 @@ final class PendingModel: ObservableObject {
     @Published var notice: String?
     @Published var undoDiscardID: String?
     private var noticeTask: Task<Void, Never>?
-    var toolName: String { installations.first { $0.executable.path == settings.executable }?.kind.displayName ?? "AI 工具" }
+    var toolName: String {
+        installations.first { $0.executable.path == settings.executable }?.kind.displayName
+            ?? settings.executable.map { ($0 as NSString).abbreviatingWithTildeInPath }
+            ?? "Agent"
+    }
     func notify(_ text: String) { notice = text }
     @Published private(set) var editorBuffers: [String: DraftEditBuffer] = [:]
     private var editTasks: [String: Task<Void, Never>] = [:]
@@ -118,7 +122,7 @@ final class PendingModel: ObservableObject {
             guard flushEditor(id) else { return }
             try pipeline.regenerate(id, approvedPullRequest: ReplyDraftRequest.linkedPullRequest(in: item.input.body)); refresh()
         }
-        catch { issue = "无法重新生成。请核对暂停、来信处理授权、工具和邮件有效期；每封最多重新生成三次。" }
+        catch { issue = "无法重新生成。请检查暂停状态、来信授权、Agent 连接和邮件有效期。每封最多重新生成三次。" }
     }
     @Published var composeBusy = false
     func prepareCompose(_ item: StoredReply) async -> MailComposeRequest? {
@@ -203,7 +207,7 @@ final class PendingModel: ObservableObject {
                     try? await Task.sleep(for: .seconds(1))
                 }
             }
-        } catch { issue = "无法打开持久化队列：\(Self.code(error))" }
+        } catch { issue = "无法打开本机的回复队列（\(Self.code(error))）。" }
     }
     @discardableResult func saveOnboarding() -> Bool {
         do {
@@ -254,7 +258,7 @@ final class PendingModel: ObservableObject {
     }
     private func saveConfiguration(updating: Bool) {
         guard !onboardingBusy, (onboarding.isSuggestionsOnly || hasSharedInbox), let session = onboardingSession, let pipeline else {
-            onboardingIssue = "共享容器不可用；可保存草案，不能授权采集。"; return
+            onboardingIssue = "无法访问 Mail 扩展的共享目录。可以保存设置进度，或改用手动粘贴。"; return
         }
         guard saveOnboarding() else { return }
         onboardingIssue = nil; onboardingBusy = true
@@ -273,7 +277,7 @@ final class PendingModel: ObservableObject {
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding()
                 refresh()
-                onboardingIssue = active.suggestionsOnly == true ? "逐封建议已就绪；每封提交前需确认内容和工具。" : active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
+                onboardingIssue = active.suggestionsOnly == true ? "已设为手动粘贴。每封来信由你确认后交给 Agent。" : active.paused ? "配置已保存，来信处理仍处于暂停状态。" : "已授权 Agent 为新来信起草回复，等待首封符合条件的来信。"
             } catch is CancellationError {
                 return
             } catch { onboardingIssue = "授权未完成，原设置保留或等待同步：\(Self.code(error))" }
@@ -286,7 +290,7 @@ final class PendingModel: ObservableObject {
             guard let pipeline else { return false }
             selectedID = try pipeline.enqueueManual(id: id, subject: subject, body: body, executable: executable)
             refresh(); return true
-        } catch { issue = "逐封确认未完成：\(Self.code(error))"; return false }
+        } catch { issue = "提交这封来信失败（\(Self.code(error))）。"; return false }
     }
     func openExtensionSettings() {
         guard let url = URL(string: "mail-pref-pane://extensionspref") else { return }
@@ -383,7 +387,7 @@ struct PendingMenu: View {
                     Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
                 }
             }
-            Text("待处理 \(model.unreadCount)")
+            Text("未读草稿 \(model.unreadCount)")
             Divider()
             Button("打开工作台") { openWindow.openMailpipe() }
         } else {
@@ -426,12 +430,12 @@ struct PendingWorkbench: View {
             VStack(spacing: 0) {
                 if model.needsPermissionRecovery {
                     HStack {
-                        Label("请在设置中确认来信处理范围和 AI 工具。已有草稿保留。", systemImage: "exclamationmark.shield")
+                        Label("请在设置中确认来信范围和 Agent。已有草稿仍保存在本机。", systemImage: "exclamationmark.shield")
                         Spacer(); SettingsButton()
                     }.padding().background(Color(nsColor: .controlBackgroundColor))
                 } else if model.settings.suggestionsOnly == true {
                     HStack {
-                        Text("逐封建议：提交前由你确认内容与工具。").foregroundStyle(.secondary)
+                        Text("手动粘贴的来信，由你逐封确认。").foregroundStyle(.secondary)
                         Spacer()
                         Button("添加来信…") { showManual = true }.disabled(model.settings.paused)
                     }.padding()
@@ -449,7 +453,7 @@ struct PendingWorkbench: View {
                     VStack(spacing: 12) {
                         Image(systemName: "text.bubble").font(.system(size: 36)).foregroundStyle(.secondary)
                         Text(visible.isEmpty ? "暂时没有草稿" : "选择一封来信").font(.title2)
-                        Text("审阅来信，编辑回复，再复制到 Mail。") .foregroundStyle(.secondary)
+                        Text("在这里审阅 Agent 起草的回复，再到 Apple Mail 发送。").foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if let notice = model.notice {
@@ -584,9 +588,9 @@ private struct DraftDetail: View {
             Button("重新生成") { model.regenerate(item.id) }
         } message: {
             if let link = ReplyDraftRequest.linkedPullRequest(in: item.input.body) {
-                Text("允许 Mailpipe 使用当前 GitHub 账户读取此 PR 的变更，交给 DeepSeek 核查并重新起草：\(link)。成功后覆盖当前回复。")
+                Text("继续即允许 Mailpipe 使用你的 GitHub 账户读取 \(link) 的变更，交给 DeepSeek Harness 核对并起草。新草稿会替换当前回复。")
             } else {
-                Text("新稿生成成功后会覆盖当前回复，会消耗工具额度。")
+                Text("Agent 会再次调用模型，消耗你的额度。新草稿生成后会替换当前回复。")
             }
         }
     }
@@ -614,7 +618,7 @@ private struct DraftDetail: View {
                 Text("完整原文尚未取得，以下为已保存的正文。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text(incoming.isEmpty ? (item.state == .awaitingBody ? "等待 Mail 提供邮件正文。收到正文前不会调用 AI，也无法重新生成。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
+            Text(incoming.isEmpty ? (item.state == .awaitingBody ? "正在等待 Apple Mail 提供正文。收到后才能交给 Agent 起草回复。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
                 .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -676,24 +680,27 @@ private struct DraftDetail: View {
                 .keyboardShortcut("c", modifiers: [.command, .shift])
             Button("重新生成") { confirmRegeneration = true }.disabled(!canRegenerate)
             Menu {
-                Button("查看处理说明 / 数据去向") { showExplanation = true }
+                Button("查看数据去向") { showExplanation = true }
                 Divider()
                 Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
             } label: { Label("更多草稿操作", systemImage: "ellipsis").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
                 .modifier(WorkbenchActionStyle(circular: true)).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
             Spacer(minLength: 0)
-            Button { showExplanation = true } label: { Label("查看处理说明与数据去向", systemImage: "info").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
-                .modifier(WorkbenchActionStyle(circular: true)).accessibilityLabel("查看处理说明与数据去向")
+            Button { showExplanation = true } label: { Label("查看数据去向", systemImage: "info").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
+                .modifier(WorkbenchActionStyle(circular: true)).accessibilityLabel("查看数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
         }.modifier(WorkbenchActionStyle())
     }
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("处理说明").font(.headline)
+            Text("这封来信的数据去向").font(.headline)
             if let run = item.runs.last {
-                Text("本次经 \(run.destination.harness.displayName) 处理。邮件会到达该工具配置的模型。Mailpipe 不设服务器。")
-            } else { Text("尚未调用 AI 工具。") }
-            Text("点击“去发送”会打开 Apple Mail 撰写窗口，由你检查并发送。复制回复仅复制当前正文。")
+                Text("本次选择的 Agent 是 \(run.destination.harness.displayName)。")
+                if let model = run.destination.model, let vendor = run.destination.vendor {
+                    Text("模型服务：\(vendor) · \(model)")
+                } else { Text("本次记录未确认具体模型。") }
+            } else { Text("这封来信尚无 Agent 调用记录。") }
+            Text("来信和草稿由 Mailpipe 保存在这台 Mac 上。点「去发送」可在 Apple Mail 打开撰写窗口，由你检查并发送。")
             if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }
             if let readDiff = item.runs.last?.readPullRequestDiff {
                 Text(readDiff ? "核查工具已读取 PR 代码差异。" : "核查工具未取得可读的 PR 代码差异。")
@@ -710,18 +717,18 @@ private struct DraftDetail: View {
     private func errorDescription(_ code: String) -> String? {
         if let rejection = MailBodyRejection(rawValue: code) { return rejection.reviewLabel }
         switch code {
-        case "contentExpired": return "来信已超过处理有效期，请重新确认内容后使用逐封建议。"
+        case "contentExpired": return "来信已超过处理有效期。如需回复，请使用手动粘贴，重新确认这封来信。"
         case "policyChanged", "revoked": return "处理授权已变更，请在设置中核对。"
         case "identitySourceMismatch": return "已找到原邮件，但采集内容与 Mail 原文不一致。请打开原邮件核对。"
         case "identityUnresolved", "identityUnavailable", "identityAmbiguous": return nil
-        case "invalidOutput": return "AI 输出未通过校验。此记录没有保存具体原因。"
-        case "outputJSON": return "AI 返回的内容无法解析为 JSON 对象。"
-        case "outputFields": return "AI 返回的字段、类型或枚举值不符合要求。"
-        case "outputReference": return "AI 返回的版本或邮件、请求标识与本次请求不符。"
-        case "outputSummary": return "AI 返回的摘要条数或长度不符合要求。"
-        case "outputEvidence": return "AI 返回的引文无法与原文对应，或超出了引文限制。"
+        case "invalidOutput": return "Agent 返回的内容未通过校验。这条记录没有具体原因。"
+        case "outputJSON": return "Agent 返回的内容无法解析为 JSON 对象。"
+        case "outputFields": return "Agent 返回的字段、类型或枚举值不符合要求。"
+        case "outputReference": return "Agent 返回的版本、邮件标识或请求标识与本次请求不符。"
+        case "outputSummary": return "Agent 返回的摘要条数或长度不符合要求。"
+        case "outputEvidence": return "Agent 返回的引文无法与原文对应，或超出了引文限制。"
         case "cancelled": return "任务已取消，当前编辑保留。"
-        default: return "处理未成功，当前编辑保留。请检查 AI 工具连接。"
+        default: return "回复未能生成。你的编辑已保留，请检查 Agent 连接。"
         }
     }
 }

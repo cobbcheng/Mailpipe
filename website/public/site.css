@@ -90,6 +90,7 @@ h1, h2, h3 { font-family: var(--display); color: var(--text); font-weight: 500; 
 
 h1 {
   max-width: 880px;
+  text-wrap: balance;
   font-size: 72px;
   font-weight: 600;
   letter-spacing: -0.035em;

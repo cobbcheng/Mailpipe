@@ -15,8 +15,8 @@ struct ManualSuggestionView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(reviewing ? "确认这一封的内容与去向" : "逐封建议").font(.title2)
-            Text("仅处理你粘贴的内容，不读取 Mail，不移动、标记或发送邮件。")
+            Text(reviewing ? "把这封来信交给 Agent？" : "粘贴需要回复的来信").font(.title2)
+            Text("确认后，Mailpipe 会在这台 Mac 上保存你粘贴的内容。此操作无需读取 Apple Mail。")
             if reviewing {
                 ScrollView { VStack(alignment: .leading, spacing: 12) {
                     Text(subject).font(.headline)
@@ -27,8 +27,8 @@ struct ManualSuggestionView: View {
                 Text("邮件正文（纯文本，最多 16 KiB）")
                 TextEditor(text: $bodyText).frame(minHeight: 180).accessibilityLabel("邮件正文")
             }
-            Text("目标：\(model.toolName)。邮件会到达该工具配置的模型。")
-            Text("一次调用，消耗所选工具额度。不自动重试。")
+            Text("Mailpipe 只把这封来信的主题和正文交给你选择的 \(model.toolName)。")
+            Text("Agent 会调用 DeepSeek 云端模型起草一次，消耗你的额度。回复由你发送。")
             if reviewing && reviewedRevision != model.settings.revision { Text("设置已变更，请返回重新预览和确认。") }
             if let issue = model.issue { Text(issue).foregroundStyle(.secondary) }
             HStack {
@@ -36,11 +36,11 @@ struct ManualSuggestionView: View {
                 Spacer()
                 if reviewing {
                     Button("返回修改") { reviewing = false }
-                    Button("确认内容与工具，仅提交这一封") {
+                    Button("确认并起草回复") {
                         if reviewedRevision == model.settings.revision && model.confirmManual(id: id, subject: subject, body: bodyText, executable: executable) { dismiss() }
                     }.buttonStyle(.borderedProminent).disabled(model.settings.paused || !valid || model.settings.suggestionsOnly != true || reviewedRevision != model.settings.revision)
                 } else {
-                    Button("预览内容与去向") { reviewedRevision = model.settings.revision; reviewing = true }.buttonStyle(.borderedProminent).disabled(!valid)
+                    Button("核对来信与 Agent") { reviewedRevision = model.settings.revision; reviewing = true }.buttonStyle(.borderedProminent).disabled(!valid)
                 }
             }
         }.padding(24).frame(width: 640, height: 540)
