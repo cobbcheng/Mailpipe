@@ -180,3 +180,6 @@ Mail 与更新后的宿主已恢复运行。
 
 同日更新 build 22，修复查询子进程反复显示 Dock 图标。
 签名、双架构与安装路径已核对。见[实机记录](validation/2026-11-19-workbench-responsiveness.md#build-22-的-dock-图标)。
+
+本地测试包随后从 build 23 更新至 build 24。
+Dock 已能重开工作台，见[窗口验收](validation/2026-11-19-workbench-responsiveness.md#build-24-的-dock-重开)。
