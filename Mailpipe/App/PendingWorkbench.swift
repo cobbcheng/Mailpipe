@@ -742,10 +742,10 @@ private struct DraftDetail: View {
                 Button("查看处理说明 / 数据去向") { showExplanation = true }
                 Divider()
                 Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
-            } label: { Label("更多草稿操作", systemImage: "ellipsis").labelStyle(.iconOnly) }
+            } label: { Label("更多草稿操作", systemImage: "ellipsis").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
                 .modifier(DraftActionStyle(circular: true)).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
             Spacer(minLength: 0)
-            Button { showExplanation = true } label: { Label("查看处理说明与数据去向", systemImage: "info").labelStyle(.iconOnly) }
+            Button { showExplanation = true } label: { Label("查看处理说明与数据去向", systemImage: "info").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
                 .modifier(DraftActionStyle(circular: true)).accessibilityLabel("查看处理说明与数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
         }.modifier(DraftActionStyle()).controlSize(.large)
