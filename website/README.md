@@ -6,10 +6,11 @@
 
 ## 图片来源
 
-- 0.0.5（build 32）的截图来自源码 `fa5e337` 构建的原生界面。
-- `public/detail.jpg` 展示工作坊设备来信和逐项回复的示例草稿。`public/detail-mobile.jpg` 来自缩窄后重拍的详情区。
-- `public/workbench.jpg` 展示首次设置时填入完整主题的步骤。
-- 预览使用独立队列、五封合成来信和 example.com 地址。
+- 截图来自 0.1.0（build 34，源码 `f7589cd`）的隔离预览副本。
+- `public/screenshots/` 按 en、zh、es 存放三种语言的实拍图。
+- `detail.jpg` 展示工作台，`detail-mobile.jpg` 展示窄窗口的草稿详情。
+- `scope.jpg` 展示首次设置时按完整主题限定来信的步骤。
+- 每种语言使用独立队列、本地化合成邮件和 example.com 地址。
 - 图标来自仓库的 `design/icon/png/icon_128.png`。
 
 ### Agent 标识

@@ -11,11 +11,12 @@ const agents = [
 ];
 const downloadURL = `/downloads/${release.filename}`;
 const fileSize = `${(release.bytes / 1_000_000).toFixed(2)} MB`;
-const previewImage = `${origin}/detail.jpg?v=${release.build}`;
 
 const languages = { en: ["/", "English"], "zh-CN": ["/zh/", "中文"], es: ["/es/", "Español"] };
 function homepage(language = "en") {
   const copy = messages[language];
+  const screenshots = `/screenshots/${language === "zh-CN" ? "zh" : language}`;
+  const previewImage = `${origin}${screenshots}/detail.jpg`;
   const pageURL = origin + languages[language][0];
   const description = copy.description.replace("{agents}", agents.map(agent => agent.name).join(", "));
   const app = {
@@ -82,8 +83,8 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
       <figure id="workbench" class="showcase">
         <div class="app-window">
           <picture>
-            <source media="(max-width: 600px)" srcset="/detail-mobile.jpg?v=${release.build}" width="838" height="724">
-            <img src="/detail.jpg?v=${release.build}" width="1648" height="864" alt="${copy.detailAlt}" fetchpriority="high">
+            <source media="(max-width: 600px)" srcset="${screenshots}/detail-mobile.jpg" width="838" height="790">
+            <img src="${screenshots}/detail.jpg" width="1648" height="864" alt="${copy.detailAlt}" fetchpriority="high">
           </picture>
         </div>
         <figcaption>${copy.caption}</figcaption>
@@ -99,7 +100,7 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
           <p>${copy.scopeAll}</p>
         </div>
         <figure>
-          <img loading="lazy" src="/workbench.jpg?v=${release.build}" width="960" height="884" alt="${copy.scopeAlt}">
+          <img loading="lazy" src="${screenshots}/scope.jpg" width="960" height="884" alt="${copy.scopeAlt}">
         </figure>
       </div>
     </div>
