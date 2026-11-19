@@ -18,6 +18,8 @@ nonisolated final class MailExtension: NSObject, MEExtension {
 
 nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
     private let logger = Logger(subsystem: "com.mailpipe.app", category: "identity-probe")
+    var requiredHeaders: [String] { InboundMailFilter.requiredHeaders + ["message-id"] }
+
     func decideAction(for message: MEMessage, completionHandler: @escaping (MEMessageActionDecision?) -> Void) {
         var decision: MEMessageActionDecision?
         defer { completionHandler(decision) }
@@ -33,27 +35,9 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
         // Production capture is local-only; the host must resolve an authorized account before dispatch.
         do {
             let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
-            if let permission = try inbox.permission(), permission.accepts(message.subject) {
-                let ids = (message.headers ?? [:]).filter { $0.key.lowercased() == "message-id" }.flatMap(\.value)
-                let messageID = ids.count == 1 ? ids[0].trimmingCharacters(in: CharacterSet(charactersIn: "<> ")) : nil
-                if let raw = message.rawData {
-                    let oversized = raw.count > MailBodyLimits.rawCeiling
-                    try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID,
-                        raw: oversized ? nil : raw, issue: oversized ? MailBodyRejection.messageTooLarge.rawValue : nil))
-                } else if permission.delivery == .mailKit {
-                    if messageID != nil {
-                        _ = try inbox.publishBodyRequest(permission: permission, subject: message.subject, messageID: messageID) {
-                            try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID, raw: nil))
-                        }
-                    }
-                    decision = .invokeAgainWithBody
-                } else if try inbox.publishBodyRequest(permission: permission, subject: message.subject, messageID: messageID, publish: {
-                    try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID, raw: nil))
-                }) {
-                    decision = .invokeAgainWithBody
-                } else if messageID == nil {
-                    try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: nil, raw: nil, issue: "missingMessageID"))
-                }
+            if try inbox.receiveMailKitMessage(subject: message.subject, sender: message.fromAddress.addressString,
+                                               headers: message.headers ?? [:], rawData: message.rawData) == .requestBody {
+                decision = .invokeAgainWithBody
             }
         } catch {
             logger.error("capture_failed")
