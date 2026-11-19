@@ -129,18 +129,16 @@ public final class ReplyPipeline {
               current.displayedSubject == fresh.subject, current.displayedBody == fresh.body else {
             throw MailComposeError.changedSinceConfirmation
         }
-        if let handoff = current.composeHandoff {
-            if handoff.fingerprint == fresh.fingerprint, let receipt = handoff.receipt { return receipt }
-            throw MailComposeError.alreadyAttempted
-        }
-        // Persist before crossing the process boundary. Any throw/crash remains a non-replayable attempt.
-        current.composeHandoff = MailComposeHandoff(fingerprint: fresh.fingerprint)
+        // Each explicit click is a new compose request. Never replay one on startup.
+        let attempt = MailComposeHandoff(fingerprint: fresh.fingerprint)
+        current.composeHandoff = attempt
         try store.save(current)
         let receipt: MailComposeReceipt
         do { receipt = try await open(fresh) }
         catch { throw MailComposeError.outcomeUnknown }
         guard !receipt.outgoingID.isEmpty, var latest = try store.record(fresh.recordID),
-              latest.composeHandoff?.fingerprint == fresh.fingerprint else { throw MailComposeError.outcomeUnknown }
+              latest.composeHandoff?.fingerprint == fresh.fingerprint,
+              latest.composeHandoff?.startedAt == attempt.startedAt else { throw MailComposeError.outcomeUnknown }
         latest.composeHandoff?.receipt = receipt
         try store.save(latest)
         return receipt

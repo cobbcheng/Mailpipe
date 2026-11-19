@@ -125,7 +125,6 @@ final class PendingModel: ObservableObject {
             _ = try await pipeline.openMailCompose(confirmedRequest: request,
                 senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) },
                 open: { try AppleMailComposer.open($0) })
-            notify("撰写窗口已交给 Mail，尚未发送。请在 Mail 中核对收件人和内容，再决定是否发送。")
             refresh(); return true
         } catch {
             notify("未能确认撰写窗口。请先查看 Mail，避免重复创建；原邮件或授权变化时需重新确认。当前编辑已保留。")
@@ -638,10 +637,6 @@ private struct DraftDetail: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 attentionLine
-                if let handoff = item.composeHandoff {
-                    Text(handoff.receipt == nil ? "已尝试打开 Mail，但结果待核对。请先检查 Mail，避免重复创建。" : "已创建 Mail 撰写窗口，后续请在 Mail 中核对和编辑；尚未发送。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
                 if isExpired {
                     Text("原信或授权需要重新核对。当前编辑保留。")
                         .font(.caption).foregroundStyle(.secondary).padding(.top, 6)
@@ -721,9 +716,9 @@ private struct DraftDetail: View {
                 Task {
                     if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
-            } label: { Label(model.composeBusy ? "正在核对…" : (item.composeHandoff == nil ? "去发送" : "已尝试交给 Mail"), systemImage: "envelope") }
+            } label: { Label("去发送", systemImage: "envelope") }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.composeBusy || item.composeHandoff != nil || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button {
                 if warnings.requiresCopyConfirmation { confirmCopy = true }
                 else { copyReply() }

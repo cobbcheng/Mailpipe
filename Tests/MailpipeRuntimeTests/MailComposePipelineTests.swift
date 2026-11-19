@@ -19,7 +19,7 @@ import MailpipeCore
         return (store, inbox, id)
     }
     func sender(_ account: String, _ preferred: [String]) throws -> String { "me@example.com" }
-    func testConfirmedHandoffIsPersistedAndRepeatedClickDoesNotOpenAgain() async throws {
+    func testEachExplicitClickOpensCompose() async throws {
         let (store, inbox, id) = try fixture(); let raw = raw
         let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, _ in VerifiedMail(accountID: "a", localID: "1", source: raw) })
         let request = try await pipeline.prepareMailCompose(id: id, subject: "Re: Original", body: "中文回复\n第二行", senderAddress: sender)
@@ -33,19 +33,23 @@ import MailpipeCore
             }
             XCTAssertEqual(receipt.outgoingID, "42")
         }
-        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(calls, 2)
         XCTAssertTrue(try XCTUnwrap(store.record(id)).runs.isEmpty)
     }
-    func testUnknownOutcomeCannotBlindRetry() async throws {
+    func testUnknownOutcomeAllowsAnotherExplicitClick() async throws {
         let (store, inbox, id) = try fixture(); let raw = raw
         let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, _ in VerifiedMail(accountID: "a", localID: "1", source: raw) })
         let request = try await pipeline.prepareMailCompose(id: id, subject: "Re: Original", body: "中文回复\n第二行", senderAddress: sender)
         var calls = 0
         do { _ = try await pipeline.openMailCompose(confirmedRequest: request, senderAddress: sender) { _ in calls += 1; throw MailComposeError.outcomeUnknown }; XCTFail() }
         catch { XCTAssertEqual(error as? MailComposeError, .outcomeUnknown) }
-        do { _ = try await pipeline.openMailCompose(confirmedRequest: request, senderAddress: sender) { _ in calls += 1; return MailComposeReceipt(outgoingID: "bad") }; XCTFail() }
-        catch { XCTAssertEqual(error as? MailComposeError, .alreadyAttempted) }
         XCTAssertEqual(calls, 1)
+        let receipt = try await pipeline.openMailCompose(confirmedRequest: request, senderAddress: sender) { _ in
+            calls += 1
+            return MailComposeReceipt(outgoingID: "second")
+        }
+        XCTAssertEqual(receipt.outgoingID, "second")
+        XCTAssertEqual(calls, 2)
     }
     func testAsyncChangesPreventOpening() async throws {
         for change in ["pause", "discard", "cancel", "edit", "revoke"] {
