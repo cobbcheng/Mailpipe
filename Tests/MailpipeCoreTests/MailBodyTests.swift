@@ -20,6 +20,19 @@ final class MailBodyTests: XCTestCase {
         }
     }
 
+    func testMailKitAlternativeWithoutBoundaryParameter() throws {
+        let body = "--alt\r\nContent-Type: text/plain\r\n\r\nHello\r\n--alt--\r\n"
+        let header = "Content-Type: multipart/alternative"
+        let raw = Data((header + "\r\n\r\n" + body).utf8)
+        XCTAssertThrowsError(try PlainMailBody.decode(raw))
+        XCTAssertEqual(try PlainMailBody.decode(raw, fromMailKit: true), "Hello")
+        XCTAssertEqual(try PlainMailBody.displayText(raw, fromMailKit: true), "Hello")
+        for invalid in [header + "; boundary=other\r\n\r\n" + body,
+                        header + "\r\n\r\n" + body.replacingOccurrences(of: "--alt--", with: "--other--")] {
+            XCTAssertThrowsError(try PlainMailBody.decode(Data(invalid.utf8), fromMailKit: true))
+        }
+    }
+
     func testPlainUTF8QuotedPrintableAndBase64() throws {
         XCTAssertEqual(try text("plain-utf8"), "Please reply about Friday.")
         XCTAssertEqual(try text("plain-qp"), "Please reply")

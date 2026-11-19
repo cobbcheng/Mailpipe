@@ -50,15 +50,6 @@ final class DraftEditingTests: XCTestCase {
         XCTAssertEqual(buffer.state, .saved)
         XCTAssertTrue(buffer.persist { _ in XCTFail("No write needed") })
     }
-    func testPlaceholderAndUncertaintyConventions() {
-        for body in ["【待补充：当前进展】", "【待确认：发布标准】", "【待补充】", "需要先核实，目前暂无法给出结论。"] {
-            XCTAssertTrue(DraftContentWarnings(body: body).requiresCopyConfirmation, body)
-        }
-        XCTAssertFalse(DraftContentWarnings(body: "已收到示例项目简报，谢谢。").requiresCopyConfirmation)
-        XCTAssertTrue(DraftContentWarnings(body: "【待补充：…】").needsSupplement)
-        XCTAssertFalse(DraftContentWarnings(body: "【待补充：…】").needsConfirmation)
-    }
-
     func testSaveLabelFollowsPersistence() {
         var buffer = DraftEditBuffer(body: "已有回复")
         XCTAssertEqual(buffer.state, .saved)
@@ -72,67 +63,12 @@ final class DraftEditingTests: XCTestCase {
         XCTAssertNotEqual(buffer.state.label, "已保存")
     }
 
-    func testSafeDraftHasNoWarningAndNoRowStatus() {
-        let body = "已收到示例项目简报，谢谢。"
-        XCTAssertEqual(DraftAttention.resolve(in: body), .none)
-        XCTAssertNil(DraftAttention.resolve(in: body).message)
-        XCTAssertFalse(DraftAttention.resolve(in: body).canLocate)
-        let row = WorkbenchRowPresentation(reply: body, incoming: "克彬：\n请看简报。", preparing: false, failed: false)
-        XCTAssertEqual(row.summary, "已收到示例项目简报，谢谢。")
-        XCTAssertNil(row.status)
-        XCTAssertFalse(["草稿已备好", "需要核对", "等待准备回复", "待确认"].contains(row.summary))
-    }
-
-    func testLocatedPhraseQuotesSourceAndDoesNotInventASubject() {
-        let body = "收到。关于 thread harness 项目的进展以及是否达到发布标准，我需要先核实，目前暂无法给出结论。"
-        let attention = DraftAttention.resolve(in: body)
-        guard case .located(let kind, let phrase, let location, let length) = attention else {
-            return XCTFail("expected a located phrase")
+    func testReplyWordingDoesNotAddAReviewStatus() {
+        for reply in ["需要先核实交付日期。", "【待补充：交付日期】", "【待确认：时间】"] {
+            let row = WorkbenchRowPresentation(reply: reply, incoming: "", preparing: false, failed: false)
+            XCTAssertEqual(row.summary, reply)
+            XCTAssertNil(row.status)
         }
-        XCTAssertEqual(kind, .confirmation)
-        XCTAssertEqual(phrase, "需要先核实")
-        XCTAssertEqual(attention.message, "「需要先核实」")
-        XCTAssertTrue(attention.canLocate)
-        XCTAssertFalse(attention.message?.contains("是否达到发布标准") ?? true)
-        let utf16 = Array(body.utf16)
-        let slice = utf16[location..<(location + length)]
-        XCTAssertEqual(String(decoding: slice, as: UTF16.self), phrase)
-        let row = WorkbenchRowPresentation(reply: body, incoming: "来信", preparing: false, failed: false)
-        XCTAssertEqual(row.status, "需核实")
-        XCTAssertEqual(row.summary, body)
-        XCTAssertFalse(row.summary.contains("\n"))
-    }
-
-    func testPlaceholderIsLocatedAndSupplementWinsTheRowStatus() {
-        let body = "【待补充：当前进展】其余稍后再写。"
-        let attention = DraftAttention.resolve(in: body)
-        guard case .located(let kind, let phrase, _, _) = attention else { return XCTFail("expected placeholder") }
-        XCTAssertEqual(kind, .supplement)
-        XCTAssertEqual(phrase, "【待补充：当前进展】")
-        XCTAssertEqual(attention.message, "「【待补充：当前进展】」")
-        XCTAssertTrue(attention.canLocate)
-        XCTAssertEqual(WorkbenchRowPresentation(reply: body, incoming: "", preparing: false, failed: false).status, "待补充")
-    }
-
-    func testLongPlaceholderClipsTheLabelButKeepsTheFullRange() {
-        let filler = String(repeating: "进展", count: 30)
-        let body = "【待补充：\(filler)】"
-        let attention = DraftAttention.resolve(in: body)
-        guard case .located(_, let phrase, let location, let length) = attention else { return XCTFail("expected placeholder") }
-        XCTAssertEqual(phrase, "【待补充：\(filler)】")
-        XCTAssertTrue(attention.message?.hasSuffix("…」") ?? false)
-        XCTAssertEqual(location, 0)
-        XCTAssertEqual(length, body.utf16.count)
-        XCTAssertLessThan(attention.message?.count ?? 0, phrase.count)
-    }
-
-    func testUnlocatedConfirmationStaysGenericWithoutALocateAction() {
-        let attention = DraftAttention.resolve(requiresConfirmation: true, match: nil)
-        XCTAssertEqual(attention, .generic)
-        XCTAssertEqual(attention.message, "这份草稿需要你核对")
-        XCTAssertFalse(attention.canLocate)
-        XCTAssertFalse(attention.message?.contains("是否达到发布标准") ?? true)
-        XCTAssertEqual(DraftAttention.resolve(requiresConfirmation: false, match: nil), .none)
     }
 
     func testIncomingPreviewKeepsShortTextAndBreaksLongTextOnAPause() {

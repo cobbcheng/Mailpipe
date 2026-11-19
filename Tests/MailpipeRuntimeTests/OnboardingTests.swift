@@ -45,7 +45,7 @@ final class OnboardingTests: XCTestCase {
         XCTAssertTrue(try store.onboarding().completed)
         try session.activate()
         XCTAssertEqual(try store.settings().permission, permission)
-        let count = await fake.calls; XCTAssertEqual(count, 2)
+        let count = await fake.calls; XCTAssertEqual(count, 1)
     }
     func testLegacyMailboxSelectionsDoNotLimitMailKitConsent() async throws {
         let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
@@ -75,7 +75,7 @@ final class OnboardingTests: XCTestCase {
         try session.resetTest()
         _ = try session.beginTest(); try await session.testPipeline.pump()
         XCTAssertEqual(try session.testPipeline.store.record(abandoned)?.state, .cancelled)
-        let count = await fake.calls; XCTAssertEqual(count, 2)
+        let count = await fake.calls; XCTAssertEqual(count, 1)
     }
     func testReopenDoesNotRunPendingTest() async throws {
         let path = try root(), fake = FakeReplyModel()
@@ -112,11 +112,11 @@ final class OnboardingCompletionTests: XCTestCase {
                 XCTAssertTrue(try isolated.store.onboarding().completed)
                 XCTAssertEqual(try isolated.store.settings().permission == nil, manual)
                 XCTAssertTrue(try isolated.store.settings().authorizedScopes.isEmpty)
-                let calls = await fake.calls; XCTAssertEqual(calls, level == .l2 ? 2 : 1)
+                let calls = await fake.calls; XCTAssertEqual(calls, 1)
             }
         }
     }
-    func testLevelChangeInvalidatesEvidenceAndNonYesCannotPass() async throws {
+    func testLevelChangeInvalidatesEvidenceAndDirectDraftPasses() async throws {
         let fake = FakeReplyModel(), session = try makeSession(fake)
         var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = .l1
         try session.save(draft); _ = try session.beginTest(); try await session.testPipeline.pump()
@@ -126,7 +126,7 @@ final class OnboardingCompletionTests: XCTestCase {
             let other = try makeSession(FakeReplyModel(shouldReply: decision))
             var input = OnboardingDraft(); input.executable = "/fake/dsh"; input.level = .l1; input.suggestionsOnly = true
             try other.save(input); _ = try other.beginTest(); try await other.testPipeline.pump()
-            XCTAssertThrowsError(try other.activate())
+            try other.activate()
         }
     }
     func testSuggestionsRevokeAutomaticScopeAndPreservePause() async throws {

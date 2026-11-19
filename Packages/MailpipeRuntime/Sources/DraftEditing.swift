@@ -33,15 +33,3 @@ public struct DraftEditBuffer: Equatable, Sendable {
         }
     }
 }
-
-/// Text conventions only, not a factual or semantic assessment of a reply.
-public struct DraftContentWarnings: Equatable, Sendable {
-    public let needsSupplement: Bool
-    public let needsConfirmation: Bool
-    public var requiresCopyConfirmation: Bool { needsSupplement || needsConfirmation }
-    public init(body: String) {
-        let hits = DraftPhraseHits.found(in: body)
-        needsSupplement = hits.contains { $0.kind == .supplement }
-        needsConfirmation = hits.contains { $0.kind == .confirmation }
-    }
-}

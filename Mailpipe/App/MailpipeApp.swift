@@ -52,9 +52,9 @@ struct MailpipeApp: App {
             LaunchStatusIcon(model: pending)
         }.menuBarExtraStyle(.window)
         Window("Mailpipe", id: "workbench") {
-            PendingWorkbench(model: pending).frame(minWidth: 780, minHeight: 560)
+            PendingWorkbench(model: pending).frame(minWidth: 660, minHeight: 380)
         }
-        .defaultSize(width: 920, height: 640)
+        .defaultSize(width: 700, height: 420)
         .commands {
             CommandGroup(after: .newItem) {
                 WorkbenchCommand()
@@ -102,14 +102,6 @@ struct MailpipeSettings: View {
                     Text("回复备好后保留在菜单栏。打开工作台审阅，再复制到 Mail。")
                         .foregroundStyle(.secondary)
                 }
-                Section("回复准备") {
-                    Picker("准备方式", selection: $model.onboarding.level) {
-                        Text("备好草稿").tag(ServiceLevel.l2)
-                        Text("仅提示需要回复").tag(ServiceLevel.l1)
-                        Text("仅整理摘要").tag(ServiceLevel.l0)
-                    }
-                    Text("更改准备方式后，请在 AI 工具中测试，再保存配置。") .foregroundStyle(.secondary)
-                }
                 configurationFooter
             }.formStyle(.grouped).tabItem { Label("通用", systemImage: "gearshape") }
             Form {
@@ -135,7 +127,7 @@ struct MailpipeSettings: View {
                             Text(tool.kind.displayName + (model.installations.count > 1 ? " \(index + 1)" : "")).tag(tool.executable.path)
                         }
                     }.disabled(model.onboardingBusy)
-                    Text("内容会交给所选工具配置的模型。连接测试使用固定合成邮件，最多两次调用，会消耗额度。") .foregroundStyle(.secondary)
+                    Text("内容会交给所选工具配置的模型。连接测试使用固定合成邮件，一次调用，会消耗额度。") .foregroundStyle(.secondary)
                     if model.onboardingBusy {
                         ProgressView("正在连接…")
                         Button("取消测试", action: model.cancelOnboardingTest)

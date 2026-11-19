@@ -367,7 +367,7 @@ final class PipelineTests: XCTestCase {
             XCTAssertEqual(try pipeline.store.record(id)?.state, .draftReady)
         }
         XCTAssertThrowsError(try pipeline.regenerate(id))
-        let count = await fake.calls; XCTAssertEqual(count, 8)
+        let count = await fake.calls; XCTAssertEqual(count, 4)
         try pipeline.store.discard(id)
         XCTAssertThrowsError(try pipeline.regenerate(id))
     }
@@ -394,9 +394,10 @@ final class PipelineTests: XCTestCase {
         try pipeline.regenerate(id); try await pipeline.pump()
         let item = try XCTUnwrap(pipeline.store.record(id))
         XCTAssertEqual(item.level, .l1)
-        XCTAssertEqual(item.state, .needsReply)
-        XCTAssertEqual(item.runs.count, 3)
-        XCTAssertEqual(item.displayedBody, "Keep local reply")
+        XCTAssertEqual(item.state, .draftReady)
+        XCTAssertEqual(item.runs.count, 2)
+        XCTAssertNotNil(item.draft)
+        XCTAssertEqual(item.displayedBody, item.draft?.body)
     }
     func testCancelledRunMustFinishBeforeRegeneration() async throws {
         let pipeline = try setup(temporary())
@@ -432,7 +433,7 @@ final class PipelineTests: XCTestCase {
             XCTAssertEqual(item.state, ambiguous ? .needsReview : .draftReady)
             if ambiguous { XCTAssertEqual(item.error, "identityAmbiguous") }
             else { XCTAssertEqual(item.scopeID, scopes[1].id) }
-            let count = await fake.calls; XCTAssertEqual(count, ambiguous ? 0 : 2)
+            let count = await fake.calls; XCTAssertEqual(count, ambiguous ? 0 : 1)
         }
     }
     func testLegacySettingsAndMultipleSelectionPersistSeparately() throws {
@@ -467,7 +468,7 @@ final class PipelineTests: XCTestCase {
         try resumed.inbox.publish(try capture(resumed)) // a separate callback for the same account/message/content
         try await resumed.pump()
         XCTAssertEqual(try store.records().count, 1)
-        let count = await fake.calls; XCTAssertEqual(count, 2)
+        let count = await fake.calls; XCTAssertEqual(count, 1)
     }
     func testPauseRevokeAndUnknownAccountPreventCalls() async throws {
         let root = try temporary(), fake = FakeReplyModel()
@@ -483,13 +484,16 @@ final class PipelineTests: XCTestCase {
         try await pipeline.pump()
         XCTAssertEqual(try pipeline.store.records().first?.state, .cancelled)
     }
-    func testNoAndL1DoNotDraft() async throws {
-        for (reply, level, expected) in [("no", ServiceLevel.l2, ReplyState.noReply), ("unknown", .l2, .needsReview), ("yes", .l1, .needsReply), ("yes", .l0, .noReply)] {
-            let fake = FakeReplyModel(shouldReply: reply), pipeline = try setup(try temporary(), fake: fake)
+    func testEveryAuthorizedMessageGoesDirectlyToDraft() async throws {
+        for level in [ServiceLevel.l0, .l1, .l2] {
+            let fake = FakeReplyModel(shouldReply: "no"), pipeline = try setup(try temporary(), fake: fake)
             try pipeline.updateSettings { $0.level = level }
             try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
-            XCTAssertEqual(try pipeline.store.records().first?.state, expected)
-            let count = await fake.calls; XCTAssertEqual(count, 1)
+            let item = try XCTUnwrap(pipeline.store.records().first)
+            XCTAssertEqual(item.state, .draftReady)
+            XCTAssertEqual(item.runs.map(\.destination.taskKind), [.draft])
+            XCTAssertNil(item.decisionData)
+            XCTAssertNotNil(item.draft)
         }
     }
     func testRestartDoesNotReplayUnknownCallAndWriterLock() async throws {
@@ -547,7 +551,7 @@ actor PausingReplyModel: ReplyModelRunning {
 }
 
 extension PipelineTests {
-    func testPauseDuringTriageDiscardsDecisionAndDoesNotDraft() async throws {
+    func testPauseDuringDraftDiscardsOutput() async throws {
         let root = try temporary()
         let store = try PipelineStore(directory: root.appendingPathComponent("state"))
         let fake = PausingReplyModel { var settings = try store.settings(); settings.paused = true; try store.saveSettings(settings) }
@@ -559,7 +563,7 @@ extension PipelineTests {
         let record = try XCTUnwrap(store.record(id))
         XCTAssertEqual(record.state, .needsReview)
         XCTAssertEqual(record.error, "paused")
-        XCTAssertNil(record.decisionData)
+        XCTAssertNil(record.draftData)
         XCTAssertEqual(record.runs.count, 1)
         XCTAssertEqual(record.runs.first?.inputTokens, 10)
         try pipeline.updateSettings { $0.paused = false }
@@ -678,7 +682,7 @@ final class ManualSuggestionTests: XCTestCase {
             try await tested.pump()
         }
         let calls = await fake.calls; XCTAssertEqual(calls, 1)
-        XCTAssertEqual(try tested.store.record(id.uuidString)?.state, .needsReply)
+        XCTAssertEqual(try tested.store.record(id.uuidString)?.state, .draftReady)
         XCTAssertNil(try tested.store.settings().permission)
         XCTAssertThrowsError(try tested.enqueueManual(id: id, subject: "Changed", body: "Please reply", executable: "/fake/dsh"))
     }

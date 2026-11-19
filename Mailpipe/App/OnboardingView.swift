@@ -77,7 +77,7 @@ struct OnboardingView: View {
                     Text(tool.kind.displayName + (model.installations.count > 1 ? " \(index + 1)" : "")).tag(tool.executable.path)
                 }
             }.disabled(model.onboardingBusy)
-            Text("连接测试会将固定合成邮件交给所选工具配置的模型。最多两次调用，会消耗额度；不自动重试。")
+            Text("连接测试会将固定合成邮件交给所选工具配置的模型。一次调用，会消耗额度；不自动重试。")
                 .foregroundStyle(.secondary)
             if model.installations.isEmpty { Text("未找到兼容工具。安装并登录工具后，在设置中重新查找。") }
             if model.onboardingBusy {
