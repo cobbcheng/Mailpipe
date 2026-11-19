@@ -12,10 +12,6 @@ final class PendingModel: ObservableObject {
     @Published var issue: String?
     @Published var selectedID: String?
     @Published var installations: [HarnessInstallation] = []
-    @Published var mailboxChoices: [AccountScope] = []
-    @Published var mailboxLoading = false
-    @Published var mailboxIssue: String?
-    var attemptedMailboxDiscovery = false
     @Published var onboarding = OnboardingDraft()
     @Published var onboardingResult: StoredReply?
     @Published var onboardingBusy = false
@@ -29,7 +25,7 @@ final class PendingModel: ObservableObject {
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
     private(set) var hasSharedInbox = false
-    var needsPermissionRecovery: Bool { onboarding.completed && settings.suggestionsOnly != true && (settings.permission == nil || settings.authorizedScopes.isEmpty) }
+    var needsPermissionRecovery: Bool { onboarding.completed && settings.suggestionsOnly != true && settings.permission?.delivery != .mailKit }
     var pending: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench && ($0.state.isPending || $0.isPreparing || $0.state == .needsReview || $0.state == .awaitingBody) } }
     @Published var notice: String?
     @Published var undoDiscardID: String?
@@ -81,17 +77,6 @@ final class PendingModel: ObservableObject {
         if saved { refresh() }
         return saved
     }
-    @discardableResult func resolveCandidate(_ item: StoredReply, adopt: Bool) -> Bool {
-        guard flushEditor(item.id), let version = item.draftVersion else { return false }
-        do {
-            guard let pipeline else { throw PipelineError.storage }
-            try pipeline.store.resolveDraftCandidate(item.id, expected: version, adopt: adopt)
-            if adopt, let updated = try pipeline.store.record(item.id) {
-                editorBuffers[item.id] = DraftEditBuffer(body: updated.displayedBody)
-            }
-            refresh(); return true
-        } catch { notify("未能保存选择，当前编辑和候选稿仍保留。"); return false }
-    }
     func discard(_ id: String) {
         guard flushEditor(id) else { return }
         do {
@@ -113,16 +98,13 @@ final class PendingModel: ObservableObject {
         do {
             guard let pipeline, let item = try pipeline.store.record(id) else { throw PipelineError.storage }
             guard item.canRequestRegeneration(settings: try pipeline.store.settings()) else {
-                issue = item.state == .awaitingBody ? "尚未收到 Mail 提供的正文，暂时无法生成回复。" : "请先核对账户授权、暂停状态和邮件有效期。"
+                issue = item.state == .awaitingBody ? "尚未收到 Mail 提供的正文，暂时无法生成回复。" : "请先核对来信处理授权、暂停状态和邮件有效期。"
                 return
             }
             guard flushEditor(id) else { return }
-            // Freeze the current reply even when it has not been edited, so the
-            // next generated version can only appear as a candidate.
-            try pipeline.store.saveEdits(id, subject: item.displayedSubject, body: editorBody(item))
             try pipeline.regenerate(id); refresh()
         }
-        catch { issue = "无法重新生成。请核对暂停、账户授权、工具和邮件有效期；每封最多重新生成三次。" }
+        catch { issue = "无法重新生成。请核对暂停、来信处理授权、工具和邮件有效期；每封最多重新生成三次。" }
     }
     @Published var composeBusy = false
     func prepareCompose(_ item: StoredReply) async -> MailComposeRequest? {
@@ -132,7 +114,7 @@ final class PendingModel: ObservableObject {
             return try await pipeline.prepareMailCompose(id: item.id, subject: item.displayedSubject, body: editorBody(item),
                 senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) })
         } catch {
-            notify("无法准备 Mail 撰写窗口。请核对原邮件仍在授权收件箱、地址和账户权限；当前编辑已保留。")
+            notify("无法准备 Mail 撰写窗口。请核对原邮件位置、地址和 Mail 自动化权限；当前编辑已保留。")
             return nil
         }
     }
@@ -143,7 +125,6 @@ final class PendingModel: ObservableObject {
             _ = try await pipeline.openMailCompose(confirmedRequest: request,
                 senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) },
                 open: { try AppleMailComposer.open($0) })
-            notify("撰写窗口已交给 Mail，尚未发送。请在 Mail 中核对收件人和内容，再决定是否发送。")
             refresh(); return true
         } catch {
             notify("未能确认撰写窗口。请先查看 Mail，避免重复创建；原邮件或授权变化时需重新确认。当前编辑已保留。")
@@ -177,40 +158,29 @@ final class PendingModel: ObservableObject {
             pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: inboxURL), resolve: { item, scope in
                 let expected = try store.settings()
                 guard let messageID = item.messageID, expected.permission?.id == item.permissionID,
-                      expected.authorizedScopes.contains(scope) else { return nil }
+                      (item.mailKitBody == true ? expected.permission?.delivery == .mailKit : expected.authorizedScopes.contains(scope)) else { return nil }
                 let match = try await MailReadBridge.shared.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                    messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath) {
+                    messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath, firstMatch: item.mailKitBody == true) {
                     guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
                 }
                 guard let match else { return nil }
                 let source = Data(match.source.utf8)
-                if let evidence = item.sourceEvidence {
-                    guard evidence.matches(source) else { return nil }
-                } else {
+                if item.mailKitBody != true && item.sourceEvidence == nil {
                     guard let expected = item.sourceDigest, mailSourceDigest(source) == expected else { return nil }
                 }
                 return VerifiedMail(accountID: match.accountID, localID: match.localID, source: source)
-            }, inAuthorizedInbox: { messageID, subject, scopes in
-                let expected = try store.settings()
-                guard expected.permission != nil, !expected.paused, expected.authorizedScopes == scopes else { throw PipelineError.revoked }
-                var results: [Bool?] = []
-                for scope in scopes {
-                    try Task.checkCancellation()
-                    let included = try await MailReadBridge.shared.isInAuthorizedInbox(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                        messageID: messageID, subject: subject, mailboxPath: scope.mailboxPath) {
-                        guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
-                    }
-                    results.append(included)
+            }, composeInboxes: {
+                try await MailReadBridge.shared.inboxes().map {
+                    try AccountScope(accountID: $0.accountID, accountName: $0.accountName,
+                                     mailboxName: $0.path.last!, mailboxPath: $0.path)
                 }
-                return InboxMembershipDecision.combine(results)
             })
             onboardingSession = try OnboardingSession(store: store)
             onboarding = try store.onboarding()
-            attemptedMailboxDiscovery = onboarding.automationDenied == true
             onboardingResult = try onboardingSession?.testResult()
             settings = try store.settings()
             // Reconcile a crash between authoritative policy and extension snapshot updates.
-            try pipeline?.inbox.setPermission(settings.paused ? nil : settings.permission)
+            try pipeline?.inbox.setPermission(settings.paused || settings.permission?.delivery != .mailKit ? nil : settings.permission)
             installations = HarnessDiscovery.find().filter { $0.kind == .deepseek }
             refresh(); start()
             display = Task { [weak self] in
@@ -220,46 +190,6 @@ final class PendingModel: ObservableObject {
                 }
             }
         } catch { issue = "无法打开持久化队列：\(Self.code(error))" }
-    }
-    private func discoverMailboxChoices() async throws -> [AccountScope] {
-        let choices = try await MailReadBridge.shared.inboxes().map {
-            try AccountScope(accountID: $0.accountID, accountName: $0.accountName,
-                             mailboxName: $0.path.last!, mailboxPath: $0.path)
-        }
-        // One selectable account maps to exactly one system-designated inbox.
-        guard Set(choices.map(\.accountID)).count == choices.count else { throw IdentityQueryError.invalidResult }
-        return choices.sorted { ($0.accountName, $0.accountID) < ($1.accountName, $1.accountID) }
-    }
-
-    func loadMailboxes() {
-        guard !mailboxLoading, !onboarding.isSuggestionsOnly else { return }
-        attemptedMailboxDiscovery = true; mailboxLoading = true; mailboxIssue = nil
-        Task { @MainActor in
-            await Task.yield()
-            defer { mailboxLoading = false }
-            do {
-                mailboxChoices = try await discoverMailboxChoices()
-                onboarding.automationDenied = false; saveOnboarding()
-                if mailboxChoices.isEmpty { mailboxIssue = "Apple Mail 尚未发现可用账户的收件箱。请先在 Mail 添加账户，再刷新。" }
-            } catch {
-                mailboxChoices = []
-                if case IdentityQueryError.automation(-1743) = error {
-                    onboarding.automationDenied = true; saveOnboarding()
-                    mailboxIssue = "Mail 自动化权限被拒绝。可以选择“逐封建议”，手动粘贴并确认一封内容；不会自动读取或外发。"
-                } else if case IdentityQueryError.automation(let code) = error {
-                    mailboxIssue = "无法读取账户列表（\(code)），请确认 Mail 可用后重新读取。"
-                } else { mailboxIssue = "无法读取账户列表，请确认 Mail 可用后重新读取。" }
-            }
-        }
-    }
-    func selectMailbox(_ scope: AccountScope, selected: Bool) {
-        var scopes = onboarding.selections.filter { $0.accountID != scope.accountID }
-        if selected { scopes.append(scope) }
-        onboarding.selectedScopes = scopes.sorted { $0.id < $1.id }
-        saveOnboarding()
-    }
-    var mailboxSelectionValid: Bool {
-        !onboarding.selections.isEmpty && onboarding.selections.allSatisfy { mailboxChoices.contains($0) }
     }
     func saveOnboarding() {
         do {
@@ -317,34 +247,16 @@ final class PendingModel: ObservableObject {
                 let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
                 try Task.checkCancellation()
                 guard report.supportsHeadlessRun, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
-                if !snapshot.isSuggestionsOnly {
-                    let current = try await discoverMailboxChoices()
-                    guard onboarding == snapshot else { throw IdentityQueryError.invalidScope }
-                    mailboxChoices = current
-                    guard !snapshot.selections.isEmpty, snapshot.selections.allSatisfy({ current.contains($0) }) else { throw IdentityQueryError.invalidScope }
-                }
                 try Task.checkCancellation()
                 worker?.cancel()
                 defer { start() }
-                try session.activate(scopes: snapshot.isSuggestionsOnly ? [] : snapshot.selections)
+                try session.activate()
                 let active = try session.store.settings()
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding(); refresh()
                 onboardingIssue = active.suggestionsOnly == true ? "逐封建议已就绪；每封提交前需确认内容和工具。" : active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
             } catch is CancellationError {
                 return
-            } catch let error as IdentityQueryError {
-                switch error {
-                case .automation(-1743):
-                    onboarding.automationDenied = true; saveOnboarding()
-                    onboardingIssue = "Mail 自动化权限被拒绝（-1743）。未保存新授权；草案和已有结果保留。可返回选择“逐封建议”，无需 Mail 自动化权限。"
-                case .automation(let code):
-                    onboardingIssue = "Mail 账户核验失败（\(code)）。未保存新授权；草案保留。"
-                case .invalidScope:
-                    onboardingIssue = "无法唯一识别所选账户或邮箱。请核对名称；未保存新授权。"
-                case .invalidResult:
-                    onboardingIssue = "Mail 返回的账户信息无法核验；未保存新授权。"
-                }
             } catch { onboardingIssue = "授权未完成，原设置保留或等待同步：\(Self.code(error))" }
         }
     }
@@ -395,7 +307,7 @@ final class PendingModel: ObservableObject {
             extensionObservation = try? ExtensionObservation.read(from: pipeline.inbox)
             records = try pipeline.store.records(); settings = try pipeline.store.settings()
             for item in records where item.draft != nil && item.editedBody == nil {
-                if let buffer = editorBuffers[item.id], buffer.body.isEmpty && buffer.state == .saved {
+                if let buffer = editorBuffers[item.id], buffer.body != item.displayedBody && buffer.state == .saved {
                     editorBuffers[item.id] = DraftEditBuffer(body: item.displayedBody)
                 }
             }
@@ -524,10 +436,7 @@ struct PendingWorkbench: View {
         NavigationSplitView {
             List(selection: $model.selectedID) {
                 ForEach(visible) { item in
-                    let row = WorkbenchRowPresentation(
-                        reply: model.editorBody(item), incoming: item.input.body,
-                        preparing: item.isPreparing, failed: item.error != nil && item.state != .cancelled)
-                    WorkbenchMessageRow(subject: item.input.subject, sender: item.correspondents?.sender ?? "发件地址未采集", status: row.status, date: item.capturedAt)
+                    WorkbenchMessageRow(subject: item.input.subject, sender: item.correspondents?.sender ?? "发件地址未采集", date: item.capturedAt)
                         .tag(item.id)
                         .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item) }
                 }
@@ -541,13 +450,13 @@ struct PendingWorkbench: View {
             VStack(spacing: 0) {
                 if !model.onboarding.completed {
                     HStack {
-                        Label("连接工具并选择邮箱后，为新邮件备好草稿。", systemImage: "info.circle")
+                        Label("连接工具并确认处理方式后，为新邮件备好草稿。", systemImage: "info.circle")
                         Spacer()
                         Button("开始使用") { openWindow(id: "onboarding") }
                     }.padding().background(Color(nsColor: .controlBackgroundColor))
                 } else if model.needsPermissionRecovery {
                     HStack {
-                        Label("账户授权已撤销。已有草稿保留，请在设置中恢复。", systemImage: "exclamationmark.shield")
+                        Label("请在设置中确认来信处理范围和 AI 工具。已有草稿保留。", systemImage: "exclamationmark.shield")
                         Spacer(); SettingsButton()
                     }.padding().background(Color(nsColor: .controlBackgroundColor))
                 } else if model.settings.suggestionsOnly == true {
@@ -598,23 +507,37 @@ struct PendingWorkbench: View {
 private struct WorkbenchMessageRow: View {
     let subject: String
     let sender: String
-    let status: String?
     let date: Date
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
-                Text(sender).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(sender).font(.subheadline).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                Text(date, format: Calendar.autoupdatingCurrent.isDateInToday(date)
+                     ? .dateTime.hour().minute()
+                     : .dateTime.month(.twoDigits).day(.twoDigits))
+                    .font(.caption2).monospacedDigit().fixedSize()
             }
-            Spacer(minLength: 8)
-            if let status {
-                Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize(horizontal: true, vertical: false)
-            }
-            Text(date, format: .dateTime.month(.twoDigits).day(.twoDigits))
-                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                .frame(width: 44, alignment: .trailing).lineLimit(1)
+            .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct DraftActionStyle: ViewModifier {
+    var circular = false
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.buttonStyle(.glass).buttonBorderShape(circular ? .circle : .capsule)
+        } else if #available(macOS 14.0, *) {
+            content.buttonStyle(.bordered).buttonBorderShape(circular ? .circle : .capsule)
+        } else {
+            content.buttonStyle(.bordered).clipShape(Capsule())
+        }
     }
 }
 
@@ -624,9 +547,6 @@ private struct DraftDetail: View {
     @State private var showExplanation = false
     @State private var confirmRegeneration = false
     @State private var confirmCopy = false
-    @State private var showCompose = false
-    @State private var composeRequest: MailComposeRequest?
-    @State private var showCandidate = false
     @State private var editorHeight: CGFloat = 96
     @State private var locateRequest = 0
     @State private var focusRequest = 0
@@ -636,8 +556,7 @@ private struct DraftDetail: View {
     private var attention: DraftAttention { DraftAttention.resolve(in: bodyText) }
     private var incoming: String { item.displayBody ?? item.input.body }
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
-    private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved"].contains(item.error ?? "") }
-    private var hasDraft: Bool { item.draft != nil || item.editedBody != nil || !bodyText.isEmpty }
+    private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved", "identitySourceMismatch"].contains(item.error ?? "") }
     private var recipientAddresses: String {
         guard let recipients = item.correspondents?.recipients, !recipients.isEmpty else { return "收件地址未采集" }
         return recipients.joined(separator: "、")
@@ -649,8 +568,21 @@ private struct DraftDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
-                        .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
+                            .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
+                        Spacer(minLength: 0)
+                        if let status = WorkbenchRowPresentation(
+                            reply: bodyText, incoming: item.input.body,
+                            preparing: item.isPreparing, failed: item.error != nil && item.state != .cancelled
+                        ).status {
+                            Text(status).font(.caption).foregroundStyle(.secondary).fixedSize()
+                        }
+                        Button("打开原邮件", action: openOriginalMessage)
+                            .controlSize(.small)
+                            .fixedSize()
+                            .disabled(originalMessageURL == nil)
+                    }
                     VStack(alignment: .leading, spacing: 4) {
                         Text("发件人：\(item.correspondents?.sender ?? "发件地址未采集")")
                         Text("收件人（To）：\(recipientAddresses)")
@@ -683,50 +615,42 @@ private struct DraftDetail: View {
             Button("取消", role: .cancel) { }
             Button("重新生成") { model.regenerate(item.id) }
         } message: {
-            Text("当前编辑会保留。新结果进入候选预览，由你选择采用新稿或保留现稿。最多两次模型调用，会消耗工具额度。")
+            Text("新稿生成成功后会覆盖当前回复。最多两次模型调用，会消耗工具额度。")
         }
-        .sheet(isPresented: $showCandidate) { candidatePreview }
-        .sheet(isPresented: $showCompose) {
-            if let request = composeRequest { composePreview(request) }
+    }
+    private var originalMessageURL: URL? {
+        guard !item.syntheticAuthorized, item.manualExecutable == nil,
+              let id = item.messageID, !id.isEmpty,
+              id.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
+              let encoded = "<\(id)>".addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+        else { return nil }
+        return URL(string: "message://" + encoded)
+    }
+    private func openOriginalMessage() {
+        guard let url = originalMessageURL,
+              let mail = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.mail") else {
+            model.notify("无法打开 Apple Mail。")
+            return
+        }
+        NSWorkspace.shared.open([url], withApplicationAt: mail, configuration: .init()) { _, error in
+            if error != nil { Task { @MainActor in model.notify("Apple Mail 未能打开原邮件。") } }
         }
     }
     private var originalCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Label("原邮件", systemImage: "envelope")
-                    .font(.headline)
-                Spacer()
-                Text("只读").font(.caption).foregroundStyle(.secondary)
-            }.padding(16)
-            Divider()
-            VStack(alignment: .leading, spacing: 10) {
-                if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
-                    Text("完整原文尚未取得，以下为已保存的正文。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Text(incoming.isEmpty ? (item.state == .awaitingBody ? "等待 Mail 提供邮件正文。收到正文前不会调用 AI，也无法重新生成。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
-                    .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }.padding(16)
+        VStack(alignment: .leading, spacing: 10) {
+            if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
+                Text("完整原文尚未取得，以下为已保存的正文。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(incoming.isEmpty ? (item.state == .awaitingBody ? "等待 Mail 提供邮件正文。收到正文前不会调用 AI，也无法重新生成。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
+                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1).allowsHitTesting(false) }
     }
     private var draftCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Label("回复草稿", systemImage: "square.and.pencil")
-                    .font(.headline)
-                Spacer()
-                saveStatus
-            }.padding(16)
-            Divider()
             VStack(alignment: .leading, spacing: 0) {
                 attentionLine
-                if let handoff = item.composeHandoff {
-                    Text(handoff.receipt == nil ? "已尝试打开 Mail，但结果待核对。请先检查 Mail，避免重复创建。" : "已创建 Mail 撰写窗口，后续请在 Mail 中核对和编辑；尚未发送。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
                 if isExpired {
                     Text("原信或授权需要重新核对。当前编辑保留。")
                         .font(.caption).foregroundStyle(.secondary).padding(.top, 6)
@@ -743,19 +667,13 @@ private struct DraftDetail: View {
                     }.padding(.top, 8)
                 }
                 replyEditor.padding(.top, 12)
-                if item.hasDraftCandidate {
-                    HStack {
-                        Label("新稿待选择，当前编辑未替换", systemImage: "doc.badge.clock").font(.caption)
-                        Spacer()
-                        Button("候选预览") { showCandidate = true }
-                    }.padding(.top, 12)
+                if model.saveState(item) == .failed {
+                    Button("未能保存，点此重试") { model.flushEditor(item.id) }
+                        .font(.caption).buttonStyle(.link)
                 }
-            }.padding(16)
-            Divider()
-            actions.padding(16)
+            }.padding(.vertical, 16)
+            actions.padding(.vertical, 16)
         }
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1).allowsHitTesting(false) }
     }
     @ViewBuilder private var attentionLine: some View {
         switch attention {
@@ -784,7 +702,7 @@ private struct DraftDetail: View {
         ZStack(alignment: .topLeading) {
             ReplyTextView(
                 text: Binding(get: { bodyText }, set: { model.editBody(item, body: $0) }),
-                enabled: !(item.isPreparing && !hasDraft),
+                enabled: !item.isPreparing,
                 locateRequest: locateRequest,
                 locateRange: locateRange,
                 focusRequest: focusRequest,
@@ -805,61 +723,18 @@ private struct DraftDetail: View {
                 .allowsHitTesting(false)
         }
     }
-    @ViewBuilder private var saveStatus: some View {
-        switch model.saveState(item) {
-        case .failed:
-            Button("未能保存，点此重试") { model.flushEditor(item.id) }
-                .font(.caption).buttonStyle(.link)
-        case .saving:
-            Text("保存中…").font(.caption).foregroundStyle(.secondary).accessibilityLabel("保存状态：保存中")
-        case .saved:
-            if hasDraft {
-                Text("已保存").font(.caption).foregroundStyle(.secondary).accessibilityLabel("保存状态：已保存")
-            } else {
-                EmptyView()
-            }
-        }
-    }
-    private func composePreview(_ request: MailComposeRequest) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("在 Mail 中打开撰写窗口").font(.title2.weight(.semibold))
-            Text("发件账户：\(request.accountName)")
-            Text("发件人：\(request.sender)")
-            Text("收件人：\(request.recipients.joined(separator: "、"))")
-                .textSelection(.enabled)
-            Text("主题：\(request.subject)").textSelection(.enabled)
-            ScrollView { Text(request.body).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
-                .frame(minHeight: 140, maxHeight: 260).padding(12)
-                .overlay { RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)) }
-            if DraftContentWarnings(body: request.body).requiresCopyConfirmation {
-                Text("草稿含待补充或待核实内容，请在发送前检查。").font(.callout).foregroundStyle(.orange)
-            }
-            Text("只新建撰写窗口，不会发送。使用原邮件 Reply-To（如有）或 From；不会自动添加其他收件人。请在 Mail 中最终核对并自行发送。")
-                .font(.callout).foregroundStyle(.secondary)
-            HStack {
-                Button("取消") { showCompose = false }.disabled(model.composeBusy)
-                Spacer()
-                if model.composeBusy { ProgressView().controlSize(.small) }
-                Button("打开撰写窗口") {
-                    Task { _ = await model.openCompose(request); showCompose = false }
-                }.buttonStyle(.borderedProminent).disabled(model.composeBusy)
-            }
-        }.padding(24).frame(width: 560).interactiveDismissDisabled(model.composeBusy)
-    }
     private var actions: some View {
         HStack(spacing: 12) {
             Button {
                 Task {
-                    if let request = await model.prepareCompose(item) { composeRequest = request; showCompose = true }
+                    if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
-            } label: { Label(model.composeBusy ? "正在核对…" : (item.composeHandoff == nil ? "在 Mail 中打开" : "已尝试交给 Mail"), systemImage: "envelope") }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.composeBusy || item.composeHandoff != nil || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } label: { Label("去发送", systemImage: "envelope") }
+                .disabled(model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button {
                 if warnings.requiresCopyConfirmation { confirmCopy = true }
                 else { copyReply() }
             } label: { Label("复制回复", systemImage: "doc.on.doc") }
-                .buttonStyle(.bordered)
                 .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
             Button("重新生成") { confirmRegeneration = true }.disabled(!canRegenerate)
@@ -867,13 +742,13 @@ private struct DraftDetail: View {
                 Button("查看处理说明 / 数据去向") { showExplanation = true }
                 Divider()
                 Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
-            } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多草稿操作")
+            } label: { Label("更多草稿操作", systemImage: "ellipsis").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
+                .modifier(DraftActionStyle(circular: true)).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
             Spacer(minLength: 0)
-            Button { showExplanation = true } label: { Image(systemName: "info.circle") }
-                .buttonStyle(.borderless).accessibilityLabel("查看处理说明与数据去向")
+            Button { showExplanation = true } label: { Label("查看处理说明与数据去向", systemImage: "info").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
+                .modifier(DraftActionStyle(circular: true)).accessibilityLabel("查看处理说明与数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
-        }.controlSize(.regular)
+        }.modifier(DraftActionStyle()).controlSize(.large)
     }
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -881,28 +756,11 @@ private struct DraftDetail: View {
             if let run = item.runs.last {
                 Text("本次经 \(run.destination.harness.displayName) 处理。邮件会到达该工具配置的模型。Mailpipe 不设服务器。")
             } else { Text("尚未调用 AI 工具。") }
-            Text("在 Mail 中打开会先核对原邮件及收件地址，再由你确认创建撰写窗口；不会发送。复制回复仅复制当前正文。")
+            Text("点击“去发送”会打开 Apple Mail 撰写窗口，由你检查并发送。复制回复仅复制当前正文。")
             if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }
             Text("状态提示按占位符和少量待核实表述识别，不代表事实核验。")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding().frame(width: 340)
-    }
-    private var candidatePreview: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("候选预览").font(.title2.weight(.semibold))
-            Text("当前编辑保持不变。采用新稿会替换回复正文。") .foregroundStyle(.secondary)
-            ScrollView {
-                Text(item.draft?.body ?? "候选稿暂不可用。")
-                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            HStack {
-                Button("稍后决定") { showCandidate = false }.keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("保留现稿") { if model.resolveCandidate(item, adopt: false) { showCandidate = false } }
-                Button("采用新稿") { if model.resolveCandidate(item, adopt: true) { showCandidate = false } }
-                    .buttonStyle(.borderedProminent)
-            }
-        }.padding(24).frame(width: 560, height: 440)
     }
     private func copyReply() {
         NSPasteboard.general.clearContents()
@@ -915,7 +773,14 @@ private struct DraftDetail: View {
         switch code {
         case "contentExpired": return "来信已超过处理有效期，请重新确认内容后使用逐封建议。"
         case "policyChanged", "revoked": return "处理授权已变更，请在设置中核对。"
+        case "identitySourceMismatch": return "已找到原邮件，但采集内容与 Mail 原文不一致。请打开原邮件核对。"
         case "identityUnresolved", "identityUnavailable", "identityAmbiguous": return "无法唯一核对原邮件，请检查 Mail 权限和账户。"
+        case "invalidOutput": return "AI 输出未通过校验。此记录没有保存具体原因。"
+        case "outputJSON": return "AI 返回的内容无法解析为 JSON 对象。"
+        case "outputFields": return "AI 返回的字段、类型或枚举值不符合要求。"
+        case "outputReference": return "AI 返回的版本或邮件、请求标识与本次请求不符。"
+        case "outputSummary": return "AI 返回的摘要条数或长度不符合要求。"
+        case "outputEvidence": return "AI 返回的引文无法与原文对应，或超出了引文限制。"
         case "cancelled": return "任务已取消，当前编辑保留。"
         default: return "处理未成功，当前编辑保留。请检查 AI 工具连接。"
         }

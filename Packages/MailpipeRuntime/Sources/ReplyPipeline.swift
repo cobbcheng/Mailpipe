@@ -16,6 +16,7 @@ public typealias MailIdentityResolver = @MainActor @Sendable (StoredReply, Accou
 public final class ReplyPipeline {
     public let store: PipelineStore
     public let inbox: CaptureInbox
+    private let composeInboxes: @MainActor () async throws -> [AccountScope]
     private let resolve: MailIdentityResolver
     private let model: @Sendable (String) -> any ReplyModelRunning
     private var pumping = false
@@ -24,10 +25,12 @@ public final class ReplyPipeline {
     private var nextCaptureCheck: [String: Date] = [:]
     private var nextRecordCheck: [String: Date] = [:]
     public init(store: PipelineStore, inbox: CaptureInbox, resolve: @escaping MailIdentityResolver,
+                composeInboxes: @escaping @MainActor () async throws -> [AccountScope] = { [] },
                 inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) async throws -> Bool?)? = nil,
                 model: @escaping @Sendable (String) -> any ReplyModelRunning = {
                     DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: $0), dialect: DeepSeekHarnessDialect())
                 }) {
+        self.composeInboxes = composeInboxes
         self.store = store; self.inbox = inbox; self.resolve = resolve; self.model = model; self.inAuthorizedInbox = inAuthorizedInbox
     }
     private func mailReadStillAuthorized(_ settings: PipelineSettings) throws -> Bool {
@@ -39,7 +42,7 @@ public final class ReplyPipeline {
     /// No state transition, body replacement, model call or email mutation.
     public func loadCorrespondents(_ id: String, includeBody: Bool = false) async throws {
         try Task.checkCancellation()
-        guard let item = try store.record(id), (item.correspondents == nil || (includeBody && item.displayBody == nil)), item.discardedAt == nil,
+        guard let item = try store.record(id), item.mailKitBody != true, (item.correspondents == nil || (includeBody && item.displayBody == nil)), item.discardedAt == nil,
               !item.syntheticAuthorized, item.manualExecutable == nil,
               item.excludedFromAuthorizedInbox != true else { return }
         let settings = try store.settings()
@@ -76,15 +79,23 @@ public final class ReplyPipeline {
               let messageID = item.messageID else { throw MailComposeError.unavailable }
         let settings = try store.settings()
         guard !settings.paused, settings.permission?.id == item.permissionID else { throw MailComposeError.unavailable }
-        let scopes = settings.authorizedScopes.filter { item.accountID == nil || $0.accountID == item.accountID }
+        let scopes = item.mailKitBody == true ? try await composeInboxes() : settings.authorizedScopes.filter {
+            item.accountID == nil || $0.accountID == item.accountID
+        }
+        guard try mailReadStillAuthorized(settings) else { throw MailComposeError.unavailable }
         var matches: [(AccountScope, VerifiedMail)] = []
         for scope in scopes {
             try Task.checkCancellation()
             let result = try await resolve(item, scope)
             guard try mailReadStillAuthorized(settings) else { throw MailComposeError.unavailable }
             guard let verified = result, verified.accountID == scope.accountID,
-                  item.localID == nil || verified.localID == item.localID, let source = verified.source,
-                  item.sourceEvidence?.matches(source) ?? (item.sourceDigest != nil && item.sourceDigest == mailSourceDigest(source)) else { continue }
+                  item.localID == nil || verified.localID == item.localID, let source = verified.source else { continue }
+            if item.mailKitBody == true {
+                matches.append((scope, verified))
+                break
+            }
+            guard item.sourceEvidence?.matches(source) ?? (item.sourceDigest != nil && item.sourceDigest == mailSourceDigest(source))
+            else { continue }
             matches.append((scope, verified))
         }
         guard matches.count == 1, let (scope, match) = matches.first, let source = match.source,
@@ -118,18 +129,16 @@ public final class ReplyPipeline {
               current.displayedSubject == fresh.subject, current.displayedBody == fresh.body else {
             throw MailComposeError.changedSinceConfirmation
         }
-        if let handoff = current.composeHandoff {
-            if handoff.fingerprint == fresh.fingerprint, let receipt = handoff.receipt { return receipt }
-            throw MailComposeError.alreadyAttempted
-        }
-        // Persist before crossing the process boundary. Any throw/crash remains a non-replayable attempt.
-        current.composeHandoff = MailComposeHandoff(fingerprint: fresh.fingerprint)
+        // Each explicit click is a new compose request. Never replay one on startup.
+        let attempt = MailComposeHandoff(fingerprint: fresh.fingerprint)
+        current.composeHandoff = attempt
         try store.save(current)
         let receipt: MailComposeReceipt
         do { receipt = try await open(fresh) }
         catch { throw MailComposeError.outcomeUnknown }
         guard !receipt.outgoingID.isEmpty, var latest = try store.record(fresh.recordID),
-              latest.composeHandoff?.fingerprint == fresh.fingerprint else { throw MailComposeError.outcomeUnknown }
+              latest.composeHandoff?.fingerprint == fresh.fingerprint,
+              latest.composeHandoff?.startedAt == attempt.startedAt else { throw MailComposeError.outcomeUnknown }
         latest.composeHandoff?.receipt = receipt
         try store.save(latest)
         return receipt
@@ -173,7 +182,9 @@ public final class ReplyPipeline {
                 if values.isDirectory != true || values.isSymbolicLink == true { try FileManager.default.removeItem(at: file) }
                 continue
             }
-            if let inAuthorizedInbox {
+            let currentSettings = try store.settings()
+            if currentSettings.permission?.delivery == .mailKit && currentSettings.paused { return }
+            if let inAuthorizedInbox, currentSettings.permission?.delivery != .mailKit {
                 let settings = try store.settings()
                 guard capture.permissionID == settings.permission?.id,
                       capture.capturedAt > Date().addingTimeInterval(-86_400) else {
@@ -236,7 +247,10 @@ public final class ReplyPipeline {
               (item.regenerationCount ?? 0) < 3,
               item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
               let executable = settings.executable else { throw MailpipeError.invalidInput }
-        if let tool = item.manualExecutable {
+        if item.mailKitBody == true {
+            guard item.canRequestRegeneration(settings: settings) else { throw PipelineError.revoked }
+            item.state = .queued; item.revision = settings.revision
+        } else if let tool = item.manualExecutable {
             guard settings.suggestionsOnly == true, tool == executable else { throw PipelineError.revoked }
             item.state = .queued; item.revision = settings.revision
         } else if item.syntheticAuthorized {
@@ -267,7 +281,7 @@ public final class ReplyPipeline {
             try Task.checkCancellation()
             let settings = try store.settings()
             guard !settings.paused else { return }
-            if settings.permission?.id == item.permissionID, !item.syntheticAuthorized, item.manualExecutable == nil, let inAuthorizedInbox {
+            if item.mailKitBody != true, settings.permission?.id == item.permissionID, !item.syntheticAuthorized, item.manualExecutable == nil, let inAuthorizedInbox {
                 let key = item.id + settings.revision.uuidString
                 if !scopeChecked.contains(key) {
                     if let next = nextRecordCheck[key], next > Date() { continue }
@@ -314,7 +328,12 @@ public final class ReplyPipeline {
         guard item.capturedAt > Date().addingTimeInterval(-7 * 86_400) else {
             item.state = .needsReview; item.error = "contentExpired"; try store.save(item); return
         }
-        if let confirmedTool = item.manualExecutable {
+        if item.mailKitBody == true {
+            guard settings.permission?.id == item.permissionID, settings.permission?.delivery == .mailKit,
+                  settings.suggestionsOnly != true, !item.input.body.isEmpty else {
+                item.state = .cancelled; item.error = "revoked"; try store.save(item); return
+            }
+        } else if let confirmedTool = item.manualExecutable {
             guard settings.suggestionsOnly == true, confirmedTool == executable else {
                 item.state = .cancelled; item.error = "revoked"; try store.save(item); return
             }
@@ -335,20 +354,24 @@ public final class ReplyPipeline {
                 }
                 do {
                     var matches: [(AccountScope, VerifiedMail)] = []
+                    var sourceMismatch = false
                     for scope in scopes {
                         let result = try await resolve(item, scope)
                         guard let current = try currentCandidate() else { return }
                         item = current
-                        if let verified = result, verified.accountID == scope.accountID { matches.append((scope, verified)) }
+                        guard let verified = result, verified.accountID == scope.accountID else { continue }
+                        if let evidence = item.sourceEvidence,
+                           verified.source.map(evidence.matches) != true {
+                            sourceMismatch = true
+                            continue
+                        }
+                        matches.append((scope, verified))
                     }
                     guard matches.count == 1, let (scope, verified) = matches.first else {
-                        item.error = matches.isEmpty ? "identityUnresolved" : "identityAmbiguous"
+                        item.error = matches.isEmpty ? (sourceMismatch ? "identitySourceMismatch" : "identityUnresolved") : "identityAmbiguous"
                         item.state = .needsReview; try store.save(item); return
                     }
-                    if let evidence = item.sourceEvidence {
-                        guard let source = verified.source, evidence.matches(source) else {
-                            item.error = "identityUnresolved"; item.state = .needsReview; try store.save(item); return
-                        }
+                    if item.sourceEvidence != nil, let source = verified.source {
                         item.displayBody = try? PlainMailBody.displayText(source)
                         item.input = MailInput(messageRef: item.id, subject: item.input.subject, body: try PlainMailBody.decode(source))
                     }
@@ -398,7 +421,7 @@ public final class ReplyPipeline {
         guard !settings.paused else { throw MailpipeError.paused }
         guard settings.revision == revision, let item = try store.record(id),
               item.state == .triaging || item.state == .drafting,
-              (item.manualExecutable == settings.executable && item.manualExecutable != nil && settings.suggestionsOnly == true) || item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
+              (item.mailKitBody == true && settings.permission?.delivery == .mailKit && settings.permission?.id == item.permissionID && settings.suggestionsOnly != true) || (item.manualExecutable == settings.executable && item.manualExecutable != nil && settings.suggestionsOnly == true) || item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
     }
     private func invoke(id: String, task: ReplyModelTask, kind: ReplyTaskKind, executable: String) async throws {
         guard var item = try store.record(id), let revision = item.revision else { throw PipelineError.storage }
@@ -407,7 +430,9 @@ public final class ReplyPipeline {
         item.runs.append(PipelineRun(destination: destination, startedAt: Date()))
         try store.save(item)
         do {
-            let output = try await model(executable).run(task, route: AccountRoute(accountID: item.accountID, allowedHarnesses: [.deepseek])) { [self] in
+            let route = item.mailKitBody == true ? AccountRoute(mailKitPermission: item.permissionID, allowedHarnesses: [.deepseek])
+                : AccountRoute(accountID: item.accountID, allowedHarnesses: [.deepseek])
+            let output = try await model(executable).run(task, route: route) { [self] in
                 try await MainActor.run { try self.authorize(id, revision: revision) }
             }
             guard var current = try store.record(id) else { throw PipelineError.storage }
@@ -431,6 +456,10 @@ public final class ReplyPipeline {
             case .draft(let request):
                 _ = try ReplyDraft.validated(output.content, for: request)
                 current.draftData = output.content; current.state = .draftReady
+                if (current.regenerationCount ?? 0) > 0 {
+                    current.editedBody = nil
+                    current.reviewedDraftVersion = current.draftVersion
+                }
             }
             try store.save(current)
         } catch {

@@ -8,6 +8,52 @@ final class CaptureSourceRecoveryTests: XCTestCase {
         Data(("From: sender@example.com\r\nTo: recipient@example.com\r\nDate: Tue, 17 Nov 2026 08:00:00 +0000\r\n"
             + "Subject: Synthetic\r\nMessage-ID: <source@example.com>\r\nContent-Type: \(type)\r\n\r\n" + payload).utf8)
     }
+    func testMailKitUsesFirstReadableCallbackAcrossRestartWithoutMailLookup() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fake = FakeReplyModel()
+        func open() throws -> ReplyPipeline {
+            try ReplyPipeline(store: PipelineStore(directory: root.appendingPathComponent("state")),
+                inbox: CaptureInbox(directory: root.appendingPathComponent("inbox")),
+                resolve: { _, _ in XCTFail("Unexpected Mail read"); return nil },
+                inAuthorizedInbox: { _, _, _ in XCTFail("Unexpected mailbox lookup"); return nil },
+                model: { _ in fake })
+        }
+        var pipeline: ReplyPipeline? = try open()
+        let grant = CapturePermission(delivery: .mailKit)
+        try pipeline!.updateSettings { $0.permission = grant; $0.executable = "/fake/dsh" }
+        func publish(_ subject: String, _ data: Data?) throws {
+            try pipeline!.inbox.publish(InboundCapture(permissionID: grant.id, subject: subject,
+                messageID: "first@example.com", raw: data))
+        }
+        try publish("header", nil)
+        try await pipeline!.pump()
+        XCTAssertEqual(try pipeline!.store.records().first?.state, .awaitingBody)
+        try publish("invalid", Data("no headers".utf8))
+        try await pipeline!.pump()
+        try publish("first body", raw(type: "text/plain", payload: "First reply please"))
+        try pipeline!.updateSettings { $0.paused = true }
+        try await pipeline!.pump()
+        let pausedCalls = await fake.calls
+        XCTAssertEqual(pausedCalls, 0)
+        try pipeline!.updateSettings { $0.paused = false }
+        try await pipeline!.pump()
+        let first = try XCTUnwrap(pipeline!.store.records().first)
+        XCTAssertEqual(first.state, .draftReady)
+        XCTAssertNil(first.accountID)
+        XCTAssertNil(first.sourceEvidence)
+        XCTAssertEqual(first.input.subject, "first body")
+        pipeline = nil; pipeline = try open()
+        try publish("later body", raw(type: "text/plain", payload: "Different copy"))
+        try await pipeline!.pump()
+        XCTAssertEqual(try pipeline!.store.records().map(\.id), [first.id])
+        XCTAssertEqual(try pipeline!.store.record(first.id)?.input.body, "First reply please")
+        let count = await fake.calls
+        XCTAssertEqual(count, 2)
+        try pipeline!.updateSettings { $0.permission = nil }
+        XCTAssertThrowsError(try pipeline!.regenerate(first.id))
+    }
+
     func testFullSourceIsParsedAfterUniqueAccountProofAndSurvivesRestart() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

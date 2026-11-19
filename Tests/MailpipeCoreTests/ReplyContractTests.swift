@@ -50,6 +50,23 @@ final class ReplyContractTests: XCTestCase {
         row["evidence"] = [["field": "body", "text": "invented evidence"]]
         XCTAssertThrowsError(try ReplyDecision.validated(JSONSerialization.data(withJSONObject: row), for: ReplySyntheticFixture.triage))
     }
+    func testTriageReportsRejectedValidationStage() throws {
+        let request = ReplySyntheticFixture.triage
+        let valid = try XCTUnwrap(JSONSerialization.jsonObject(with: ReplySyntheticFixture.decision) as? [String: Any])
+        for (key, value, expected): (String, Any, MailpipeError) in [
+            ("request_id", "other", .outputReference), ("should_reply", true, .outputFields),
+            ("summary", [], .outputSummary), ("evidence", [["field": "body", "text": "invented"]], .outputEvidence)
+        ] {
+            var row = valid
+            row[key] = value
+            XCTAssertThrowsError(try ReplyDecision.validated(JSONSerialization.data(withJSONObject: row), for: request)) {
+                XCTAssertEqual($0 as? MailpipeError, expected)
+            }
+        }
+        XCTAssertThrowsError(try ReplyDecision.validated(Data("invalid".utf8), for: request)) {
+            XCTAssertEqual($0 as? MailpipeError, .outputJSON)
+        }
+    }
     func testDestinationEvidenceAndRoundTrip() throws {
         let value = try DataDestination(messageRef: "synthetic", runID: "run", taskKind: .triage, harness: .deepseek)
         XCTAssertNil(value.vendor)

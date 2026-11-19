@@ -341,36 +341,6 @@ final class PipelineTests: XCTestCase {
         XCTAssertNil(legacy.editedBody)
         XCTAssertEqual(legacy.displayedBody, item.draft?.body)
     }
-    func testCandidateRequiresExplicitChoiceAndVersionCheck() async throws {
-        let pipeline = try setup(temporary())
-        try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
-        let id = try XCTUnwrap(pipeline.store.records().first).id
-        try pipeline.store.saveEdits(id, subject: "Hidden subject", body: "Keep my edit")
-        try pipeline.regenerate(id); try await pipeline.pump()
-        var item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertTrue(item.hasDraftCandidate)
-        XCTAssertEqual(item.displayedBody, "Keep my edit")
-        let version = try XCTUnwrap(item.draftVersion)
-        // Typing while a candidate is waiting does not dismiss it.
-        try pipeline.store.saveEdits(id, subject: item.displayedSubject, body: "Newer edit")
-        XCTAssertTrue(try XCTUnwrap(pipeline.store.record(id)).hasDraftCandidate)
-        XCTAssertThrowsError(try pipeline.store.resolveDraftCandidate(id, expected: "stale", adopt: true))
-        try pipeline.store.resolveDraftCandidate(id, expected: version, adopt: false)
-        item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertFalse(item.hasDraftCandidate)
-        XCTAssertEqual(item.displayedBody, "Newer edit")
-        // An identical output from a later run is still a new candidate.
-        try pipeline.regenerate(id); try await pipeline.pump()
-        item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertTrue(item.hasDraftCandidate)
-        XCTAssertNotEqual(item.draftVersion, version)
-        let newVersion = try XCTUnwrap(item.draftVersion)
-        try pipeline.store.resolveDraftCandidate(id, expected: newVersion, adopt: true)
-        item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertFalse(item.hasDraftCandidate)
-        XCTAssertEqual(item.displayedBody, item.draft?.body)
-        XCTAssertEqual(item.displayedSubject, "Hidden subject")
-    }
     func testReplyBodyEditsSurviveStoreReopen() async throws {
         let root = try temporary()
         var pipeline: ReplyPipeline? = try setup(root)
@@ -381,7 +351,7 @@ final class PipelineTests: XCTestCase {
         let reopened = try PipelineStore(directory: root.appendingPathComponent("state"))
         XCTAssertEqual(try reopened.record(id)?.displayedBody, "Persisted reply only")
     }
-    func testRegenerationIsBoundedAndPreservesEdits() async throws {
+    func testRegenerationIsBoundedAndReplacesBody() async throws {
         let fake = FakeReplyModel(), pipeline = try setup(temporary(), fake: fake)
         try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
         let id = try XCTUnwrap(pipeline.store.records().first).id
@@ -390,7 +360,10 @@ final class PipelineTests: XCTestCase {
             try pipeline.regenerate(id)
             XCTAssertThrowsError(try pipeline.regenerate(id))
             try await pipeline.pump()
-            XCTAssertEqual(try pipeline.store.record(id)?.displayedBody, "My local edit")
+            let saved = try XCTUnwrap(pipeline.store.record(id))
+            XCTAssertEqual(saved.displayedBody, try XCTUnwrap(saved.draft).body)
+            XCTAssertEqual(saved.displayedSubject, "My subject")
+            XCTAssertFalse(saved.hasDraftCandidate)
             XCTAssertEqual(try pipeline.store.record(id)?.state, .draftReady)
         }
         XCTAssertThrowsError(try pipeline.regenerate(id))

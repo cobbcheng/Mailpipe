@@ -75,13 +75,15 @@ public enum MailHeaderCodec {
 public struct MailSourceEvidence: Codable, Equatable, Sendable {
     private let headerDigest: String
     private let bodyDigest: String
+    private let multipartDigest: String?
     private let parameters: [String: String]
     private let subjectVersion: Int?
 
     public init?(_ raw: Data) {
-        guard let value = try? Self.components(raw, subjectForm: .decoded) else { return nil }
+        guard let value = try? Self.components(raw, subjectForm: .decoded, compareParts: true) else { return nil }
         subjectVersion = 1
         headerDigest = value.headers
+        multipartDigest = value.multipart
         bodyDigest = value.body
         parameters = value.parameters
     }
@@ -94,8 +96,9 @@ public struct MailSourceEvidence: Codable, Equatable, Sendable {
         default: return false
         }
         return forms.contains { form in
-            guard let value = try? Self.components(source, subjectForm: form),
-                  value.headers == headerDigest, value.body == bodyDigest else { return false }
+            guard let value = try? Self.components(source, subjectForm: form, compareParts: multipartDigest != nil),
+                  value.headers == headerDigest,
+                  value.body == bodyDigest || (multipartDigest != nil && value.multipart == multipartDigest) else { return false }
             // Captured MIME parameters must never silently change.
             return parameters.allSatisfy { value.parameters[$0.key] == $0.value }
         }
@@ -103,7 +106,7 @@ public struct MailSourceEvidence: Codable, Equatable, Sendable {
 
     private enum SubjectForm { case original, decoded, mailKitBase64 }
 
-    private static func components(_ raw: Data, subjectForm: SubjectForm) throws -> (headers: String, body: String, parameters: [String: String]) {
+    private static func components(_ raw: Data, subjectForm: SubjectForm, compareParts: Bool) throws -> (headers: String, body: String, parameters: [String: String], multipart: String?) {
         guard raw.count <= MailBodyLimits.rawCeiling else { throw MailBodyRejection.messageTooLarge }
         let split = try splitHeaders(raw)
         guard !split.body.isEmpty else { throw MailBodyRejection.emptyBody }
@@ -153,7 +156,32 @@ public struct MailSourceEvidence: Codable, Equatable, Sendable {
         }
         if previous == 13 { body.append(13) }
         while body.last == 10 { body.removeLast() }
-        return (contentDigest(headers), contentDigest(body), mime.parameters)
+        let multipart = compareParts ? try? multipartFingerprint(body, mime: mime) : nil
+        return (contentDigest(headers), contentDigest(body), mime.parameters, multipart)
+    }
+
+    // Preserve the framing, every part header, and all payload bytes, including attachments.
+    // Transfer wrapping and header order can differ between two serializations.
+    private static func multipartFingerprint(_ body: Data, mime: MIMEHeaders) throws -> String {
+        guard ["multipart/alternative", "multipart/mixed", "multipart/related"].contains(mime.mediaType),
+              let boundary = mime.parameters["boundary"], !boundary.isEmpty,
+              boundary.utf8.count <= 70 else { throw MailBodyRejection.malformedMIME }
+        let ranges = try MIMESplit.partRanges(body, boundary: boundary)
+        guard ranges.count <= MailBodyLimits.maxParts else { throw MailBodyRejection.malformedMIME }
+        var segments: [String] = []
+        var cursor = body.startIndex
+        for range in ranges {
+            let part = try splitHeaders(Data(body[range]))
+            let headers = try MIMEHeaders(part.header, defaultType: "text/plain")
+            guard headers.fields.values.allSatisfy({ $0.count == 1 }),
+                  !headers.mediaType.hasPrefix("multipart/") else { throw MailBodyRejection.malformedMIME }
+            segments.append(contentDigest(Data(body[cursor..<range.lowerBound])))
+            segments.append(contentDigest(try JSONSerialization.data(withJSONObject: headers.fields, options: [.sortedKeys])))
+            segments.append(contentDigest(try TransferDecoding.apply(part.body, encoding: headers.encoding)))
+            cursor = range.upperBound
+        }
+        segments.append(contentDigest(Data(body[cursor...])))
+        return contentDigest(Data(segments.joined(separator: "|").utf8))
     }
 
     /// Ignore display names, preserve mailbox order and the case-sensitive local part.
@@ -682,6 +710,9 @@ private func splitHeaders(_ data: Data) throws -> (header: Data, body: Data) {
 
 private enum MIMESplit {
     static func parts(_ data: Data, boundary: String) throws -> [Data] {
+        try partRanges(data, boundary: boundary).map { Data(data[$0]) }
+    }
+    static func partRanges(_ data: Data, boundary: String) throws -> [Range<Int>] {
         let bytes = [UInt8](data)
         var starts = [0]
         for index in bytes.indices where bytes[index] == 10 { starts.append(index + 1) }
@@ -712,7 +743,7 @@ private enum MIMESplit {
             if closing != nil { break }
         }
         guard !opens.isEmpty, let closing else { throw MailBodyRejection.malformedMIME }
-        var slices: [Data] = []
+        var slices: [Range<Int>] = []
         let markers = opens + [closing]
         for index in 0..<(markers.count - 1) {
             let from = starts[markers[index]] + content(markers[index]).count
@@ -721,8 +752,7 @@ private enum MIMESplit {
             var end = markers[index + 1] < starts.count ? starts[markers[index + 1]] : bytes.count
             if end >= 2, bytes[end - 1] == 10, bytes[end - 2] == 13 { end -= 2 }
             else if end >= 1, bytes[end - 1] == 10 { end -= 1 }
-            if start <= end { slices.append(Data(bytes[start..<end])) }
-            else { slices.append(Data()) }
+            slices.append((data.startIndex + start)..<(data.startIndex + max(start, end)))
         }
         return slices
     }
