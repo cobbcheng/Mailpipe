@@ -47,8 +47,8 @@ private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate {
     private var present: (() -> Void)?
     private var awaitingWindow = false
 
-    func connect(_ action: OpenWindowAction, model: PendingModel) {
-        present = { action.openMailpipe(for: model) }
+    func connect(_ action: OpenWindowAction) {
+        present = { action.openMailpipe() }
         if awaitingWindow {
             awaitingWindow = false
             present?()
@@ -75,8 +75,7 @@ private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension OpenWindowAction {
-    @MainActor func openMailpipe(for model: PendingModel) {
-        model.showsOnboardingReceipt = false
+    @MainActor func openMailpipe() {
         self(id: "workbench")
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -90,15 +89,14 @@ struct MailpipeApp: App {
         MenuBarExtra {
             PendingMenu(model: pending)
         } label: {
-            LaunchStatusIcon(model: pending, appDelegate: appDelegate)
+            LaunchStatusIcon(appDelegate: appDelegate)
         }.menuBarExtraStyle(.menu)
         Window("Mailpipe", id: "workbench") {
-            if pending.onboarding.completed && !pending.showsOnboardingReceipt {
+            if pending.onboarding.completed {
                 PendingWorkbench(model: pending).frame(minWidth: 660, minHeight: 380)
             } else {
-                OnboardingView(model: pending) { pending.showsOnboardingReceipt = false }
+                OnboardingView(model: pending)
                     .navigationTitle("开始使用 Mailpipe")
-                    .onDisappear { pending.showsOnboardingReceipt = false }
             }
         }
         .windowResizability(.contentSize)
@@ -120,12 +118,11 @@ struct MailpipeApp: App {
 }
 
 private struct LaunchStatusIcon: View {
-    @ObservedObject var model: PendingModel
     let appDelegate: MailpipeAppDelegate
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Image("MenuBarIcon").accessibilityLabel("Mailpipe")
-            .onAppear { appDelegate.connect(openWindow, model: model) }
+            .onAppear { appDelegate.connect(openWindow) }
     }
 }
 
@@ -133,7 +130,7 @@ private struct WorkbenchCommand: View {
     @ObservedObject var model: PendingModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Button(model.onboarding.completed ? "打开工作台" : "继续设置 Mailpipe") { openWindow.openMailpipe(for: model) }
+        Button(model.onboarding.completed ? "打开工作台" : "继续设置 Mailpipe") { openWindow.openMailpipe() }
             .keyboardShortcut("1", modifiers: .command)
     }
 }
@@ -152,7 +149,7 @@ private struct InitialSetupSettings: View {
             }
             Button("继续设置 Mailpipe") {
                 dismiss()
-                openWindow.openMailpipe(for: model)
+                openWindow.openMailpipe()
             }.keyboardShortcut(.defaultAction)
         }.padding(32)
     }

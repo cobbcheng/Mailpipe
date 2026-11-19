@@ -17,8 +17,6 @@ final class PendingModel: ObservableObject {
     @Published var onboardingBusy = false
     @Published var onboardingIssue: String?
     @Published var extensionObservation: ExtensionObservation?
-    // Only the window that just finished initial setup presents the receipt.
-    @Published var showsOnboardingReceipt = false
     private var onboardingSession: OnboardingSession?
     private var onboardingTask: Task<Void, Never>?
     private var configurationSave: Task<Void, Never>?
@@ -220,7 +218,8 @@ final class PendingModel: ObservableObject {
         }
     }
     func rediscoverTools() {
-        installations = HarnessDiscovery.find().filter { $0.kind == .deepseek }
+        let preferred = onboarding.executable.isEmpty ? settings.executable : onboarding.executable
+        installations = HarnessDiscovery.deepSeekLaunchers(in: HarnessDiscovery.find(), keeping: preferred)
     }
     func testOnboarding() {
         guard !onboardingBusy, let session = onboardingSession,
@@ -272,9 +271,8 @@ final class PendingModel: ObservableObject {
                 try session.activate(updatingConfiguration: updating)
                 let active = try session.store.settings()
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
-                let completed = try session.store.onboarding()
-                showsOnboardingReceipt = !updating
-                onboarding = completed; refresh()
+                onboarding = try session.store.onboarding()
+                refresh()
                 onboardingIssue = active.suggestionsOnly == true ? "逐封建议已就绪；每封提交前需确认内容和工具。" : active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
             } catch is CancellationError {
                 return
@@ -283,10 +281,6 @@ final class PendingModel: ObservableObject {
     }
 
     var onboardingTestPassed: Bool { OnboardingSession.testPassed(onboardingResult, level: onboarding.level) }
-    func useSuggestions() {
-        onboarding.suggestionsOnly = true
-        saveOnboarding()
-    }
     func confirmManual(id: UUID, subject: String, body: String, executable: String) -> Bool {
         do {
             guard let pipeline else { return false }
@@ -384,16 +378,16 @@ struct PendingMenu: View {
             ForEach(model.pending.suffix(3).reversed()) { item in
                 Button {
                     model.selectedID = item.id
-                    openWindow.openMailpipe(for: model)
+                    openWindow.openMailpipe()
                 } label: {
                     Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
                 }
             }
             Text("待处理 \(model.unreadCount)")
             Divider()
-            Button("打开工作台") { openWindow.openMailpipe(for: model) }
+            Button("打开工作台") { openWindow.openMailpipe() }
         } else {
-            Button("继续设置 Mailpipe") { openWindow.openMailpipe(for: model) }
+            Button("继续设置 Mailpipe") { openWindow.openMailpipe() }
         }
         Divider()
         Button("退出 Mailpipe") { NSApp.terminate(nil) }
@@ -513,16 +507,17 @@ private struct WorkbenchMessageRow: View {
     }
 }
 
-private struct DraftActionStyle: ViewModifier {
+struct WorkbenchActionStyle: ViewModifier {
     var circular = false
 
     @ViewBuilder func body(content: Content) -> some View {
+        let button = content.controlSize(.large)
         if #available(macOS 26.0, *) {
-            content.buttonStyle(.glass).buttonBorderShape(circular ? .circle : .capsule)
+            button.buttonStyle(.glass).buttonBorderShape(circular ? .circle : .capsule)
         } else if #available(macOS 14.0, *) {
-            content.buttonStyle(.bordered).buttonBorderShape(circular ? .circle : .capsule)
+            button.buttonStyle(.bordered).buttonBorderShape(circular ? .circle : .capsule)
         } else {
-            content.buttonStyle(.bordered).clipShape(Capsule())
+            button.buttonStyle(.bordered).clipShape(Capsule())
         }
     }
 }
@@ -553,8 +548,7 @@ private struct DraftDetail: View {
                             .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
                         Spacer(minLength: 0)
                         Button("打开原邮件", action: openOriginalMessage)
-                            .modifier(DraftActionStyle())
-                            .controlSize(.large)
+                            .modifier(WorkbenchActionStyle())
                             .fixedSize()
                             .disabled(originalMessageURL == nil)
                     }
@@ -686,12 +680,12 @@ private struct DraftDetail: View {
                 Divider()
                 Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
             } label: { Label("更多草稿操作", systemImage: "ellipsis").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
-                .modifier(DraftActionStyle(circular: true)).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
+                .modifier(WorkbenchActionStyle(circular: true)).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
             Spacer(minLength: 0)
             Button { showExplanation = true } label: { Label("查看处理说明与数据去向", systemImage: "info").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
-                .modifier(DraftActionStyle(circular: true)).accessibilityLabel("查看处理说明与数据去向")
+                .modifier(WorkbenchActionStyle(circular: true)).accessibilityLabel("查看处理说明与数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
-        }.modifier(DraftActionStyle()).controlSize(.large)
+        }.modifier(WorkbenchActionStyle())
     }
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 12) {
