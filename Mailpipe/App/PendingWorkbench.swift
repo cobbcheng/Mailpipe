@@ -650,7 +650,7 @@ private struct DraftDetail: View {
                 Button("打开原邮件") { openOriginalMessage() }
                     .controlSize(.small)
                     .disabled(originalMessageURL == nil)
-            }.padding(16)
+            }.padding(.vertical, 16)
             Divider()
             VStack(alignment: .leading, spacing: 10) {
                 if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
@@ -660,10 +660,8 @@ private struct DraftDetail: View {
                 Text(incoming.isEmpty ? (item.state == .awaitingBody ? "等待 Mail 提供邮件正文。收到正文前不会调用 AI，也无法重新生成。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
                     .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-            }.padding(16)
+            }.padding(.vertical, 16)
         }
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1).allowsHitTesting(false) }
     }
     private var draftCard: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -672,7 +670,7 @@ private struct DraftDetail: View {
                     .font(.headline)
                 Spacer()
                 saveStatus
-            }.padding(16)
+            }.padding(.vertical, 16)
             Divider()
             VStack(alignment: .leading, spacing: 0) {
                 attentionLine
@@ -703,12 +701,10 @@ private struct DraftDetail: View {
                         Button("候选预览") { showCandidate = true }
                     }.padding(.top, 12)
                 }
-            }.padding(16)
+            }.padding(.vertical, 16)
             Divider()
-            actions.padding(16)
+            actions.padding(.vertical, 16)
         }
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1).allowsHitTesting(false) }
     }
     @ViewBuilder private var attentionLine: some View {
         switch attention {
