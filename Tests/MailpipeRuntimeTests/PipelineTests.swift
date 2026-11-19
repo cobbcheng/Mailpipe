@@ -62,15 +62,16 @@ final class PipelineTests: XCTestCase {
         settings.scope = try AccountScope(accountID: "test", accountName: "Test", mailboxName: "INBOX")
         try store.saveSettings(settings)
         let id = try store.importCapture(InboundCapture(permissionID: settings.permission!.id, subject: "Synthetic", messageID: "test@example.com", raw: raw))
-        var item = try XCTUnwrap(store.record(id)); item.correspondents = nil; try store.save(item)
+        var item = try XCTUnwrap(store.record(id)); item.correspondents = nil; item.displayBody = nil; try store.save(item)
         let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { item, scope in
             var current = try XCTUnwrap(store.record(item.id))
             current.editedBody = "Concurrent edit"; current.state = .cancelled
             try store.save(current)
             return VerifiedMail(accountID: scope.accountID, localID: "1", source: raw)
         })
-        try await pipeline.loadCorrespondents(id)
+        try await pipeline.loadCorrespondents(id, includeBody: true)
         item = try XCTUnwrap(store.record(id))
+        XCTAssertEqual(item.displayBody, "Body")
         XCTAssertEqual(item.editedBody, "Concurrent edit")
         XCTAssertEqual(item.state, .cancelled)
         XCTAssertEqual(item.correspondents?.sender, "sender@example.com")

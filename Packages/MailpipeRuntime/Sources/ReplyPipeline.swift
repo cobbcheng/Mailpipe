@@ -37,12 +37,13 @@ public final class ReplyPipeline {
 
     /// Read-only enrichment for older rows, using the same source/account proof as dispatch.
     /// No state transition, body replacement, model call or email mutation.
-    public func loadCorrespondents(_ id: String) async throws {
+    public func loadCorrespondents(_ id: String, includeBody: Bool = false) async throws {
         try Task.checkCancellation()
-        guard let item = try store.record(id), item.correspondents == nil, item.discardedAt == nil,
+        guard let item = try store.record(id), (item.correspondents == nil || (includeBody && item.displayBody == nil)), item.discardedAt == nil,
               !item.syntheticAuthorized, item.manualExecutable == nil,
               item.excludedFromAuthorizedInbox != true else { return }
         let settings = try store.settings()
+        if includeBody && (settings.paused || item.capturedAt < Date().addingTimeInterval(-7 * 86_400)) { return }
         guard settings.permission?.id == item.permissionID else { return }
         let scopes = settings.authorizedScopes.filter { item.accountID == nil || $0.accountID == item.accountID }
         var matches: [VerifiedMail] = []
@@ -57,12 +58,12 @@ public final class ReplyPipeline {
             if valid { matches.append(verified) }
         }
         guard matches.count == 1, let source = matches.first?.source,
-              let correspondents = MailCorrespondents(source),
-              var current = try store.record(id), current.correspondents == nil,
+              var current = try store.record(id),
               current.discardedAt == nil, current.excludedFromAuthorizedInbox != true,
               current.localID == item.localID, current.accountID == item.accountID,
               current.sourceEvidence == item.sourceEvidence, current.sourceDigest == item.sourceDigest else { return }
-        current.correspondents = correspondents
+        current.correspondents = MailCorrespondents(source)
+        if includeBody, current.displayBody == nil { current.displayBody = try? PlainMailBody.displayText(source) }
         try store.save(current)
     }
     public func prepareMailCompose(id: String, subject: String, body: String,
@@ -348,6 +349,7 @@ public final class ReplyPipeline {
                         guard let source = verified.source, evidence.matches(source) else {
                             item.error = "identityUnresolved"; item.state = .needsReview; try store.save(item); return
                         }
+                        item.displayBody = try? PlainMailBody.displayText(source)
                         item.input = MailInput(messageRef: item.id, subject: item.input.subject, body: try PlainMailBody.decode(source))
                     }
                     if let source = verified.source { item.correspondents = MailCorrespondents(source) }
