@@ -100,8 +100,8 @@ struct MailpipeApp: App {
             }
         }
         .windowResizability(.contentSize)
-        .defaultSize(width: pending.onboarding.completed ? 700 : 480,
-                     height: pending.onboarding.completed ? 420 : 440)
+        .defaultSize(width: pending.onboarding.completed ? 900 : 480,
+                     height: pending.onboarding.completed ? 580 : 440)
         .commands {
             CommandGroup(after: .newItem) {
                 WorkbenchCommand(model: pending)

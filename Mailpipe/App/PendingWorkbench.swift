@@ -408,6 +408,16 @@ struct SettingsButton: View {
     }
 }
 
+// Keep banners and the scrollable message on the same reading column.
+private struct WorkbenchColumn: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: 720, alignment: .leading)
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity)
+    }
+}
+
 struct PendingWorkbench: View {
     @ObservedObject var model: PendingModel
     @State private var showManual = false
@@ -422,7 +432,7 @@ struct PendingWorkbench: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 380)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 244, max: 380)
             .overlay {
                 if visible.isEmpty { Text("暂时没有草稿").foregroundStyle(.secondary).padding() }
             }
@@ -432,20 +442,29 @@ struct PendingWorkbench: View {
                     HStack {
                         Label("请在设置中确认来信范围和 Agent。已有草稿仍保存在本机。", systemImage: "exclamationmark.shield")
                         Spacer(); SettingsButton()
-                    }.padding().background(Color(nsColor: .controlBackgroundColor))
+                    }
+                    .modifier(WorkbenchColumn())
+                    .padding(.vertical, 10)
+                    .background(Color(nsColor: .controlBackgroundColor))
                 } else if model.settings.suggestionsOnly == true {
                     HStack {
                         Text("手动粘贴的来信，由你逐封确认。").foregroundStyle(.secondary)
                         Spacer()
                         Button("添加来信…") { showManual = true }.disabled(model.settings.paused)
-                    }.padding()
+                    }
+                    .modifier(WorkbenchColumn())
+                    .padding(.vertical, 10)
                 }
                 if let issue = model.issue {
                     HStack {
                         Label(issue, systemImage: "exclamationmark.triangle")
                         Spacer(); SettingsButton()
                         Button { model.issue = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭提示")
-                    }.font(.callout).padding().background(Color(nsColor: .controlBackgroundColor))
+                    }
+                    .font(.callout)
+                    .modifier(WorkbenchColumn())
+                    .padding(.vertical, 10)
+                    .background(Color(nsColor: .controlBackgroundColor))
                 }
                 if let item = visible.first(where: { $0.id == model.selectedID }) {
                     DraftDetail(model: model, item: item).id(item.id)
@@ -454,7 +473,10 @@ struct PendingWorkbench: View {
                         Image(systemName: "text.bubble").font(.system(size: 36)).foregroundStyle(.secondary)
                         Text(visible.isEmpty ? "暂时没有草稿" : "选择一封来信").font(.title2)
                         Text("在这里审阅 Agent 起草的回复，再到 Apple Mail 发送。").foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .multilineTextAlignment(.center)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if let notice = model.notice {
                     HStack {
@@ -462,9 +484,15 @@ struct PendingWorkbench: View {
                         if model.undoDiscardID != nil { Button("撤销", action: model.undoDiscard) }
                         Spacer()
                         Button { model.notice = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭反馈")
-                    }.padding().background(Color(nsColor: .controlBackgroundColor)).accessibilityElement(children: .contain)
+                    }
+                    .modifier(WorkbenchColumn())
+                    .padding(.vertical, 10)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .accessibilityElement(children: .contain)
                 }
-            }.frame(minWidth: 440).background(Color(nsColor: .textBackgroundColor))
+            }
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
         }
         .navigationTitle("Mailpipe")
         .sheet(isPresented: $showManual) { ManualSuggestionView(model: model) }
@@ -483,29 +511,29 @@ private struct WorkbenchMessageRow: View {
         let subject = item.input.subject
         let sender = item.correspondents?.sender ?? "发件地址未采集"
         let date = item.capturedAt
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                .padding(.leading, 14)
+                .overlay(alignment: .leading) {
+                    if unread {
+                        Circle().fill(Color(nsColor: .systemBlue))
+                            .frame(width: 8, height: 8)
+                            .accessibilityHidden(true)
+                    }
+                }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(sender).font(.subheadline).lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(date, format: Calendar.autoupdatingCurrent.isDateInToday(date)
                      ? .dateTime.hour().minute()
                      : .dateTime.month(.twoDigits).day(.twoDigits))
                     .font(.caption2).monospacedDigit().fixedSize()
             }
+            .padding(.leading, 14)
             .foregroundStyle(.secondary)
         }
-        .padding(.leading, 14)
-        .overlay(alignment: .topLeading) {
-            if unread {
-                Circle().fill(Color(nsColor: .systemBlue))
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 4)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
         .accessibilityValue(unread ? "未读" : "")
     }
@@ -531,7 +559,6 @@ private struct DraftDetail: View {
     let item: StoredReply
     @State private var showExplanation = false
     @State private var confirmRegeneration = false
-    @State private var editorHeight: CGFloat = 96
     private var bodyText: String { model.editorBody(item) }
     private var incoming: String { item.displayBody ?? item.input.body }
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
@@ -545,7 +572,7 @@ private struct DraftDetail: View {
     }
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
@@ -556,11 +583,11 @@ private struct DraftDetail: View {
                             .fixedSize()
                             .disabled(originalMessageURL == nil)
                     }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("发件人：\(item.correspondents?.sender ?? "发件地址未采集")")
-                        Text("收件人（To）：\(recipientAddresses)")
+                    Grid(alignment: .leading, horizontalSpacing: 4, verticalSpacing: 4) {
+                        addressRow("发件人：", item.correspondents?.sender ?? "发件地址未采集")
+                        addressRow("收件人（To）：", recipientAddresses)
                         if let cc = item.correspondents?.cc, !cc.isEmpty {
-                            Text("抄送（Cc）：\(cc.joined(separator: "、"))")
+                            addressRow("抄送（Cc）：", cc.joined(separator: "、"))
                         }
                     }
                     .font(.caption).foregroundStyle(.secondary)
@@ -573,10 +600,9 @@ private struct DraftDetail: View {
                 originalCard
                 draftCard
             }
-            .frame(maxWidth: 720, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity, alignment: .center)
+            .modifier(WorkbenchColumn())
+            .padding(.top, 16)
+            .padding(.bottom, 24)
         }
         .onAppear { model.openEditor(item) }
         .task(id: item.draftVersion) {
@@ -592,6 +618,12 @@ private struct DraftDetail: View {
             } else {
                 Text("Agent 会再次调用模型，消耗你的额度。新草稿生成后会替换当前回复。")
             }
+        }
+    }
+    private func addressRow(_ label: String, _ addresses: String) -> some View {
+        GridRow(alignment: .firstTextBaseline) {
+            Text(label).fixedSize()
+            Text(addresses)
         }
     }
     private var originalMessageURL: URL? {
@@ -613,7 +645,7 @@ private struct DraftDetail: View {
         }
     }
     private var originalCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
                 Text("完整原文尚未取得，以下为已保存的正文。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -624,10 +656,10 @@ private struct DraftDetail: View {
         }
     }
     private var draftCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let error = item.error, let description = errorDescription(error) {
-                    Text(description).font(.caption).foregroundStyle(.secondary).padding(.top, 4)
+                    Text(description).font(.caption).foregroundStyle(.secondary)
                 }
                 if item.isPreparing {
                     HStack {
@@ -635,27 +667,26 @@ private struct DraftDetail: View {
                         Text("正在生成…").font(.callout)
                         Spacer()
                         Button("取消", action: { model.cancel(item.id) })
-                    }.padding(.top, 8)
+                    }
                 }
                 Image(systemName: "square.and.pencil")
                     .foregroundStyle(.secondary)
                     .help("回复草稿")
                     .accessibilityLabel("回复草稿")
-                replyEditor.padding(.top, 8)
+                replyEditor
                 if model.saveState(item) == .failed {
                     Button("未能保存，点此重试") { model.flushEditor(item.id) }
                         .font(.caption).buttonStyle(.link)
                 }
-            }.padding(.vertical, 16)
-            actions.padding(.vertical, 16)
+            }
+            actions
         }
     }
     private var replyEditor: some View {
         ZStack(alignment: .topLeading) {
             ReplyTextView(
                 text: Binding(get: { bodyText }, set: { model.editBody(item, body: $0) }),
-                enabled: !item.isPreparing,
-                measuredHeight: $editorHeight)
+                enabled: !item.isPreparing)
             if bodyText.isEmpty {
                 Text(item.isPreparing ? "正在准备回复，现有编辑会保留。" : "点击此处输入回复正文…")
                     .font(.system(size: ReplyTextView.bodyFont.pointSize)).foregroundStyle(.secondary)
@@ -663,10 +694,23 @@ private struct DraftDetail: View {
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: max(160, editorHeight), maxHeight: max(160, editorHeight), alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
     private var actions: some View {
-        HStack(spacing: 12) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                replyActions
+                draftActions
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                replyActions
+                draftActions
+            }
+        }
+        .modifier(WorkbenchActionStyle())
+    }
+    private var replyActions: some View {
+        HStack(spacing: 8) {
             Button {
                 Task {
                     if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
@@ -678,7 +722,13 @@ private struct DraftDetail: View {
             } label: { Label("复制回复", systemImage: "doc.on.doc") }
                 .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
+        }
+        .fixedSize()
+    }
+    private var draftActions: some View {
+        HStack(spacing: 8) {
             Button("重新生成") { confirmRegeneration = true }.disabled(!canRegenerate)
+                .fixedSize()
             Menu {
                 Button("查看数据去向") { showExplanation = true }
                 Divider()
@@ -689,7 +739,7 @@ private struct DraftDetail: View {
             Button { showExplanation = true } label: { Label("查看数据去向", systemImage: "info").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
                 .modifier(WorkbenchActionStyle(circular: true)).accessibilityLabel("查看数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
-        }.modifier(WorkbenchActionStyle())
+        }
     }
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -734,6 +784,16 @@ private struct DraftDetail: View {
 }
 
 private final class DraftTextView: NSTextView {
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard let container = textContainer, let layoutManager else { return }
+        let width = bounds.width - 2 * textContainerInset.width
+        guard width > 0, container.containerSize.width != width else { return }
+        container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: container)
+        needsDisplay = true
+    }
+
     override func resetCursorRects() {
         super.resetCursorRects()
         addCursorRect(visibleRect, cursor: .iBeam)
@@ -747,10 +807,9 @@ private struct ReplyTextView: NSViewRepresentable {
 
     @Binding var text: String
     var enabled: Bool
-    @Binding var measuredHeight: CGFloat
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, measuredHeight: $measuredHeight)
+        Coordinator(text: $text)
     }
 
     func makeNSView(context: Context) -> NSTextView {
@@ -771,12 +830,13 @@ private struct ReplyTextView: NSViewRepresentable {
         view.alignment = .left
         view.textContainerInset = NSSize(width: 0, height: 2)
         view.textContainer?.lineFragmentPadding = 0
-        view.textContainer?.widthTracksTextView = true
         view.isHorizontallyResizable = false
-        view.isVerticallyResizable = true
+        view.isVerticallyResizable = false
+        view.textContainer?.widthTracksTextView = false
         view.autoresizingMask = [.width]
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.delegate = context.coordinator
+        view.textStorage?.addLayoutManager(context.coordinator.measuringLayout)
         view.string = text
         applyTypingStyle(view)
         view.setAccessibilityLabel("回复草稿，可编辑")
@@ -785,7 +845,6 @@ private struct ReplyTextView: NSViewRepresentable {
 
     func updateNSView(_ view: NSTextView, context: Context) {
         context.coordinator.text = $text
-        context.coordinator.measuredHeight = $measuredHeight
         view.isEditable = enabled
         if view.string != text {
             let selection = view.selectedRange()
@@ -796,7 +855,6 @@ private struct ReplyTextView: NSViewRepresentable {
                 view.setSelectedRange(NSRange(location: selection.location, length: min(selection.length, limit - selection.location)))
             }
         }
-        publishHeight(of: view)
     }
 
     private func applyTypingStyle(_ view: NSTextView) {
@@ -806,26 +864,29 @@ private struct ReplyTextView: NSViewRepresentable {
         view.typingAttributes = [.font: font, .foregroundColor: NSColor.labelColor]
     }
 
-    private func publishHeight(of view: NSTextView) {
-        guard let container = view.textContainer, let layout = view.layoutManager else { return }
-        let width = max(view.bounds.width, 240)
-        container.containerSize = NSSize(width: max(40, width - view.textContainerInset.width * 2), height: CGFloat.greatestFiniteMagnitude)
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0,
+              let container = context.coordinator.measuringLayout.textContainers.first else { return nil }
+        let layout = context.coordinator.measuringLayout
+        let insets = view.textContainerInset
+        container.containerSize = NSSize(width: max(1, width - 2 * insets.width), height: CGFloat.greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
-        let used = layout.usedRect(for: container)
-        let height = max(88, ceil(used.height + view.textContainerInset.height * 2 + 12))
-        let binding = $measuredHeight
-        guard abs(height - binding.wrappedValue) > 1 else { return }
-        DispatchQueue.main.async {
-            if abs(height - binding.wrappedValue) > 1 { binding.wrappedValue = height }
-        }
+        let textHeight = max(layout.usedRect(for: container).maxY, layout.extraLineFragmentRect.maxY)
+        let minimumHeight = 3 * layout.defaultLineHeight(for: Self.bodyFont)
+        return CGSize(width: width, height: ceil(max(minimumHeight, textHeight) + 2 * insets.height))
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
-        var measuredHeight: Binding<CGFloat>
-        init(text: Binding<String>, measuredHeight: Binding<CGFloat>) {
+        // SwiftUI probes several widths. Measure the same text without reflowing the editor onscreen.
+        let measuringLayout = NSLayoutManager()
+
+        init(text: Binding<String>) {
             self.text = text
-            self.measuredHeight = measuredHeight
+            super.init()
+            let container = NSTextContainer(size: .zero)
+            container.lineFragmentPadding = 0
+            measuringLayout.addTextContainer(container)
         }
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? NSTextView else { return }
