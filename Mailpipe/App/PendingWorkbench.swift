@@ -528,15 +528,15 @@ private struct WorkbenchMessageRow: View {
 }
 
 private struct DraftActionStyle: ViewModifier {
-    var prominent = false
+    var circular = false
 
     @ViewBuilder func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
-            if prominent { content.buttonStyle(.glassProminent) }
-            else { content.buttonStyle(.glass) }
+            content.buttonStyle(.glass).buttonBorderShape(circular ? .circle : .capsule)
+        } else if #available(macOS 14.0, *) {
+            content.buttonStyle(.bordered).buttonBorderShape(circular ? .circle : .capsule)
         } else {
-            if prominent { content.buttonStyle(.borderedProminent) }
-            else { content.buttonStyle(.bordered) }
+            content.buttonStyle(.bordered).clipShape(Capsule())
         }
     }
 }
@@ -730,7 +730,6 @@ private struct DraftDetail: View {
                     if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
             } label: { Label("去发送", systemImage: "envelope") }
-                .modifier(DraftActionStyle(prominent: true))
                 .disabled(model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button {
                 if warnings.requiresCopyConfirmation { confirmCopy = true }
@@ -743,11 +742,11 @@ private struct DraftDetail: View {
                 Button("查看处理说明 / 数据去向") { showExplanation = true }
                 Divider()
                 Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
-            } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
+            } label: { Image(systemName: "ellipsis").frame(width: 18, height: 18) }
+                .modifier(DraftActionStyle(circular: true)).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
             Spacer(minLength: 0)
-            Button { showExplanation = true } label: { Image(systemName: "info.circle") }
-                .accessibilityLabel("查看处理说明与数据去向")
+            Button { showExplanation = true } label: { Image(systemName: "info").frame(width: 18, height: 18) }
+                .modifier(DraftActionStyle(circular: true)).accessibilityLabel("查看处理说明与数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
         }.modifier(DraftActionStyle()).controlSize(.regular)
     }
