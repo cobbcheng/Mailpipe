@@ -49,7 +49,7 @@ final class CaptureSourceRecoveryTests: XCTestCase {
         XCTAssertEqual(try pipeline!.store.records().map(\.id), [first.id])
         XCTAssertEqual(try pipeline!.store.record(first.id)?.input.body, "First reply please")
         let count = await fake.calls
-        XCTAssertEqual(count, 2)
+        XCTAssertEqual(count, 1)
         try pipeline!.updateSettings { $0.permission = nil }
         XCTAssertThrowsError(try pipeline!.regenerate(first.id))
     }
@@ -94,9 +94,9 @@ final class CaptureSourceRecoveryTests: XCTestCase {
         XCTAssertEqual(item.state, .draftReady)
         XCTAssertFalse(item.canRecheckIdentity)
         XCTAssertThrowsError(try resumed.recheckIdentity(id))
-        let count = await fake.calls; XCTAssertEqual(count, 2)
+        let count = await fake.calls; XCTAssertEqual(count, 1)
         try await resumed.pump()
-        let unchanged = await fake.calls; XCTAssertEqual(unchanged, 2)
+        let unchanged = await fake.calls; XCTAssertEqual(unchanged, 1)
     }
     func testChangedMissingAmbiguousOrRevokedSourcesNeverReachModel() async throws {
         for mode in ["changed", "missing", "ambiguous", "revoked", "malformed"] {

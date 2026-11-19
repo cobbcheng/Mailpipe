@@ -61,6 +61,20 @@ public struct ReplyDraftRequest: Encodable, Sendable {
     public let requestID: String
     public let triageRequestID: String
     public let message: MailInput
+    // Host-only grant. Never decoded from model output or email.
+    public var approvedPullRequest: String?
+    public static func linkedPullRequest(in body: String) -> String? {
+        let pattern = #"https://github[.]com/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*(?![A-Za-z0-9_/-])"#
+        guard let range = body.range(of: pattern, options: .regularExpression) else { return nil }
+        return String(body[range])
+    }
+    public init(message: MailInput) throws {
+        requestID = message.messageRef + "-draft"
+        // Schema v1 retains this correlation field for stored drafts and adapters.
+        triageRequestID = message.messageRef + "-triage"
+        self.message = message
+        try validate()
+    }
     public init(requestID: String, triage: ReplyTriageRequest, decision: ReplyDecision, level: ServiceLevel = .default) throws {
         try triage.validate()
         guard level.disposition(for: decision) == .generateDraft,

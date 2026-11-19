@@ -78,7 +78,7 @@ function homepage() {
         </article>
         <article>
           <h3>亲手发出最后一稿</h3>
-          <p>确认事实，复制回复，再到 Apple Mail 粘贴发送。带有待补充内容的草稿会提醒你核对。</p>
+          <p>按需编辑或复制回复，再到 Apple Mail 发送。</p>
         </article>
       </div>
     </div>

@@ -240,7 +240,7 @@ public final class ReplyPipeline {
         item.state = .awaitingAccount; item.error = nil; try store.save(item)
     }
     /// User-confirmed retry only. Reverify captured mail and preserve local edits.
-    public func regenerate(_ id: String) throws {
+    public func regenerate(_ id: String, approvedPullRequest: String? = nil) throws {
         let settings = try store.settings()
         guard var item = try store.record(id), !settings.paused, !item.isPreparing,
               item.discardedAt == nil, !item.runs.contains(where: { $0.finishedAt == nil }),
@@ -263,6 +263,7 @@ public final class ReplyPipeline {
             item.state = .awaitingAccount
         }
         item.level = settings.level
+        item.approvedPullRequest = approvedPullRequest
         item.regenerationCount = (item.regenerationCount ?? 0) + 1
         item.error = nil
         try store.save(item)
@@ -405,15 +406,9 @@ public final class ReplyPipeline {
         guard item.revision == settings.revision else {
             item.state = .needsReview; item.error = "policyChanged"; try store.save(item); return
         }
-        if item.state == .queued {
-            try await invoke(id: id, task: .triage(item.triageRequest), kind: .triage, executable: executable)
-        }
-        guard var refreshed = try store.record(id), refreshed.state == .draftQueued else { return }
-        guard let decision = refreshed.decision else {
-            refreshed.state = .needsReview; refreshed.error = "invalidStoredDecision"; try store.save(refreshed); return
-        }
-        let request = try ReplyDraftRequest(requestID: refreshed.id + "-draft", triage: refreshed.triageRequest, decision: decision, level: refreshed.level)
-        try await invoke(id: id, task: .draft(request), kind: .draft, executable: executable)
+        var request = try ReplyDraftRequest(message: item.input)
+        request.approvedPullRequest = item.approvedPullRequest
+        try await generateDraft(id: id, request: request, executable: executable)
     }
     private func authorize(_ id: String, revision: UUID) throws {
         try Task.checkCancellation()
@@ -423,43 +418,34 @@ public final class ReplyPipeline {
               item.state == .triaging || item.state == .drafting,
               (item.mailKitBody == true && settings.permission?.delivery == .mailKit && settings.permission?.id == item.permissionID && settings.suggestionsOnly != true) || (item.manualExecutable == settings.executable && item.manualExecutable != nil && settings.suggestionsOnly == true) || item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
     }
-    private func invoke(id: String, task: ReplyModelTask, kind: ReplyTaskKind, executable: String) async throws {
+    private func generateDraft(id: String, request: ReplyDraftRequest, executable: String) async throws {
         guard var item = try store.record(id), let revision = item.revision else { throw PipelineError.storage }
-        item.state = kind == .triage ? .triaging : .drafting
-        let destination = try DataDestination(messageRef: id, runID: UUID().uuidString, taskKind: kind, harness: .deepseek)
+        item.state = .drafting
+        let destination = try DataDestination(messageRef: id, runID: UUID().uuidString, taskKind: .draft, harness: .deepseek)
         item.runs.append(PipelineRun(destination: destination, startedAt: Date()))
         try store.save(item)
         do {
             let route = item.mailKitBody == true ? AccountRoute(mailKitPermission: item.permissionID, allowedHarnesses: [.deepseek])
                 : AccountRoute(accountID: item.accountID, allowedHarnesses: [.deepseek])
-            let output = try await model(executable).run(task, route: route) { [self] in
+            let output = try await model(executable).run(.draft(request), route: route) { [self] in
                 try await MainActor.run { try self.authorize(id, revision: revision) }
             }
             guard var current = try store.record(id) else { throw PipelineError.storage }
             let last = current.runs.count - 1
-            current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: kind, harness: .deepseek,
+            current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft, harness: .deepseek,
                 vendor: "deepseek-official", model: "deepseek-flash", evidence: .detected)
+            current.runs[last].readPullRequestDiff = output.readPullRequestDiff
             current.runs[last].inputTokens = output.inputTokens; current.runs[last].outputTokens = output.outputTokens
             current.runs[last].inputCharacters = output.inputCharacters; current.runs[last].outputCharacters = output.outputCharacters
             current.runs[last].finishedAt = Date()
             try store.save(current)
             try authorize(id, revision: revision)
-            switch task {
-            case .triage(let request):
-                let decision = try ReplyDecision.validated(output.content, for: request)
-                current.decisionData = output.content
-                switch current.level.disposition(for: decision) {
-                case .none: current.state = decision.shouldReply == .unknown ? .needsReview : .noReply
-                case .needsReply: current.state = .needsReply
-                case .generateDraft: current.state = .draftQueued
-                }
-            case .draft(let request):
-                _ = try ReplyDraft.validated(output.content, for: request)
-                current.draftData = output.content; current.state = .draftReady
-                if (current.regenerationCount ?? 0) > 0 {
-                    current.editedBody = nil
-                    current.reviewedDraftVersion = current.draftVersion
-                }
+            _ = try ReplyDraft.validated(output.content, for: request)
+            current.draftData = output.content
+            current.state = .draftReady
+            if (current.regenerationCount ?? 0) > 0 {
+                current.editedBody = nil
+                current.reviewedDraftVersion = current.draftVersion
             }
             try store.save(current)
         } catch {

@@ -70,6 +70,7 @@ public struct PipelineRun: Codable, Sendable {
     public var inputCharacters: Int?
     public var outputCharacters: Int?
     public var error: String?
+    public var readPullRequestDiff: Bool?
     public var actualCost: Double?
 }
 public enum InboxMembershipDecision {
@@ -118,6 +119,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
         draftVersion != reviewedDraftVersion && draft?.body != editedBody && draft != nil
     }
     public var discardedAt: Date?
+    public var approvedPullRequest: String?
     public var regenerationCount: Int?
     public var isPreparing: Bool { [.awaitingAccount, .queued, .triaging, .draftQueued, .drafting].contains(state) }
     public var displayedSubject: String { editedSubject ?? draft?.subject ?? input.subject }
@@ -147,8 +149,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var triageRequest: ReplyTriageRequest { ReplyTriageRequest(requestID: id + "-triage", message: input) }
     public var decision: ReplyDecision? { decisionData.flatMap { try? ReplyDecision.validated($0, for: triageRequest) } }
     public var draft: ReplyDraft? {
-        guard let decision, let draftData,
-              let request = try? ReplyDraftRequest(requestID: id + "-draft", triage: triageRequest, decision: decision, level: level) else { return nil }
+        guard let draftData, let request = try? ReplyDraftRequest(message: input) else { return nil }
         return try? ReplyDraft.validated(draftData, for: request)
     }
 }
@@ -347,7 +348,7 @@ public final class PipelineStore {
         let id = pending?.id ?? UUID().uuidString
         var body = "", error = capture.issue
         if let raw = capture.raw {
-            do { body = try PlainMailBody.decode(raw) }
+            do { body = try PlainMailBody.decode(raw, fromMailKit: true) }
             catch let reason as MailBodyRejection { error = reason.rawValue }
         }
         var item = StoredReply(id: id, permissionID: capture.permissionID, capturedAt: capture.capturedAt,
@@ -356,7 +357,7 @@ public final class PipelineStore {
         item.mailKitBody = true
         item.level = settings.level; item.revision = settings.revision
         item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
-        if let raw = capture.raw, !body.isEmpty { item.displayBody = try? PlainMailBody.displayText(raw) }
+        if let raw = capture.raw, !body.isEmpty { item.displayBody = try? PlainMailBody.displayText(raw, fromMailKit: true) }
         return try commitIngest(capture.id, recordID: id, saving: item)
     }
 

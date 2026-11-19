@@ -253,12 +253,12 @@ public enum MailReplyRecipients {
 }
 
 public enum PlainMailBody {
-    public static func decode(_ raw: Data) throws -> String {
-        try extract(raw).text
+    public static func decode(_ raw: Data, fromMailKit: Bool = false) throws -> String {
+        try extract(raw, fromMailKit: fromMailKit).text
     }
 
-    public static func extract(_ raw: Data) throws -> MailBodyExtraction {
-        let (readable, entity) = try readableBody(raw, forDisplay: false)
+    public static func extract(_ raw: Data, fromMailKit: Bool = false) throws -> MailBodyExtraction {
+        let (readable, entity) = try readableBody(raw, forDisplay: false, fromMailKit: fromMailKit)
         let bounded = BodyBound.fit(readable, attachments: entity.attachments, alreadyCut: entity.truncated)
         guard !bounded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw MailBodyRejection.emptyBody
@@ -266,14 +266,14 @@ public enum PlainMailBody {
         return MailBodyExtraction(text: bounded.text, truncated: bounded.truncated, attachments: entity.attachments)
     }
 
-    public static func displayText(_ raw: Data) throws -> String {
-        try readableBody(raw, forDisplay: true).0
+    public static func displayText(_ raw: Data, fromMailKit: Bool = false) throws -> String {
+        try readableBody(raw, forDisplay: true, fromMailKit: fromMailKit).0
     }
 
-    private static func readableBody(_ raw: Data, forDisplay: Bool) throws -> (String, EntityResult) {
+    private static func readableBody(_ raw: Data, forDisplay: Bool, fromMailKit: Bool) throws -> (String, EntityResult) {
         guard raw.count <= MailBodyLimits.rawCeiling else { throw MailBodyRejection.messageTooLarge }
         var counter = 0
-        let entity = try MIMEEntity(forDisplay: forDisplay).parse(raw, depth: 0, defaultType: "text/plain", counter: &counter)
+        let entity = try MIMEEntity(forDisplay: forDisplay, fromMailKit: fromMailKit).parse(raw, depth: 0, defaultType: "text/plain", counter: &counter)
         let readable = entity.body.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
         if readable.isEmpty {
             if entity.encrypted { throw MailBodyRejection.encryptedContent }
@@ -439,6 +439,7 @@ private struct EntityResult {
 
 private struct MIMEEntity {
     let forDisplay: Bool
+    let fromMailKit: Bool
 
     func parse(_ data: Data, depth: Int, defaultType: String, counter: inout Int) throws -> EntityResult {
         counter += 1
@@ -548,7 +549,10 @@ private struct MIMEEntity {
     }
 
     func parts(_ payload: Data, headers: MIMEHeaders, depth: Int, counter: inout Int, defaultChild: String) throws -> [EntityResult] {
-        guard let boundary = headers.parameters["boundary"], !boundary.isEmpty, boundary.utf8.count <= 70 else {
+        let declared = headers.parameters["boundary"]
+        let canRecover = fromMailKit && depth == 0 && headers.mediaType == "multipart/alternative"
+        guard let boundary = declared ?? (canRecover ? MIMESplit.enclosingBoundary(payload) : nil),
+              !boundary.isEmpty, boundary.utf8.count <= 70 else {
             throw MailBodyRejection.malformedMIME
         }
         let slices = try MIMESplit.parts(payload, boundary: boundary)
@@ -709,6 +713,16 @@ private func splitHeaders(_ data: Data) throws -> (header: Data, body: Data) {
 }
 
 private enum MIMESplit {
+    // MailKit can omit the outer parameter while preserving both delimiter lines.
+    static func enclosingBoundary(_ data: Data) -> String? {
+        let first = data.prefix(75).prefix { $0 != 10 && $0 != 13 }
+        guard first.starts(with: [45, 45]), (3...72).contains(first.count),
+              first.dropFirst(2).allSatisfy({ (33...126).contains($0) }) else { return nil }
+        let end = data.lastIndex { $0 != 10 && $0 != 13 }
+        guard let end, data[...end].suffix(first.count + 3).elementsEqual([10] + first + [45, 45]) else { return nil }
+        return String(bytes: first.dropFirst(2), encoding: .ascii)
+    }
+
     static func parts(_ data: Data, boundary: String) throws -> [Data] {
         try partRanges(data, boundary: boundary).map { Data(data[$0]) }
     }

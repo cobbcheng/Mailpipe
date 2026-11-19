@@ -69,13 +69,9 @@ public final class OnboardingSession {
         try save(draft)
     }
     public static func testPassed(_ result: StoredReply?, level: ServiceLevel) -> Bool {
-        guard let result, result.level == level, result.decision?.shouldReply == .yes,
-              result.runs.allSatisfy({ $0.finishedAt != nil && $0.error == nil }) else { return false }
-        switch level {
-        case .l0: return result.state == .noReply && result.runs.count == 1
-        case .l1: return result.state == .needsReply && result.runs.count == 1
-        case .l2: return result.state == .draftReady && result.runs.count == 2
-        }
+        guard let result, result.level == level, result.state == .draftReady, result.draft != nil,
+              let run = result.runs.last else { return false }
+        return run.destination.taskKind == .draft && run.finishedAt != nil && run.error == nil
     }
     public func activate() throws {
         let draft = try store.onboarding()
