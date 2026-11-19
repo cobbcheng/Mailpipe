@@ -3,13 +3,15 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
 import worker from './worker.mjs';
+import { release } from './release.mjs';
 
 const [source, destination] = process.argv.slice(2);
 if (!source || !destination) throw new Error('Usage: node build-pages.mjs <release.zip> <new-output-dir>');
-const name = 'Mailpipe-0.0.4-build26-d5c05d8.zip';
-const sha = 'e1d0a639829155983217dce767dfdeeb67dd8676431d527288d5c58b23826158';
+const name = release.filename;
 const bytes = await readFile(source);
-if (createHash('sha256').update(bytes).digest('hex') !== sha) throw new Error('Unexpected release SHA-256');
+if (bytes.length !== release.bytes || createHash('sha256').update(bytes).digest('hex') !== release.sha256) {
+  throw new Error('Release ZIP does not match the published size and SHA-256');
+}
 const out = resolve(destination);
 await mkdir(out); // Refuse an existing directory rather than publish stale assets.
 await cp(fileURLToPath(new URL('./public/', import.meta.url)), out, {recursive:true});

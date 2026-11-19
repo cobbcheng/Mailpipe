@@ -199,3 +199,17 @@ Dock 已能重开工作台，见[窗口验收](validation/2026-11-19-workbench-r
 输入 823 字符，输出 298 字符，假工具未报告 token。
 真实模型调用 0 次，实付金额 0。
 官网 ZIP 已通过签名、公证票据和 Gatekeeper 校验。
+
+## 0.0.5 官网发布
+
+2026-11-19 发布 build 32，App 源码为 `fa5e337`。
+宿主、Mail 扩展及内嵌框架均含 arm64 和 x86_64。
+宿主和扩展的签名权限与上一版一致。
+解压后的 App 通过签名、公证票据和 Gatekeeper 校验。
+63 项运行时隔离测试通过，真实 Harness 调用为零。
+本次未在全新 Mac 上复测首次授权。
+
+私有 R2 归档和[官网下载包](https://mailpipeai.com/downloads/Mailpipe-0.0.5-build32-fa5e337.zip)均已回读。
+两份 ZIP 与公证后归档的 7,037,263 字节逐字节一致。
+SHA-256 见[官网发布信息](../website/release.mjs)。
+生产首页、三张截图和样式文件与发布产物逐字节一致。
