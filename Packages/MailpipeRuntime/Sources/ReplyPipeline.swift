@@ -335,20 +335,24 @@ public final class ReplyPipeline {
                 }
                 do {
                     var matches: [(AccountScope, VerifiedMail)] = []
+                    var sourceMismatch = false
                     for scope in scopes {
                         let result = try await resolve(item, scope)
                         guard let current = try currentCandidate() else { return }
                         item = current
-                        if let verified = result, verified.accountID == scope.accountID { matches.append((scope, verified)) }
+                        guard let verified = result, verified.accountID == scope.accountID else { continue }
+                        if let evidence = item.sourceEvidence,
+                           verified.source.map(evidence.matches) != true {
+                            sourceMismatch = true
+                            continue
+                        }
+                        matches.append((scope, verified))
                     }
                     guard matches.count == 1, let (scope, verified) = matches.first else {
-                        item.error = matches.isEmpty ? "identityUnresolved" : "identityAmbiguous"
+                        item.error = matches.isEmpty ? (sourceMismatch ? "identitySourceMismatch" : "identityUnresolved") : "identityAmbiguous"
                         item.state = .needsReview; try store.save(item); return
                     }
-                    if let evidence = item.sourceEvidence {
-                        guard let source = verified.source, evidence.matches(source) else {
-                            item.error = "identityUnresolved"; item.state = .needsReview; try store.save(item); return
-                        }
+                    if item.sourceEvidence != nil, let source = verified.source {
                         item.displayBody = try? PlainMailBody.displayText(source)
                         item.input = MailInput(messageRef: item.id, subject: item.input.subject, body: try PlainMailBody.decode(source))
                     }

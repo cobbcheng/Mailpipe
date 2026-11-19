@@ -140,7 +140,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     }
     public var canRecheckIdentity: Bool {
         state == .needsReview && runs.isEmpty && (!input.body.isEmpty ||
-            (sourceEvidence != nil && ["identityUnresolved", "identityUnavailable", "identityAmbiguous"].contains(error ?? "")))
+            (sourceEvidence != nil && ["identitySourceMismatch", "identityUnresolved", "identityUnavailable", "identityAmbiguous"].contains(error ?? "")))
     }
     public var triageRequest: ReplyTriageRequest { ReplyTriageRequest(requestID: id + "-triage", message: input) }
     public var decision: ReplyDecision? { decisionData.flatMap { try? ReplyDecision.validated($0, for: triageRequest) } }

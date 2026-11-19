@@ -184,9 +184,7 @@ final class PendingModel: ObservableObject {
                 }
                 guard let match else { return nil }
                 let source = Data(match.source.utf8)
-                if let evidence = item.sourceEvidence {
-                    guard evidence.matches(source) else { return nil }
-                } else {
+                if item.sourceEvidence == nil {
                     guard let expected = item.sourceDigest, mailSourceDigest(source) == expected else { return nil }
                 }
                 return VerifiedMail(accountID: match.accountID, localID: match.localID, source: source)
@@ -631,7 +629,7 @@ private struct DraftDetail: View {
     private var attention: DraftAttention { DraftAttention.resolve(in: bodyText) }
     private var incoming: String { item.displayBody ?? item.input.body }
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
-    private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved"].contains(item.error ?? "") }
+    private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved", "identitySourceMismatch"].contains(item.error ?? "") }
     private var hasDraft: Bool { item.draft != nil || item.editedBody != nil || !bodyText.isEmpty }
     private var recipientAddresses: String {
         guard let recipients = item.correspondents?.recipients, !recipients.isEmpty else { return "收件地址未采集" }
@@ -694,13 +692,33 @@ private struct DraftDetail: View {
             if let request = composeRequest { composePreview(request) }
         }
     }
+    private var originalMessageURL: URL? {
+        guard !item.syntheticAuthorized, item.manualExecutable == nil,
+              let id = item.messageID, !id.isEmpty,
+              id.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
+              let encoded = "<\(id)>".addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+        else { return nil }
+        return URL(string: "message://" + encoded)
+    }
+    private func openOriginalMessage() {
+        guard let url = originalMessageURL,
+              let mail = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.mail") else {
+            model.notify("无法打开 Apple Mail。")
+            return
+        }
+        NSWorkspace.shared.open([url], withApplicationAt: mail, configuration: .init()) { _, error in
+            if error != nil { Task { @MainActor in model.notify("Apple Mail 未能打开原邮件。") } }
+        }
+    }
     private var originalCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Label("原邮件", systemImage: "envelope")
                     .font(.headline)
                 Spacer()
-                Text("只读").font(.caption).foregroundStyle(.secondary)
+                Button("打开原邮件") { openOriginalMessage() }
+                    .controlSize(.small)
+                    .disabled(originalMessageURL == nil)
             }.padding(16)
             Divider()
             VStack(alignment: .leading, spacing: 10) {
@@ -919,7 +937,14 @@ private struct DraftDetail: View {
         switch code {
         case "contentExpired": return "来信已超过处理有效期，请重新确认内容后使用逐封建议。"
         case "policyChanged", "revoked": return "处理授权已变更，请在设置中核对。"
+        case "identitySourceMismatch": return "已找到原邮件，但采集内容与 Mail 原文不一致。请打开原邮件核对。"
         case "identityUnresolved", "identityUnavailable", "identityAmbiguous": return "无法唯一核对原邮件，请检查 Mail 权限和账户。"
+        case "invalidOutput": return "AI 输出未通过校验。此记录没有保存具体原因。"
+        case "outputJSON": return "AI 返回的内容无法解析为 JSON 对象。"
+        case "outputFields": return "AI 返回的字段、类型或枚举值不符合要求。"
+        case "outputReference": return "AI 返回的版本或邮件、请求标识与本次请求不符。"
+        case "outputSummary": return "AI 返回的摘要条数或长度不符合要求。"
+        case "outputEvidence": return "AI 返回的引文无法与原文对应，或超出了引文限制。"
         case "cancelled": return "任务已取消，当前编辑保留。"
         default: return "处理未成功，当前编辑保留。请检查 AI 工具连接。"
         }
