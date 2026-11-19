@@ -658,13 +658,6 @@ private struct DraftDetail: View {
     }
     private var draftCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Label("回复草稿", systemImage: "square.and.pencil")
-                    .font(.headline)
-                Spacer()
-                saveStatus
-            }.padding(.vertical, 16)
-            Divider()
             VStack(alignment: .leading, spacing: 0) {
                 attentionLine
                 if let handoff = item.composeHandoff {
@@ -687,6 +680,10 @@ private struct DraftDetail: View {
                     }.padding(.top, 8)
                 }
                 replyEditor.padding(.top, 12)
+                if model.saveState(item) == .failed {
+                    Button("未能保存，点此重试") { model.flushEditor(item.id) }
+                        .font(.caption).buttonStyle(.link)
+                }
                 if item.hasDraftCandidate {
                     HStack {
                         Label("新稿待选择，当前编辑未替换", systemImage: "doc.badge.clock").font(.caption)
@@ -745,21 +742,6 @@ private struct DraftDetail: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 1)
                 .allowsHitTesting(false)
-        }
-    }
-    @ViewBuilder private var saveStatus: some View {
-        switch model.saveState(item) {
-        case .failed:
-            Button("未能保存，点此重试") { model.flushEditor(item.id) }
-                .font(.caption).buttonStyle(.link)
-        case .saving:
-            Text("保存中…").font(.caption).foregroundStyle(.secondary).accessibilityLabel("保存状态：保存中")
-        case .saved:
-            if hasDraft {
-                Text("已保存").font(.caption).foregroundStyle(.secondary).accessibilityLabel("保存状态：已保存")
-            } else {
-                EmptyView()
-            }
         }
     }
     private func composePreview(_ request: MailComposeRequest) -> some View {
