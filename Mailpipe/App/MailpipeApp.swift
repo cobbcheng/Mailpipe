@@ -54,7 +54,7 @@ struct MailpipeApp: App {
         Window("Mailpipe", id: "workbench") {
             PendingWorkbench(model: pending).frame(minWidth: 780, minHeight: 560)
         }
-        .defaultSize(width: 1060, height: 740)
+        .defaultSize(width: 920, height: 640)
         .commands {
             CommandGroup(after: .newItem) {
                 WorkbenchCommand()
