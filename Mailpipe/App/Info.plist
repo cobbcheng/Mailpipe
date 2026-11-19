@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.0.6</string>
+	<string>0.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>33</string>
+	<string>34</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
@@ -29,7 +29,7 @@
 	<key>MailpipeAppGroup</key>
 	<string>$(MAILPIPE_APP_GROUP)</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Mailpipe 需要向 Apple Mail 核对原邮件和收发件地址，并在你选择「去发送」时打开撰写窗口。由你检查并发送回复。</string>
+	<string>Mailpipe checks the original message and addresses in Apple Mail and opens a compose window for you to review and send your reply.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

@@ -17,9 +17,9 @@ final class WorkbenchModel: ObservableObject {
             defer { busyIDs.remove(installation.id) }
             do {
                 let report = try await installation.inspect()
-                reports[installation.id] = "\(report.version) · \(report.supportsHeadlessRun ? "运行参数齐全" : "缺少必要参数")"
+                reports[installation.id] = "\(report.version) · \(report.supportsHeadlessRun ? L("All required arguments available") : L("Required arguments missing"))"
             } catch {
-                reports[installation.id] = "检测失败：\((error as? MailpipeError)?.rawValue ?? "operationFailed")"
+                reports[installation.id] = L("Check failed: %1$@", String(describing: (error as? MailpipeError)?.rawValue ?? "operationFailed"))
             }
         }
     }
@@ -79,18 +79,19 @@ struct MailpipeApp: App {
     @NSApplicationDelegateAdaptor(MailpipeAppDelegate.self) private var appDelegate
     @StateObject private var model = WorkbenchModel()
     @StateObject private var pending = PendingModel()
+    @AppStorage(AppLanguage.key) private var language = AppLanguage.english.rawValue
     var body: some Scene {
         MenuBarExtra {
-            PendingMenu(model: pending)
+            PendingMenu(model: pending).environment(\.locale, Locale(identifier: language)).id(language)
         } label: {
             LaunchStatusIcon(appDelegate: appDelegate)
         }.menuBarExtraStyle(.menu)
         Window("Mailpipe", id: "workbench") {
             if pending.onboarding.completed {
-                PendingWorkbench(model: pending).frame(minWidth: 660, minHeight: 380)
+                PendingWorkbench(model: pending).environment(\.locale, Locale(identifier: language)).id(language).frame(minWidth: 660, minHeight: 380)
             } else {
-                OnboardingView(model: pending)
-                    .navigationTitle("开始使用 Mailpipe")
+                OnboardingView(model: pending).environment(\.locale, Locale(identifier: language)).id(language)
+                    .navigationTitle(L("Get started with Mailpipe"))
             }
         }
         .windowResizability(.contentSize)
@@ -98,14 +99,14 @@ struct MailpipeApp: App {
                      height: pending.onboarding.completed ? 580 : 440)
         .commands {
             CommandGroup(after: .newItem) {
-                WorkbenchCommand(model: pending)
+                WorkbenchCommand(model: pending).environment(\.locale, Locale(identifier: language)).id(language)
             }
         }
         Settings {
             if pending.onboarding.completed {
-                MailpipeSettings(model: pending, diagnostics: model)
+                MailpipeSettings(model: pending, diagnostics: model).environment(\.locale, Locale(identifier: language)).id(language)
             } else {
-                InitialSetupSettings(model: pending)
+                InitialSetupSettings(model: pending).environment(\.locale, Locale(identifier: language)).id(language)
             }
         }
     }
@@ -124,7 +125,7 @@ private struct WorkbenchCommand: View {
     @ObservedObject var model: PendingModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Button(model.onboarding.completed ? "打开工作台" : "继续设置 Mailpipe") { openWindow.openMailpipe() }
+        Button(model.onboarding.completed ? L("Open workbench") : L("Continue Mailpipe setup")) { openWindow.openMailpipe() }
             .keyboardShortcut("1", modifiers: .command)
     }
 }
@@ -135,13 +136,14 @@ private struct InitialSetupSettings: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(spacing: 16) {
-            Text("先连接你的 Agent，再选择要交给它起草回复的来信。")
+            LanguagePicker()
+            Text(L("Connect your agent, then choose which messages it can draft replies for."))
             if model.settings.permission != nil {
                 // Older versions could leave an active grant alongside an unfinished setup draft.
-                if !model.settings.paused { Button("暂停处理", action: model.togglePause) }
-                Button("撤销已有来信处理授权", role: .destructive, action: model.revoke)
+                if !model.settings.paused { Button(L("Pause processing"), action: model.togglePause) }
+                Button(L("Revoke existing mail authorization"), role: .destructive, action: model.revoke)
             }
-            Button("继续设置 Mailpipe") {
+            Button(L("Continue Mailpipe setup")) {
                 dismiss()
                 openWindow.openMailpipe()
             }.keyboardShortcut(.defaultAction)
@@ -157,70 +159,71 @@ struct MailpipeSettings: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             Form {
-                Section("回复草稿") {
-                    Text(model.settings.paused ? "已暂停向 Agent 提交来信。" : "Agent 只能为你授权的来信起草回复。")
-                    Button(model.settings.paused ? "恢复处理" : "暂停处理", action: model.togglePause)
-                    Text("草稿保存在这台 Mac 上。从菜单栏打开工作台，改好回复后由你在 Apple Mail 发送。")
+                LanguagePicker()
+                Section(L("Reply drafts")) {
+                    Text(model.settings.paused ? L("Sending messages to the agent is paused.") : L("Your agent can draft replies only for authorized messages."))
+                    Button(model.settings.paused ? L("Resume processing") : L("Pause processing"), action: model.togglePause)
+                    Text(L("Drafts stay on this Mac. Review them from the menu bar and send from Apple Mail."))
                         .foregroundStyle(.secondary)
                 }
                 configurationFooter()
-            }.formStyle(.grouped).tabItem { Label("通用", systemImage: "gearshape") }.tag(Tab.general)
+            }.formStyle(.grouped).tabItem { Label(L("General"), systemImage: "gearshape") }.tag(Tab.general)
             Form {
-                Section("来信处理") {
-                    Text("授权后，Mailpipe 会将 Apple Mail 所有账户的新来信主题和正文交给 \(model.onboarding.harnessKind.displayName)，由它发送至\(model.onboarding.harnessKind.modelServiceDescription)。填写主题后，仅处理主题完全匹配的新来信。").foregroundStyle(.secondary)
+                Section(L("Incoming mail")) {
+                    Text(L("Once authorized, Mailpipe gives %1$@ the subject and body of new messages from all Apple Mail accounts to send to %2$@. Enter a subject to require an exact match.", String(describing: model.onboarding.harnessKind.displayName), String(describing: model.onboarding.harnessKind.modelServiceDescription))).foregroundStyle(.secondary)
                     if model.onboarding.harnessKind == .opencode, let modelID = model.onboardingResult?.runs.last?.destination.model {
-                        LabeledContent("授权的模型", value: modelID)
+                        LabeledContent(L("Authorized model"), value: modelID)
                     }
-                    TextField("限定邮件主题（可选）", text: $model.onboarding.exactSubject)
-                    Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings)
-                    Toggle("我已在 Mail 中启用扩展", isOn: $model.onboarding.extensionAcknowledged)
+                    TextField(L("Limit by subject (optional)"), text: $model.onboarding.exactSubject)
+                    Button(L("Open Mail extension settings"), action: model.openMailAndExtensionSettings)
+                    Toggle(L("I enabled the extension in Mail"), isOn: $model.onboarding.extensionAcknowledged)
                 }
                 configurationFooter(confirmsScope: true)
-            }.formStyle(.grouped).tabItem { Label("来信处理", systemImage: "envelope") }.tag(Tab.scope)
+            }.formStyle(.grouped).tabItem { Label(L("Incoming mail"), systemImage: "envelope") }.tag(Tab.scope)
             Form {
-                Section("起草回复的 Agent") {
+                Section(L("Drafting agent")) {
                     ReplyToolPicker(model: model)
-                    Text("连接测试会将一封示例邮件交给\(model.onboarding.harnessKind.modelServiceDescription)试写回复，会消耗额度。").foregroundStyle(.secondary)
+                    Text(L("Testing sends a sample message to %1$@ for drafting and uses your quota.", String(describing: model.onboarding.harnessKind.modelServiceDescription))).foregroundStyle(.secondary)
                     if model.onboardingBusy {
-                        ProgressView("正在连接…")
-                        Button("取消测试", action: model.cancelOnboardingTest)
+                        ProgressView(L("Connecting…"))
+                        Button(L("Cancel test"), action: model.cancelOnboardingTest)
                     } else if model.onboardingTestPassed {
                         Label(model.connectionLabel, systemImage: "checkmark.circle")
-                        Button("重新测试", action: model.testOnboarding)
+                        Button(L("Test again"), action: model.testOnboarding)
                     } else {
-                        Button("确认并测试连接", action: model.testOnboarding).disabled(model.selectedTool == nil)
+                        Button(L("Confirm and test connection"), action: model.testOnboarding).disabled(model.selectedTool == nil)
                     }
                 }
                 configurationFooter()
                 Section {
-                    DisclosureGroup("高级诊断") {
-                        Button("重新查找 Agent", action: model.rediscoverTools)
+                    DisclosureGroup(L("Advanced diagnostics")) {
+                        Button(L("Find agents again"), action: model.rediscoverTools)
                         ForEach(model.installations) { tool in
                             Text(tool.executable.path).textSelection(.enabled)
-                            Button("检查版本与参数") { diagnostics.inspect(tool) }.disabled(diagnostics.busyIDs.contains(tool.id))
+                            Button(L("Check version and arguments")) { diagnostics.inspect(tool) }.disabled(diagnostics.busyIDs.contains(tool.id))
                             if let report = diagnostics.reports[tool.id] { Text(report) }
                         }
                         if let issue = model.issue { Text(issue).textSelection(.enabled) }
                         if let result = model.onboardingResult {
                             ForEach(result.runs, id: \.destination.runID) { run in
-                                Text("输入 token：\(run.inputTokens.map(String.init) ?? "未知")；输出 token：\(run.outputTokens.map(String.init) ?? "未知")")
-                                Text("输入字符：\(run.inputCharacters.map(String.init) ?? "未知")；输出字符：\(run.outputCharacters.map(String.init) ?? "未知")；实付金额：未知")
+                                Text(L("Input tokens: %1$@ · Output tokens: %2$@", String(describing: run.inputTokens.map(String.init) ?? L("unknown")), String(describing: run.outputTokens.map(String.init) ?? L("unknown"))))
+                                Text(L("Input characters: %1$@ · Output: %2$@ · Actual cost unknown", String(describing: run.inputCharacters.map(String.init) ?? L("unknown")), String(describing: run.outputCharacters.map(String.init) ?? L("unknown"))))
                             }
                         }
                     }
                 }
             }.formStyle(.grouped).tabItem { Label("Agent", systemImage: "sparkles") }.tag(Tab.agent)
             Form {
-                Section("隐私与数据") {
-                    Text("Mailpipe 在这台 Mac 上保存来信、草稿和设置，只把获准起草的邮件主题和正文交给你连接的 Agent。")
-                    Text("当前配置由\(model.settings.harnessKind.displayName) 将这些内容发给\(model.settings.harnessKind.modelServiceDescription)。Mailpipe 不会向模型发送附件内容。")
+                Section(L("Privacy and data")) {
+                    Text(L("Mailpipe stores mail, drafts and settings on this Mac. Only authorized subjects and message bodies go to your agent."))
+                    Text(L("%1$@ sends this content to %2$@. Mailpipe excludes attachment contents.", String(describing: model.settings.harnessKind.displayName), String(describing: model.settings.harnessKind.modelServiceDescription)))
                     if model.settings.harnessKind == .deepseek {
-                        Text("来信含 GitHub PR 链接时，Agent 可核对公开变更。使用你的 GitHub 账户读取变更，需要你另行确认。")
+                        Text(L("For GitHub PR links, the agent can check public changes. Access through your GitHub account requires separate confirmation."))
                     }
-                    Button("撤销来信处理授权", role: .destructive, action: model.revoke)
-                    Text("撤销后，Agent 不再处理新来信。已有草稿仍可在本机查看。").foregroundStyle(.secondary)
+                    Button(L("Revoke mail authorization"), role: .destructive, action: model.revoke)
+                    Text(L("After revocation, the agent stops processing new mail. Existing drafts stay on this Mac.")).foregroundStyle(.secondary)
                 }
-            }.formStyle(.grouped).tabItem { Label("隐私与数据", systemImage: "hand.raised") }.tag(Tab.privacy)
+            }.formStyle(.grouped).tabItem { Label(L("Privacy and data"), systemImage: "hand.raised") }.tag(Tab.privacy)
         }.frame(width: 660, height: 520)
             .onChange(of: model.onboarding) { _ in model.saveOnboarding() }
     }
@@ -228,9 +231,9 @@ struct MailpipeSettings: View {
         Section {
             if let issue = model.onboardingIssue { Text(issue).foregroundStyle(.secondary) }
             if !confirmsScope && (model.requiresToolConsent || model.needsPermissionRecovery) {
-                Button("确认来信范围与授权") { selectedTab = .scope }
+                Button(L("Confirm mail scope and authorization")) { selectedTab = .scope }
             } else {
-                Button(model.requiresToolConsent || model.needsPermissionRecovery ? "授权 \(model.onboarding.harnessKind.displayName) 处理新来信" : "保存配置", action: model.applyConfiguration)
+                Button(model.requiresToolConsent || model.needsPermissionRecovery ? L("Allow %1$@ to process new messages", String(describing: model.onboarding.harnessKind.displayName)) : L("Save settings"), action: model.applyConfiguration)
                     .disabled(model.onboardingBusy || !model.onboardingTestPassed || !model.onboarding.extensionAcknowledged || !model.hasSharedInbox)
             }
         }

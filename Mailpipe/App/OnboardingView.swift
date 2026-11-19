@@ -6,9 +6,9 @@ import MailpipeCore
 extension HarnessKind {
     var modelServiceDescription: String {
         switch self {
-        case .deepseek, .openclaw, .hermes: "DeepSeek 云端模型"
-        case .claude, .opencode: "\(displayName) 配置的模型服务"
-        case .codex: "Codex CLI 配置的模型服务"
+        case .deepseek, .openclaw, .hermes: L("the DeepSeek cloud model")
+        case .claude, .opencode: L("the model service configured in %1$@", String(describing: displayName))
+        case .codex: L("the model service configured in Codex CLI")
         }
     }
 }
@@ -17,7 +17,7 @@ struct ReplyToolPicker: View {
     @ObservedObject var model: PendingModel
 
     var body: some View {
-        LabeledContent("起草回复的 Agent") {
+        LabeledContent(L("Drafting agent")) {
             AgentPopUpButton(tools: model.installations, selectedID: model.selectedTool?.id,
                              isEnabled: !model.onboardingBusy, select: model.selectTool)
                 .modifier(AgentMenuSurface())
@@ -62,7 +62,7 @@ private struct AgentPopUpButton: NSViewRepresentable {
         button.controlSize = .large
         button.lineBreakMode = .byTruncatingMiddle
         button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        button.setAccessibilityLabel("起草回复的 Agent")
+        button.setAccessibilityLabel(L("Drafting agent"))
         button.target = context.coordinator
         button.action = #selector(Coordinator.choose(_:))
         return button
@@ -75,7 +75,7 @@ private struct AgentPopUpButton: NSViewRepresentable {
             (button.itemArray.first?.tag == -1) != (selectedID == nil) {
             button.removeAllItems()
             if selectedID == nil {
-                button.addItem(withTitle: "选择 Agent")
+                button.addItem(withTitle: L("Choose agent"))
                 button.lastItem?.tag = -1
             }
             for tool in tools {
@@ -101,7 +101,7 @@ struct OnboardingView: View {
 
     private var step: Int { model.onboarding.step }
     private var tool: HarnessInstallation? { model.selectedTool }
-    private var toolName: String { tool?.kind.displayName ?? "所选 Agent" }
+    private var toolName: String { tool?.kind.displayName ?? L("Selected agent") }
     private var tested: Bool { model.onboardingTestPassed }
 
     var body: some View {
@@ -142,26 +142,26 @@ struct OnboardingView: View {
 
     private var title: String {
         switch step {
-        case 1: return "让你的 Agent，帮你回邮件"
-        case 2: return "连接你的 Agent"
-        case 3: return "从 Apple Mail 接收新邮件"
-        case 4: return "哪些来信交给 Agent？"
-        default: return "授权 Agent 为新邮件起草回复"
+        case 1: return L("Let your agent draft your replies")
+        case 2: return L("Connect your agent")
+        case 3: return L("Receive new messages from Apple Mail")
+        case 4: return L("Which messages can your agent read?")
+        default: return L("Authorize replies to new messages")
         }
     }
 
     private var introduction: String {
         switch step {
         case 1:
-            return "Mailpipe 在你的 Mac 上保存来信和草稿，只把你授权的内容交给所选 Agent 写回复。你审阅草稿，再决定是否发送。"
+            return L("Mailpipe stores messages and drafts on your Mac. Your chosen agent receives only authorized content. Review each draft and decide whether to send it.")
         case 2:
-            return "连接时，Mailpipe 会用一封示例邮件试写回复。示例主题和正文将发给\(model.onboarding.harnessKind.modelServiceDescription)，会消耗你的额度。"
+            return L("Mailpipe will test drafting with a sample subject and body sent to %1$@. This uses your quota.", String(describing: model.onboarding.harnessKind.modelServiceDescription))
         case 3:
-            return "在 Apple Mail 的「邮件」→「设置」→「扩展」中勾选 Mailpipe，再回来确认。"
+            return L("In Apple Mail, open Mail → Settings → Extensions, enable Mailpipe, then return here.")
         case 4:
-            return "来信来自 Apple Mail 的所有账户。你可以限定邮件主题，在下一步确认交给 \(toolName) 的范围。"
+            return L("New messages come from all Apple Mail accounts. Limit them by subject and confirm what %1$@ can read in the next step.", String(describing: toolName))
         default:
-            return "点击「开始使用」，即授权 Mailpipe 将以下范围内的新邮件主题和正文交给 Agent 写草稿。授权不含附件内容。"
+            return L("Choose Get started to allow Mailpipe to share the subjects and bodies of new messages in the scope below with your agent for drafting. Attachment contents are excluded.")
         }
     }
 
@@ -169,9 +169,9 @@ struct OnboardingView: View {
         switch step {
         case 1:
             VStack(alignment: .leading, spacing: 10) {
-                sampleLine("示例来信", text: "简报已更新，收到请回信。", icon: "envelope")
+                sampleLine(L("Sample message"), text: L("The brief has been updated. Please confirm receipt."), icon: "envelope")
                 Divider()
-                sampleLine("Agent 草稿", text: "收到更新的简报了，谢谢！", icon: "arrowshape.turn.up.left")
+                sampleLine(L("Agent draft"), text: L("Thanks, I received the updated brief!"), icon: "arrowshape.turn.up.left")
             }
             .padding(14)
             .background(.background, in: RoundedRectangle(cornerRadius: 10))
@@ -197,56 +197,56 @@ struct OnboardingView: View {
             ReplyToolPicker(model: model)
         }
         if model.onboardingBusy {
-            ProgressView("正在用示例邮件测试连接…").controlSize(.small)
-            Button("取消测试", action: model.cancelOnboardingTest)
+            ProgressView(L("Testing with a sample message…")).controlSize(.small)
+            Button(L("Cancel test"), action: model.cancelOnboardingTest)
                 .modifier(WorkbenchActionStyle())
         } else if let tool {
             if tested {
                 Label(model.connectionLabel, systemImage: "checkmark.circle")
             }
-            Button(tested ? "重新测试连接" : "连接 \(toolName)", action: model.testOnboarding)
+            Button(tested ? L("Retest connection") : L("Connect %1$@", String(describing: toolName)), action: model.testOnboarding)
             .modifier(WorkbenchActionStyle())
             .help(tool.executable.path)
         } else if model.installations.isEmpty {
-            Text("未找到可用的 Agent。请先安装并配置一个支持起草回复的 Agent。")
-            Button("重新查找 Agent", action: model.rediscoverTools)
+            Text(L("No available agent found. Install and configure a supported agent first."))
+            Button(L("Find agents again"), action: model.rediscoverTools)
                 .modifier(WorkbenchActionStyle())
         }
     }
 
     private var mailExtension: some View {
         VStack(spacing: 12) {
-            Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings)
+            Button(L("Open Mail extension settings"), action: model.openMailAndExtensionSettings)
                 .modifier(WorkbenchActionStyle())
-            Toggle("我已在 Mail 中启用 Mailpipe", isOn: $model.onboarding.extensionAcknowledged)
+            Toggle(L("I enabled Mailpipe in Mail"), isOn: $model.onboarding.extensionAcknowledged)
                 .toggleStyle(.checkbox)
             if !model.hasSharedInbox {
-                Text("Mailpipe 无法读取扩展的共享目录。请检查安装。")
+                Text(L("Mailpipe cannot read the extension’s shared folder. Check the installation."))
                     .foregroundStyle(.secondary)
             } else if model.extensionObservation != nil {
-                Label("已检测到 Mail 扩展近期运行过", systemImage: "checkmark.circle")
+                Label(L("Recent Mail extension activity detected"), systemImage: "checkmark.circle")
                     .foregroundStyle(.secondary)
             } else if model.onboarding.extensionAcknowledged {
-                Text("已记录你的确认。收到新邮件后可验证扩展是否运行。")
+                Text(L("Confirmation saved. The next message can verify extension activity."))
                     .foregroundStyle(.secondary)
             }
         }
     }
 
     private var scope: some View {
-        TextField("仅接收这个主题（留空表示所有主题）", text: $model.onboarding.exactSubject)
+        TextField(L("Exact subject (leave blank for all)"), text: $model.onboarding.exactSubject)
             .textFieldStyle(.roundedBorder)
-            .help("填写后，只处理主题完全相同的新邮件。")
+            .help(L("Only new messages with this exact subject will be processed."))
     }
 
     private var review: some View {
         VStack(alignment: .leading, spacing: 9) {
-            LabeledContent("起草回复的 Agent", value: toolName)
+            LabeledContent(L("Drafting agent"), value: toolName)
             if let modelName = model.onboardingResult?.runs.last?.destination.model {
-                LabeledContent("试写使用的模型", value: modelName)
+                LabeledContent(L("Model used for test"), value: modelName)
             }
             if !model.onboarding.executable.isEmpty {
-                LabeledContent("安装位置") {
+                LabeledContent(L("Installation location")) {
                     Text((model.onboarding.executable as NSString).abbreviatingWithTildeInPath)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -254,21 +254,21 @@ struct OnboardingView: View {
                         .help(model.onboarding.executable)
                 }
             }
-            LabeledContent("来信范围", value: "Apple Mail 所有账户今后的新来信")
+            LabeledContent(L("Message scope"), value: L("Future messages in all Apple Mail accounts"))
             if !model.onboarding.exactSubject.isEmpty {
-                LabeledContent("主题完全匹配", value: model.onboarding.exactSubject)
+                LabeledContent(L("Exact subject"), value: model.onboarding.exactSubject)
             }
         }
     }
 
     private var footer: some View {
         HStack(spacing: 8) {
-            Text("第 \(step) 步，共 5 步")
+            Text(L("Step %1$@ of 5", String(describing: step)))
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
             Spacer()
             if step > 1 {
-                Button("返回") { go(to: step - 1) }
+                Button(L("Back")) { go(to: step - 1) }
                     .modifier(WorkbenchActionStyle())
             }
             primaryButton
@@ -283,16 +283,16 @@ struct OnboardingView: View {
     @ViewBuilder private var primaryButton: some View {
         switch step {
         case 1:
-            Button("开始设置") { go(to: 2) }
+            Button(L("Start setup")) { go(to: 2) }
         case 2:
-            Button("继续") { go(to: 3) }.disabled(!tested)
+            Button(L("Continue")) { go(to: 3) }.disabled(!tested)
         case 3:
-            Button("继续") { go(to: 4) }
+            Button(L("Continue")) { go(to: 4) }
                 .disabled(!model.onboarding.extensionAcknowledged || !model.hasSharedInbox)
         case 4:
-            Button("继续") { go(to: 5) }
+            Button(L("Continue")) { go(to: 5) }
         default:
-            Button("开始使用", action: model.finishOnboarding)
+            Button(L("Get started"), action: model.finishOnboarding)
                 .disabled(!tested || !model.onboarding.extensionAcknowledged || !model.hasSharedInbox)
         }
     }

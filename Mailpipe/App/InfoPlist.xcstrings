@@ -1,0 +1,28 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "NSAppleEventsUsageDescription": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe checks the original message and addresses in Apple Mail and opens a compose window for you to review and send your reply."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe comprueba el mensaje original y las direcciones en Apple Mail y abre una ventana para que revises y envíes la respuesta."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe 向 Apple Mail 核对原邮件和地址，并打开撰写窗口，由你检查并发送回复。"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

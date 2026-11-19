@@ -62,7 +62,9 @@ for label, source_dir, product, product_type in (
         if file.suffix == '.swift':
             builds.append(obj('build-' + str(file.relative_to(ROOT)), 'PBXBuildFile', fileRef=ref))
     if label == 'Mailpipe':
-        source_refs.append(onboarding_art)
+        catalog = obj('app-catalog', 'PBXFileReference', lastKnownFileType='text.json.xcstrings', path='Mailpipe/App/Localizable.xcstrings', sourceTree='SOURCE_ROOT')
+        info_catalog = obj('info-catalog', 'PBXFileReference', lastKnownFileType='text.json.xcstrings', path='Mailpipe/App/InfoPlist.xcstrings', sourceTree='SOURCE_ROOT')
+        source_refs.extend([onboarding_art, catalog, info_catalog])
     source_groups.append(obj(label + '-files', 'PBXGroup', children=source_refs, name=label, sourceTree='<group>'))
     sources = obj(label + '-sources', 'PBXSourcesBuildPhase', buildActionMask='2147483647', files=builds,
                   runOnlyForDeploymentPostprocessing='0')
@@ -81,6 +83,8 @@ for label, source_dir, product, product_type in (
     icon_build = obj(label + '-native-icon', 'PBXBuildFile', fileRef=app_icon)
     resource_files = [asset_build, icon_build]
     if label == 'Mailpipe':
+        resource_files.append(obj('info-catalog-build', 'PBXBuildFile', fileRef=info_catalog))
+        resource_files.append(obj('app-catalog-build', 'PBXBuildFile', fileRef=catalog))
         resource_files.append(obj('onboarding-art-build', 'PBXBuildFile', fileRef=onboarding_art))
     resources = obj(label + '-resources', 'PBXResourcesBuildPhase', buildActionMask='2147483647',
                     files=resource_files, runOnlyForDeploymentPostprocessing='0')

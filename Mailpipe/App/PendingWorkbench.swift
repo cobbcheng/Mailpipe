@@ -100,32 +100,32 @@ final class PendingModel: ObservableObject {
     func discard(_ id: String) {
         guard flushEditor(id) else { return }
         do {
-            try pipeline?.store.discard(id); undoDiscardID = id; notice = "已丢弃"
+            try pipeline?.store.discard(id); undoDiscardID = id; notice = L("Discarded")
             refresh(); noticeTask?.cancel()
             noticeTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(15))
                 guard !Task.isCancelled else { return }
                 self?.undoDiscardID = nil; self?.notice = nil
             }
-        } catch { issue = "无法丢弃草稿，请重试。" }
+        } catch { issue = L("Could not discard the draft. Try again.") }
     }
     func undoDiscard() {
         guard let id = undoDiscardID else { return }
-        do { try pipeline?.store.restoreDiscard(id); selectedID = id; undoDiscardID = nil; notice = "已恢复草稿"; refresh() }
-        catch { issue = "撤销时间已过，草稿记录仍保留在本机。" }
+        do { try pipeline?.store.restoreDiscard(id); selectedID = id; undoDiscardID = nil; notice = L("Draft restored"); refresh() }
+        catch { issue = L("Undo expired. The draft record remains on this Mac.") }
     }
     func regenerate(_ id: String) {
         do {
             guard let pipeline, let item = try pipeline.store.record(id) else { throw PipelineError.storage }
             guard item.canRequestRegeneration(settings: try pipeline.store.settings()) else {
-                issue = item.state == .awaitingBody ? "尚未收到 Mail 提供的正文，暂时无法生成回复。" : "请先核对来信处理授权、暂停状态和邮件有效期。"
+                issue = item.state == .awaitingBody ? L("Waiting for the message body from Mail before drafting.") : L("Check mail authorization, pause status and message expiry.")
                 return
             }
             guard flushEditor(id) else { return }
             let approved = settings.harnessKind == .deepseek ? ReplyDraftRequest.linkedPullRequest(in: item.input.body) : nil
             try pipeline.regenerate(id, approvedPullRequest: approved); refresh()
         }
-        catch { issue = "无法重新生成。请检查暂停状态、来信授权、Agent 连接和邮件有效期。每封最多重新生成三次。" }
+        catch { issue = L("Could not regenerate. Check pause status, authorization, agent connection and message expiry. Each message allows three retries.") }
     }
     @Published var composeBusy = false
     func prepareCompose(_ item: StoredReply) async -> MailComposeRequest? {
@@ -135,7 +135,7 @@ final class PendingModel: ObservableObject {
             return try await pipeline.prepareMailCompose(id: item.id, subject: item.displayedSubject, body: editorBody(item),
                 senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) })
         } catch {
-            notify("无法准备 Mail 撰写窗口。请核对原邮件位置、地址和 Mail 自动化权限；当前编辑已保留。")
+            notify(L("Could not prepare a Mail compose window. Check the original message, addresses and automation permission. Your edits were kept."))
             return nil
         }
     }
@@ -148,7 +148,7 @@ final class PendingModel: ObservableObject {
                 open: { try AppleMailComposer.open($0) })
             refresh(); return true
         } catch {
-            notify("未能确认撰写窗口。请先查看 Mail，避免重复创建；原邮件或授权变化时需重新确认。当前编辑已保留。")
+            notify(L("Check Mail before trying again to avoid opening a duplicate compose window. Changes to the original or authorization require confirmation. Your edits were kept."))
             refresh(); return false
         }
     }
@@ -210,7 +210,7 @@ final class PendingModel: ObservableObject {
                     try? await Task.sleep(for: .seconds(1))
                 }
             }
-        } catch { issue = "无法打开本机的回复队列（\(Self.code(error))）。" }
+        } catch { issue = L("Could not open the local reply queue (%1$@).", String(describing: Self.code(error))) }
     }
     @discardableResult func saveOnboarding() -> Bool {
         do {
@@ -220,7 +220,7 @@ final class PendingModel: ObservableObject {
             onboardingResult = try session.testResult()
             return true
         } catch {
-            onboardingIssue = "无法保存当前设置：\(Self.code(error))"
+            onboardingIssue = L("Could not save settings: %1$@", String(describing: Self.code(error)))
             return false
         }
     }
@@ -259,9 +259,9 @@ final class PendingModel: ObservableObject {
                 onboarding = try session.store.onboarding()
                 try await session.testPipeline.pump()
                 if let code = try session.testResult()?.error {
-                    onboardingIssue = "示例邮件试写未完成（\(code)）。"
+                    onboardingIssue = L("Sample draft test incomplete (%1$@).", String(describing: code))
                 }
-            } catch { onboardingIssue = "测试未完成：\(Self.code(error))" }
+            } catch { onboardingIssue = L("Test incomplete: %1$@", String(describing: Self.code(error))) }
         }
     }
     func cancelOnboardingTest() {
@@ -275,7 +275,7 @@ final class PendingModel: ObservableObject {
     private func saveConfiguration(updating: Bool) {
         guard !onboardingBusy, let session = onboardingSession, let tool = selectedTool, let pipeline else { return }
         guard hasSharedInbox else {
-            onboardingIssue = "无法访问 Mail 扩展的共享目录。请检查 Mailpipe 的安装。"; return
+            onboardingIssue = L("Cannot access the Mail extension’s shared folder. Check your installation."); return
         }
         guard onboarding.extensionAcknowledged else { return }
         guard saveOnboarding() else { return }
@@ -295,10 +295,10 @@ final class PendingModel: ObservableObject {
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding()
                 refresh()
-                onboardingIssue = active.paused ? "配置已保存，来信处理仍处于暂停状态。" : "已授权 Agent 为新来信起草回复，等待首封符合条件的来信。"
+                onboardingIssue = active.paused ? L("Settings saved. Processing remains paused.") : L("Drafting authorized. Waiting for the first matching message.")
             } catch is CancellationError {
                 return
-            } catch { onboardingIssue = "授权未完成，原设置保留或等待同步：\(Self.code(error))" }
+            } catch { onboardingIssue = L("Authorization incomplete. Previous settings retained or pending sync: %1$@", String(describing: Self.code(error))) }
         }
     }
 
@@ -310,13 +310,13 @@ final class PendingModel: ObservableObject {
     }
     var connectionLabel: String {
         let tool = onboarding.harnessKind.displayName
-        if let model = onboardingResult?.runs.last?.destination.model { return "已连接到 \(tool) · \(model)" }
-        return "已连接到 \(tool)"
+        if let model = onboardingResult?.runs.last?.destination.model { return L("Connected to %1$@ · %2$@", String(describing: tool), String(describing: model)) }
+        return L("Connected to %1$@", String(describing: tool))
     }
     func openExtensionSettings() {
         guard let url = URL(string: "mail-pref-pane://extensionspref") else { return }
         if !NSWorkspace.shared.open(url) {
-            onboardingIssue = "无法打开设置页。请打开 Mail，进入邮件 → 设置 → 扩展。"
+            onboardingIssue = L("Open Mail and go to Mail → Settings → Extensions.")
         }
     }
     func openMailAndExtensionSettings() {
@@ -332,7 +332,7 @@ final class PendingModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 guard error == nil else {
-                    self.onboardingIssue = "无法打开 Apple Mail。请手动打开，再进入邮件 → 设置 → 扩展。"
+                    self.onboardingIssue = L("Could not open Apple Mail. Open it manually and go to Mail → Settings → Extensions.")
                     return
                 }
                 app?.activate(options: [])
@@ -351,7 +351,7 @@ final class PendingModel: ObservableObject {
                     editorBuffers[item.id] = DraftEditBuffer(body: item.displayedBody)
                 }
             }
-            if let problem = try pipeline.store.issue() { issue = "采集提示：\(problem)" }
+            if let problem = try pipeline.store.issue() { issue = L("Capture notice: %1$@", String(describing: problem)) }
         } catch { issue = Self.code(error) }
     }
     private func start() {
@@ -405,26 +405,26 @@ struct PendingMenu: View {
                     model.selectedID = item.id
                     openWindow.openMailpipe()
                 } label: {
-                    Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
+                    Text(item.input.subject.isEmpty ? L("(No subject)") : item.input.subject)
                 }
             }
-            Text("未读草稿 \(model.unreadCount)")
+            Text(L("Unread drafts: %1$@", String(describing: model.unreadCount)))
             Divider()
-            Button("打开工作台") { openWindow.openMailpipe() }
+            Button(L("Open workbench")) { openWindow.openMailpipe() }
         } else {
-            Button("继续设置 Mailpipe") { openWindow.openMailpipe() }
+            Button(L("Continue Mailpipe setup")) { openWindow.openMailpipe() }
         }
         Divider()
-        Button("退出 Mailpipe") { NSApp.terminate(nil) }
+        Button(L("Quit Mailpipe")) { NSApp.terminate(nil) }
     }
 }
 
 struct SettingsButton: View {
     var body: some View {
         if #available(macOS 14, *) {
-            SettingsLink { Text("设置…") }
+            SettingsLink { Text(L("Settings…")) }
         } else {
-            Button("设置…") { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
+            Button(L("Settings…")) { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
         }
     }
 }
@@ -454,13 +454,13 @@ struct PendingWorkbench: View {
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 200, ideal: 244, max: 380)
             .overlay {
-                if visible.isEmpty { Text("暂时没有草稿").foregroundStyle(.secondary).padding() }
+                if visible.isEmpty { Text(L("No drafts yet")).foregroundStyle(.secondary).padding() }
             }
         } detail: {
             VStack(spacing: 0) {
                 if model.needsPermissionRecovery {
                     HStack {
-                        Label("请在设置中确认来信范围和 Agent。已有草稿仍保存在本机。", systemImage: "exclamationmark.shield")
+                        Label(L("Confirm the mail scope and agent in Settings. Existing drafts remain on this Mac."), systemImage: "exclamationmark.shield")
                         Spacer(); SettingsButton()
                     }
                     .modifier(WorkbenchColumn())
@@ -471,7 +471,7 @@ struct PendingWorkbench: View {
                     HStack {
                         Label(issue, systemImage: "exclamationmark.triangle")
                         Spacer(); SettingsButton()
-                        Button { model.issue = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭提示")
+                        Button { model.issue = nil } label: { Image(systemName: "xmark") }.accessibilityLabel(L("Dismiss notice"))
                     }
                     .font(.callout)
                     .modifier(WorkbenchColumn())
@@ -483,8 +483,8 @@ struct PendingWorkbench: View {
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "text.bubble").font(.system(size: 36)).foregroundStyle(.secondary)
-                        Text(visible.isEmpty ? "暂时没有草稿" : "选择一封来信").font(.title2)
-                        Text("在这里审阅 Agent 起草的回复，再到 Apple Mail 发送。").foregroundStyle(.secondary)
+                        Text(visible.isEmpty ? L("No drafts yet") : L("Select a message")).font(.title2)
+                        Text(L("Review your agent’s drafts here, then send them in Apple Mail.")).foregroundStyle(.secondary)
                     }
                     .multilineTextAlignment(.center)
                     .padding(20)
@@ -493,9 +493,9 @@ struct PendingWorkbench: View {
                 if let notice = model.notice {
                     HStack {
                         Text(notice)
-                        if model.undoDiscardID != nil { Button("撤销", action: model.undoDiscard) }
+                        if model.undoDiscardID != nil { Button(L("Undo"), action: model.undoDiscard) }
                         Spacer()
-                        Button { model.notice = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭反馈")
+                        Button { model.notice = nil } label: { Image(systemName: "xmark") }.accessibilityLabel(L("Dismiss feedback"))
                     }
                     .modifier(WorkbenchColumn())
                     .padding(.vertical, 10)
@@ -520,10 +520,10 @@ private struct WorkbenchMessageRow: View {
 
     var body: some View {
         let subject = item.input.subject
-        let sender = item.correspondents?.sender ?? "发件地址未采集"
+        let sender = item.correspondents?.sender ?? L("Sender address unavailable")
         let date = item.capturedAt
         VStack(alignment: .leading, spacing: 3) {
-            Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
+            Text(subject.isEmpty ? L("(No subject)") : subject).lineLimit(1).truncationMode(.tail)
                 .padding(.leading, 14)
                 .overlay(alignment: .leading) {
                     if unread {
@@ -546,7 +546,7 @@ private struct WorkbenchMessageRow: View {
         .padding(.horizontal, 4)
         .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(unread ? "未读" : "")
+        .accessibilityValue(unread ? L("Unread") : "")
     }
 }
 
@@ -578,7 +578,7 @@ private struct DraftDetail: View {
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
     private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved", "identitySourceMismatch"].contains(item.error ?? "") }
     private var recipientAddresses: String {
-        guard let recipients = item.correspondents?.recipients, !recipients.isEmpty else { return "收件地址未采集" }
+        guard let recipients = item.correspondents?.recipients, !recipients.isEmpty else { return L("Recipient address unavailable") }
         return recipients.joined(separator: "、")
     }
     private var canRegenerate: Bool {
@@ -589,22 +589,22 @@ private struct DraftDetail: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
+                        Text(item.input.subject.isEmpty ? L("(No subject)") : item.input.subject)
                             .font(.title.weight(.semibold)).textSelection(.enabled).lineLimit(3)
                         Spacer(minLength: 0)
                         Button(action: openOriginalMessage) {
-                            actionIcon("打开原邮件", "envelope.open")
+                            actionIcon(L("Open original"), "envelope.open")
                         }
-                            .help("在 Apple Mail 中打开原邮件")
+                            .help(L("Open original in Apple Mail"))
                             .modifier(WorkbenchActionStyle(circular: true))
                             .fixedSize()
                             .disabled(originalMessageURL == nil)
                     }
                     Grid(alignment: .leading, horizontalSpacing: 4, verticalSpacing: 4) {
-                        addressRow("发件人：", item.correspondents?.sender ?? "发件地址未采集")
-                        addressRow("收件人（To）：", recipientAddresses)
+                        addressRow(L("From:"), item.correspondents?.sender ?? L("Sender address unavailable"))
+                        addressRow(L("To:"), recipientAddresses)
                         if let cc = item.correspondents?.cc, !cc.isEmpty {
-                            addressRow("抄送（Cc）：", cc.joined(separator: "、"))
+                            addressRow(L("Cc:"), cc.joined(separator: "、"))
                         }
                     }
                     .font(.caption).foregroundStyle(.secondary)
@@ -626,16 +626,16 @@ private struct DraftDetail: View {
             model.markOpened(item)
         }
         .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item, includeBody: true) }
-        .alert("重新生成回复？", isPresented: $confirmRegeneration) {
-            Button("取消", role: .cancel) { }
-            Button("重新生成") { model.regenerate(item.id) }
+        .alert(L("Regenerate reply?"), isPresented: $confirmRegeneration) {
+            Button(L("Cancel"), role: .cancel) { }
+            Button(L("Regenerate")) { model.regenerate(item.id) }
         } message: {
             if model.settings.harnessKind == .deepseek, let link = ReplyDraftRequest.linkedPullRequest(in: item.input.body) {
-                Text("继续即允许 Mailpipe 使用你的 GitHub 账户读取 \(link) 的变更，交给 DeepSeek Harness 核对并起草。新草稿会替换当前回复。")
+                Text(L("Continuing lets Mailpipe use your GitHub account to read changes at %1$@ and share them with DeepSeek Harness for review and drafting. The new draft replaces your reply.", String(describing: link)))
             } else if ReplyDraftRequest.linkedPullRequest(in: item.input.body) != nil {
-                Text("\(model.settings.harnessKind.displayName) 会仅依据邮件内容重新起草，无法核对 PR 的代码变更。新草稿会替换当前回复。")
+                Text(L("%1$@ will use only the message and cannot verify PR changes. The new draft will replace your reply.", String(describing: model.settings.harnessKind.displayName)))
             } else {
-                Text("Agent 会再次调用模型，消耗你的额度。新草稿生成后会替换当前回复。")
+                Text(L("The agent will use your model quota again and replace the current reply."))
             }
         }
     }
@@ -656,15 +656,15 @@ private struct DraftDetail: View {
     private func openOriginalMessage() {
         guard let url = originalMessageURL,
               let mail = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.mail") else {
-            model.notify("无法打开 Apple Mail。")
+            model.notify(L("Could not open Apple Mail."))
             return
         }
         NSWorkspace.shared.open([url], withApplicationAt: mail, configuration: .init()) { _, error in
-            if error != nil { Task { @MainActor in model.notify("Apple Mail 未能打开原邮件。") } }
+            if error != nil { Task { @MainActor in model.notify(L("Apple Mail could not open the original message.")) } }
         }
     }
     private var originalText: some View {
-        Text(verbatim: incoming.isEmpty ? (item.state == .awaitingBody ? "正在等待 Apple Mail 提供正文。收到后才能交给 Agent 起草回复。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
+        Text(verbatim: incoming.isEmpty ? (item.state == .awaitingBody ? L("Waiting for Apple Mail to provide the message body before drafting.") : L("No readable body yet. Check Mail permissions and the message format.")) : incoming)
             .font(.callout).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -682,7 +682,7 @@ private struct DraftDetail: View {
                     VStack(alignment: .leading, spacing: 4) {
                         if !expanded { originalText.lineLimit(3) }
                         HStack {
-                            Text("来信正文")
+                            Text(L("Message body"))
                             Image(systemName: expanded ? "chevron.up" : "chevron.down")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -692,10 +692,10 @@ private struct DraftDetail: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(expanded ? "收起来信正文" : "展开来信正文")
+                .accessibilityLabel(expanded ? L("Collapse message") : L("Expand message"))
             }
             if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
-                Text("完整原文尚未取得，以下为已保存的正文。")
+                Text(L("The full source is unavailable. Showing the saved body."))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -716,18 +716,18 @@ private struct DraftDetail: View {
                 if item.isPreparing {
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text("正在生成…").font(.callout)
+                        Text(L("Generating…")).font(.callout)
                         Spacer()
-                        Button("取消", action: { model.cancel(item.id) })
+                        Button(L("Cancel"), action: { model.cancel(item.id) })
                     }
                 }
                 Image(systemName: "square.and.pencil")
                     .foregroundStyle(.secondary)
-                    .help("回复草稿")
-                    .accessibilityLabel("回复草稿")
+                    .help(L("Reply drafts"))
+                    .accessibilityLabel(L("Reply drafts"))
                 replyEditor
                 if model.saveState(item) == .failed {
-                    Button("未能保存，点此重试") { model.flushEditor(item.id) }
+                    Button(L("Save failed. Click to retry.")) { model.flushEditor(item.id) }
                         .font(.caption).buttonStyle(.link)
                 }
             }
@@ -740,7 +740,7 @@ private struct DraftDetail: View {
                 text: Binding(get: { bodyText }, set: { model.editBody(item, body: $0) }),
                 enabled: !item.isPreparing)
             if bodyText.isEmpty {
-                Text(item.isPreparing ? "正在准备回复，现有编辑会保留。" : "点击此处输入回复正文…")
+                Text(item.isPreparing ? L("Preparing a reply. Your edits will be kept.") : L("Write your reply here…"))
                     .font(.system(size: ReplyTextView.bodyFont.pointSize)).foregroundStyle(.secondary)
                     .padding(.top, 2)
                     .allowsHitTesting(false).accessibilityHidden(true)
@@ -748,7 +748,7 @@ private struct DraftDetail: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
-    private func actionIcon(_ title: LocalizedStringKey, _ symbol: String) -> some View {
+    private func actionIcon(_ title: String, _ symbol: String) -> some View {
         Label(title, systemImage: symbol)
             .labelStyle(.iconOnly)
             .frame(minWidth: 20, minHeight: 20)
@@ -760,42 +760,42 @@ private struct DraftDetail: View {
                 Task {
                     if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
-            } label: { actionIcon("在 Apple Mail 中撰写回复", "arrowshape.turn.up.left") }
-            .help("在 Apple Mail 中撰写回复")
+            } label: { actionIcon(L("Compose reply in Apple Mail"), "arrowshape.turn.up.left") }
+            .help(L("Compose reply in Apple Mail"))
             .disabled(item.manualExecutable != nil || model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button(action: copyReply) { actionIcon("复制回复", "doc.on.doc") }
-                .help("复制回复")
+            Button(action: copyReply) { actionIcon(L("Copy reply"), "doc.on.doc") }
+                .help(L("Copy reply"))
                 .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
-            Button { confirmRegeneration = true } label: { actionIcon("重新生成", "arrow.clockwise") }
-                .help("重新生成")
+            Button { confirmRegeneration = true } label: { actionIcon(L("Regenerate"), "arrow.clockwise") }
+                .help(L("Regenerate"))
                 .disabled(!canRegenerate)
             Menu {
-                Button("查看数据去向") { showExplanation = true }
+                Button(L("View data usage")) { showExplanation = true }
                 Divider()
-                Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
-            } label: { actionIcon("更多草稿操作", "ellipsis") }
-                .help("更多草稿操作").menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
+                Button(L("Discard draft"), role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
+            } label: { actionIcon(L("More draft actions"), "ellipsis") }
+                .help(L("More draft actions")).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel(L("More draft actions"))
             Spacer(minLength: 0)
-            Button { showExplanation = true } label: { actionIcon("查看数据去向", "info") }
-                .help("查看数据去向").accessibilityLabel("查看数据去向")
+            Button { showExplanation = true } label: { actionIcon(L("View data usage"), "info") }
+                .help(L("View data usage")).accessibilityLabel(L("View data usage"))
                 .popover(isPresented: $showExplanation) { explanation }
         }
         .modifier(WorkbenchActionStyle(circular: true))
     }
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("这封来信的数据去向").font(.headline)
+            Text(L("Where this message’s data went")).font(.headline)
             if let run = item.runs.last {
-                Text("本次选择的 Agent 是 \(run.destination.harness.displayName)。")
-                if let vendor = run.destination.vendor { Text("模型服务：\(vendor)") }
-                if let model = run.destination.model { Text("模型：\(model)") }
-                else { Text("本次记录未确认具体模型。") }
-            } else { Text("这封来信尚无 Agent 调用记录。") }
-            Text("来信和草稿由 Mailpipe 保存在这台 Mac 上。点回复箭头可在 Apple Mail 打开撰写窗口，由你检查并发送。")
-            if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }
+                Text(L("Agent used: %1$@.", String(describing: run.destination.harness.displayName)))
+                if let vendor = run.destination.vendor { Text(L("Model service: %1$@", String(describing: vendor))) }
+                if let model = run.destination.model { Text(L("Model: %1$@", String(describing: model))) }
+                else { Text(L("The specific model was not confirmed for this run.")) }
+            } else { Text(L("No agent runs recorded for this message.")) }
+            Text(L("Mailpipe saves messages and drafts on this Mac. Use the reply arrow to review and send in Apple Mail."))
+            if (item.regenerationCount ?? 0) >= 3 { Text(L("Regeneration limit reached. You can still edit the reply.")) }
             if let readDiff = item.runs.last?.readPullRequestDiff {
-                Text(readDiff ? "核查工具已读取 PR 代码差异。" : "核查工具未取得可读的 PR 代码差异。")
+                Text(readDiff ? L("The review tool read the PR diff.") : L("The review tool could not read the PR diff."))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.padding().frame(width: 340)
@@ -803,24 +803,24 @@ private struct DraftDetail: View {
     private func copyReply() {
         NSPasteboard.general.clearContents()
         if NSPasteboard.general.setString(bodyText, forType: .string) {
-            model.notify("已复制回复正文。请到 Mail 中粘贴发送。")
-        } else { model.notify("复制未成功，请重试。") }
+            model.notify(L("Reply copied. Paste it in Mail to send."))
+        } else { model.notify(L("Could not copy. Try again.")) }
     }
     private func errorDescription(_ code: String) -> String? {
         if let rejection = MailBodyRejection(rawValue: code) { return rejection.reviewLabel }
         switch code {
-        case "contentExpired": return "来信已超过处理有效期。"
-        case "policyChanged", "revoked": return "处理授权已变更，请在设置中核对。"
-        case "identitySourceMismatch": return "已找到原邮件，但采集内容与 Mail 原文不一致。请打开原邮件核对。"
+        case "contentExpired": return L("This message has expired.")
+        case "policyChanged", "revoked": return L("Authorization changed. Check Settings.")
+        case "identitySourceMismatch": return L("Message found, but the captured content differs from the original in Mail. Open it to check.")
         case "identityUnresolved", "identityUnavailable", "identityAmbiguous": return nil
-        case "invalidOutput": return "Agent 返回的内容未通过校验。这条记录没有具体原因。"
-        case "outputJSON": return "Agent 返回的内容无法解析为 JSON 对象。"
-        case "outputFields": return "Agent 返回的字段、类型或枚举值不符合要求。"
-        case "outputReference": return "Agent 返回的版本、邮件标识或请求标识与本次请求不符。"
-        case "outputSummary": return "Agent 返回的摘要条数或长度不符合要求。"
-        case "outputEvidence": return "Agent 返回的引文无法与原文对应，或超出了引文限制。"
-        case "cancelled": return "任务已取消，当前编辑保留。"
-        default: return "回复未能生成。你的编辑已保留，请检查 Agent 连接。"
+        case "invalidOutput": return L("The agent response failed validation. No further details were recorded.")
+        case "outputJSON": return L("The agent did not return a valid JSON object.")
+        case "outputFields": return L("The response contains invalid fields, types or values.")
+        case "outputReference": return L("The response version or identifiers do not match the request.")
+        case "outputSummary": return L("The summary count or length is invalid.")
+        case "outputEvidence": return L("Quoted evidence does not match the message or exceeds the limit.")
+        case "cancelled": return L("Task canceled. Your edits were kept.")
+        default: return L("Could not generate a reply. Your edits were kept. Check the agent connection.")
         }
     }
 }
@@ -881,7 +881,7 @@ private struct ReplyTextView: NSViewRepresentable {
         view.textStorage?.addLayoutManager(context.coordinator.measuringLayout)
         view.string = text
         applyTypingStyle(view)
-        view.setAccessibilityLabel("回复草稿，可编辑")
+        view.setAccessibilityLabel(L("Editable reply draft"))
         return view
     }
 
