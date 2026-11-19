@@ -92,7 +92,7 @@ struct MailpipeApp: App {
             PendingMenu(model: pending)
         } label: {
             LaunchStatusIcon(model: pending, appDelegate: appDelegate)
-        }.menuBarExtraStyle(.window)
+        }.menuBarExtraStyle(.menu)
         Window("Mailpipe", id: "workbench") {
             PendingWorkbench(model: pending).frame(minWidth: 660, minHeight: 380)
         }
