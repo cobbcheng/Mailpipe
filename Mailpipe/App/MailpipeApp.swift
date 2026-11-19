@@ -141,7 +141,7 @@ private struct InitialSetupSettings: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         VStack(spacing: 16) {
-            Text("完成初始设置后，可在这里更改处理方式和授权。")
+            Text("先连接你的 Agent，再选择要交给它起草回复的来信。")
             if model.settings.permission != nil || model.settings.suggestionsOnly == true {
                 // Older versions could leave an active grant alongside an unfinished setup draft.
                 if !model.settings.paused { Button("暂停处理", action: model.togglePause) }
@@ -161,38 +161,38 @@ struct MailpipeSettings: View {
     var body: some View {
         TabView {
             Form {
-                Section("处理方式") {
-                    Text(model.settings.paused ? "已暂停，新任务不会派发。" : "正在处理授权范围内的新邮件。")
+                Section("回复草稿") {
+                    Text(model.settings.paused ? "已暂停向 Agent 提交来信。" : "Agent 只能为你授权的来信起草回复。")
                     Button(model.settings.paused ? "恢复处理" : "暂停处理", action: model.togglePause)
-                    Text("回复备好后保留在菜单栏。打开工作台审阅，再复制到 Mail。")
+                    Text("草稿保存在这台 Mac 上。从菜单栏打开工作台，改好回复后由你在 Apple Mail 发送。")
                         .foregroundStyle(.secondary)
                 }
                 configurationFooter
             }.formStyle(.grouped).tabItem { Label("通用", systemImage: "gearshape") }
             Form {
                 Section("来信处理") {
-                    Picker("处理方式", selection: Binding(get: { model.onboarding.isSuggestionsOnly }, set: { model.onboarding.suggestionsOnly = $0; model.saveOnboarding() })) {
-                        Text("处理 MailKit 收到的新邮件").tag(false)
-                        Text("逐封建议").tag(true)
+                    Picker("来信来源", selection: Binding(get: { model.onboarding.isSuggestionsOnly }, set: { model.onboarding.suggestionsOnly = $0; model.saveOnboarding() })) {
+                        Text("自动接收新邮件").tag(false)
+                        Text("手动粘贴").tag(true)
                     }
                     if !model.onboarding.isSuggestionsOnly {
-                        Text("所有账户的新邮件均可交给所选 AI 工具分拣并准备草稿。").foregroundStyle(.secondary)
-                        TextField("精确主题限制（可选）", text: $model.onboarding.exactSubject)
+                        Text("Apple Mail 所有账户的新来信都在范围内。填写主题后，只把主题完全匹配的来信交给 Agent 起草。").foregroundStyle(.secondary)
+                        TextField("限定邮件主题（可选）", text: $model.onboarding.exactSubject)
                         Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings)
                         Toggle("我已在 Mail 中启用扩展", isOn: $model.onboarding.extensionAcknowledged)
-                    } else { Text("每封由你粘贴内容，并确认交给哪个工具。无需 Mail 自动化权限。") }
+                    } else { Text("在工作台粘贴一封来信，核对内容和 Agent 后提交。手动粘贴无需读取 Apple Mail。") }
                 }
                 configurationFooter
             }.formStyle(.grouped).tabItem { Label("来信处理", systemImage: "envelope") }
             Form {
-                Section("AI 工具") {
-                    Picker("工具", selection: $model.onboarding.executable) {
-                        Text("请选择工具").tag("")
+                Section("起草回复的 Agent") {
+                    Picker("Agent", selection: $model.onboarding.executable) {
+                        Text("选择 Agent").tag("")
                         ForEach(Array(model.installations.enumerated()), id: \.element.id) { index, tool in
                             Text(tool.kind.displayName + (model.installations.count > 1 ? " \(index + 1)" : "")).tag(tool.executable.path)
                         }
                     }.disabled(model.onboardingBusy)
-                    Text("内容会交给所选工具配置的模型。连接测试使用固定合成邮件，一次调用，会消耗额度。") .foregroundStyle(.secondary)
+                    Text("连接测试使用一封示例邮件，让 Agent 调用一次 DeepSeek 云端模型，会消耗额度。").foregroundStyle(.secondary)
                     if model.onboardingBusy {
                         ProgressView("正在连接…")
                         Button("取消测试", action: model.cancelOnboardingTest)
@@ -206,7 +206,7 @@ struct MailpipeSettings: View {
                 configurationFooter
                 Section {
                     DisclosureGroup("高级诊断") {
-                        Button("重新查找工具", action: model.rediscoverTools)
+                        Button("重新查找 Agent", action: model.rediscoverTools)
                         ForEach(model.installations) { tool in
                             Text(tool.executable.path).textSelection(.enabled)
                             Button("检查版本与参数") { diagnostics.inspect(tool) }.disabled(diagnostics.busyIDs.contains(tool.id))
@@ -221,20 +221,20 @@ struct MailpipeSettings: View {
                         }
                     }
                 }
-            }.formStyle(.grouped).tabItem { Label("AI 工具", systemImage: "sparkles") }
+            }.formStyle(.grouped).tabItem { Label("Agent", systemImage: "sparkles") }
             Form {
                 Section("隐私与数据") {
-                    Text("Mailpipe 不设邮件中转服务器。邮件是否离开本机，取决于你选择的工具及其模型配置。")
-                    Text("只交付主题与提取后的正文；不向模型交付附件内容。不读取已发送邮件来学习。")
-                    Text("复制草稿不会发送邮件。丢弃草稿不会删除来信或改变未来处理策略。")
+                    Text("Mailpipe 在这台 Mac 上保存来信、草稿和设置，只把获准起草的邮件主题和正文交给你连接的 Agent。")
+                    Text("DeepSeek Harness 会把这些内容发给 DeepSeek 云端模型。邮件不经 Mailpipe 服务器中转，附件内容也不会交给模型。")
+                    Text("来信含 GitHub PR 链接时，Agent 可核对公开变更。使用你的 GitHub 账户读取变更，需要你另行确认。")
                     Button("撤销来信处理授权", role: .destructive, action: model.revoke)
-                    Text("撤销后不再授权新邮件处理，已有草稿与暂停状态保留。") .foregroundStyle(.secondary)
+                    Text("撤销后，Agent 不再处理新来信。已有草稿仍可在本机查看。").foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped).tabItem { Label("隐私与数据", systemImage: "hand.raised") }
         }.frame(width: 660, height: 520)
             .onChange(of: model.onboarding) { _ in model.saveOnboarding() }
     }
-    private var selectedToolName: String { model.installations.first { $0.executable.path == model.onboarding.executable }?.kind.displayName ?? "AI 工具" }
+    private var selectedToolName: String { model.installations.first { $0.executable.path == model.onboarding.executable }?.kind.displayName ?? "所选 Agent" }
     private var configurationFooter: some View {
         Section {
             if let issue = model.onboardingIssue { Text(issue).foregroundStyle(.secondary) }

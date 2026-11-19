@@ -6,8 +6,8 @@ Worker 在服务器生成中文首页、robots.txt 和 sitemap.xml。
 
 ## 图片来源
 
-- `public/workbench.jpg` 来自基线 `18998c3` 的实机工作台。使用独立队列和三条手写合成记录，仅捕获指定进程的窗口。
-- `public/detail.jpg` 来自[草稿详情实机验收](../docs/validation/2026-11-17-draft-detail-v12.md)中的 `toolbar-restored.jpg`。该次验收使用独立合成来信与草稿。
+- `public/workbench.jpg` 和 `public/detail.jpg` 来自 0.0.4 源码 `d5c05d8` 的原生工作台。前者展示来信列表，后者展示书封评审邀请及回复草稿。
+- 截图使用独立队列和三条手写合成记录。仅捕获预览 App 的窗口，示例地址均使用 example.com。
 - 图标来自仓库的 `design/icon/png/icon_128.png`。
 
 ## 字体
@@ -25,7 +25,7 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
 
 ## 下载状态
 
-0.0.3（build 25）使用 Developer ID 签名并通过 Apple 公证。私有 R2 只归档；公开下载由现有 Pages 静态托管，不触发 Worker 或 R2 读取。
+0.0.4（build 26）使用 Developer ID 签名并通过 Apple 公证。私有 R2 只归档；公开下载由现有 Pages 静态托管，不触发 Worker 或 R2 读取。
 
 在仓库根目录执行 `node website/build-pages.mjs <含已公证App的ZIP> <全新输出目录>`，脚本会检查 SHA-256，并在发布之前生成完整首页 HTML、robots.txt 和 sitemap.xml。将输出目录的内容部署到现有 Pages 生产项目 mailpipe-official；不要额外添加 Worker、Functions 或 R2 公共端点。
 发布流程与验收门槛见[部署方法](../docs/deployment.md)。

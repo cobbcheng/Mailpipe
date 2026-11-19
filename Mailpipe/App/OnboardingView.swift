@@ -60,28 +60,28 @@ struct OnboardingView: View {
 
     private var title: String {
         switch step {
-        case 1: return "让来信变成回复草稿"
-        case 2: return "连接你的 AI 工具"
-        case 3: return "在 Mail 中启用扩展"
-        case 4: return "怎样把来信交给 Mailpipe？"
-        default: return manual ? "确认逐封建议设置" : "确认来信授权"
+        case 1: return "让你的 Agent，帮你回邮件"
+        case 2: return "连接你的 Agent"
+        case 3: return "从 Apple Mail 接收新邮件"
+        case 4: return "哪些来信交给 Agent？"
+        default: return manual ? "确认逐封起草" : "授权 Agent 为新邮件起草回复"
         }
     }
 
     private var introduction: String {
         switch step {
         case 1:
-            return "继续用 Apple Mail 收信。Mailpipe 帮你准备回复，由你审阅、修改和发送。"
+            return "Mailpipe 在你的 Mac 上保存来信和草稿，只把你授权的内容交给所选 Agent 写回复。你审阅草稿，再决定是否发送。"
         case 2:
-            return "点击连接后，Mailpipe 会用一封合成邮件测试一次。所选工具可能调用云端模型并消耗额度。"
+            return "点击连接，Agent 会用一封示例邮件试写回复。起草时，它会把邮件主题和正文发给 DeepSeek 云端模型，使用你的额度。"
         case 3:
-            return "要自动接收来信，请在「邮件 → 设置 → 扩展」中勾选 Mailpipe，再回来确认。手动粘贴来信可以跳过这一步。"
+            return "在 Apple Mail 的「邮件」→「设置」→「扩展」中勾选 Mailpipe，再回来确认。如果你想逐封粘贴来信，可以直接继续。"
         case 4:
-            return "选择来信来源。Mailpipe 会把这个范围内的主题和正文交给 \(toolName) 准备回复草稿。"
+            return "选好来信范围后，在下一步确认。\(toolName) 会用你授权的主题和正文起草回复。"
         default:
             return manual
-                ? "点击「开始使用」后，你可以在工作台添加来信。每封邮件都会在你确认后才交给所选工具。"
-                : "点击「开始使用」即授权所选工具处理以下范围内的新邮件主题和正文。附件内容不会交给模型。"
+                ? "点击「开始使用」后，你可以在工作台粘贴来信。每次先核对主题、正文和接收它们的 Agent，再提交这一封。"
+                : "点击「开始使用」，即授权 Mailpipe 将以下范围内的新邮件主题和正文交给 Agent 写草稿。授权不含附件内容。"
         }
     }
 
@@ -89,9 +89,9 @@ struct OnboardingView: View {
         switch step {
         case 1:
             VStack(alignment: .leading, spacing: 10) {
-                sampleLine("合成来信", text: "请确认收到这份项目简报。", icon: "envelope")
+                sampleLine("示例来信", text: "简报已更新，收到请回信。", icon: "envelope")
                 Divider()
-                sampleLine("回复草稿", text: "简报已收到，谢谢！", icon: "arrowshape.turn.up.left")
+                sampleLine("Agent 草稿", text: "收到更新的简报了，谢谢！", icon: "arrowshape.turn.up.left")
             }
             .padding(14)
             .background(.background, in: RoundedRectangle(cornerRadius: 10))
@@ -114,14 +114,14 @@ struct OnboardingView: View {
 
     @ViewBuilder private var connection: some View {
         if model.onboardingBusy {
-            ProgressView("正在测试连接…").controlSize(.small)
+            ProgressView("正在用示例邮件测试连接…").controlSize(.small)
             Button("取消测试", action: model.cancelOnboardingTest)
                 .modifier(WorkbenchActionStyle())
         } else if let tool {
             if tested {
                 Label("已连接到 \(toolName)", systemImage: "checkmark.circle")
             } else if model.onboardingResult != nil {
-                Text("测试未通过。请检查工具的登录状态与网络，再重新连接。")
+                Text("连接失败。请检查 \(toolName) 的登录状态和网络，再试一次。")
                     .foregroundStyle(.secondary)
             }
             Button(tested ? "重新测试连接" : "连接 \(toolName)") {
@@ -134,8 +134,8 @@ struct OnboardingView: View {
             .modifier(WorkbenchActionStyle())
             .help(tool.executable.path)
         } else {
-            Text("未找到 DeepSeek Harness。安装并登录后，可重新查找。")
-            Button("重新查找工具", action: model.rediscoverTools)
+            Text("这台 Mac 上还没找到 DeepSeek Harness。请先安装并登录。")
+            Button("重新查找 Agent", action: model.rediscoverTools)
                 .modifier(WorkbenchActionStyle())
         }
     }
@@ -147,10 +147,10 @@ struct OnboardingView: View {
             Toggle("我已在 Mail 中启用 Mailpipe", isOn: $model.onboarding.extensionAcknowledged)
                 .toggleStyle(.checkbox)
             if model.extensionObservation != nil {
-                Label("近期已收到扩展运行回执", systemImage: "checkmark.circle")
+                Label("已检测到 Mail 扩展近期运行过", systemImage: "checkmark.circle")
                     .foregroundStyle(.secondary)
             } else if model.onboarding.extensionAcknowledged {
-                Text("已记录你的确认，等待新邮件验证扩展。")
+                Text("已记录你的确认。收到新邮件后可验证扩展是否运行。")
                     .foregroundStyle(.secondary)
             }
         }
@@ -159,23 +159,23 @@ struct OnboardingView: View {
     private var scope: some View {
         VStack(alignment: .leading, spacing: 10) {
             Picker("来信来源", selection: sourceSelection) {
-                Text("自动接收所有账户的新邮件").tag(Optional(false))
-                Text("只处理我手动粘贴的邮件").tag(Optional(true))
+                Text("自动接收 Apple Mail 所有账户的新来信").tag(Optional(false))
+                Text("由我手动粘贴来信").tag(Optional(true))
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()
             if let manual = sourceSelection.wrappedValue {
                 if manual {
-                    Text("在工作台点「添加来信」，粘贴主题和正文，每封单独确认。")
+                    Text("在工作台粘贴主题和正文，确认后再交给 Agent。")
                         .foregroundStyle(.secondary)
                 } else {
-                    TextField("限定邮件主题（可选，留空表示全部）", text: $model.onboarding.exactSubject)
+                    TextField("仅接收这个主题（留空表示所有主题）", text: $model.onboarding.exactSubject)
                         .textFieldStyle(.roundedBorder)
                         .help("填写后，只处理主题完全相同的新邮件。")
                     if !model.onboarding.extensionAcknowledged {
                         Text("自动接收需要先在 Mail 中启用扩展。").foregroundStyle(.secondary)
                     } else if !model.hasSharedInbox {
-                        Text("当前无法访问 Mail 扩展的共享容器。请检查安装，或选择手动粘贴。")
+                        Text("Mailpipe 无法读取扩展的共享目录。请检查安装，或改为手动粘贴。")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -186,7 +186,7 @@ struct OnboardingView: View {
 
     private var review: some View {
         VStack(alignment: .leading, spacing: 9) {
-            LabeledContent("AI 工具", value: toolName)
+            LabeledContent("起草回复的 Agent", value: toolName)
             if !model.onboarding.executable.isEmpty {
                 LabeledContent("安装位置") {
                     Text((model.onboarding.executable as NSString).abbreviatingWithTildeInPath)
@@ -196,9 +196,9 @@ struct OnboardingView: View {
                         .help(model.onboarding.executable)
                 }
             }
-            LabeledContent("来信范围", value: manual ? "仅手动粘贴的邮件" : "所有账户的未来新邮件")
+            LabeledContent("来信范围", value: manual ? "仅我粘贴并确认的邮件" : "Apple Mail 所有账户今后的新来信")
             if !manual, !model.onboarding.exactSubject.isEmpty {
-                LabeledContent("精确主题", value: model.onboarding.exactSubject)
+                LabeledContent("主题完全匹配", value: model.onboarding.exactSubject)
             }
         }
     }
