@@ -53,3 +53,22 @@ Runtime 和 MailBridge 共 78 项隔离测试通过。
 - 系统查询只返回安装目录中的宿主和一个启用的扩展。
 - 实际点击后约 0.34 秒确认工作台在前台，弹窗已关闭。
 - 设置、历史草稿与运行记录一致，新增模型调用为零。
+
+## Build 22 的 Dock 图标
+
+build 21 的每次只读查询都会启动同一宿主程序。
+系统把宿主与读取子进程都登记为普通应用。
+实机同时检测到多个运行中的 Mailpipe Dock 项。
+
+build 22 通过 `LSUIElement` 让程序以后台身份启动。
+只有进入工作台的宿主才切换为普通应用。
+读取子进程保留后台身份。参见 [Apple 的 LSUIElement 说明](https://developer.apple.com/documentation/bundleresources/information-property-list/lsuielement)。
+
+本机安装后从菜单栏点击「打开工作台」。
+约 0.43 秒后确认工作台在前台，弹窗已关闭。
+3 项只读桥接隔离测试通过。
+原有设置、草稿和运行记录核对一致。
+
+30 秒内取得 277 次有效 Dock 采样。
+期间观察到 19 个查询子进程，均无普通应用身份。
+每次采样都只有一个运行中的 Mailpipe Dock 图标。

@@ -171,3 +171,6 @@ Mail 与更新后的宿主已恢复运行。
 同日清除重复测试包，从空安装位置装入 build 21。
 系统仅登记一个宿主和一个已启用的 Mail 扩展。
 重装与授权复核见[实机记录](validation/2026-11-19-workbench-responsiveness.md#build-21-清理重装)。
+
+同日更新 build 22，修复查询子进程反复显示 Dock 图标。
+签名、双架构与安装路径已核对。见[实机记录](validation/2026-11-19-workbench-responsiveness.md#build-22-的-dock-图标)。

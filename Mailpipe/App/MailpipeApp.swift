@@ -35,6 +35,9 @@ final class WorkbenchModel: ObservableObject {
 enum MailpipeEntryPoint {
     @MainActor static func main() {
         if MailReadBridge.runHelperIfRequested() { return }
+        // LSUIElement keeps every read helper out of the Dock from launch.
+        // Only the interactive host presents a regular application.
+        NSApplication.shared.setActivationPolicy(.regular)
         MailpipeApp.main()
     }
 }
