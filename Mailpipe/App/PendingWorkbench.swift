@@ -524,10 +524,7 @@ struct PendingWorkbench: View {
         NavigationSplitView {
             List(selection: $model.selectedID) {
                 ForEach(visible) { item in
-                    let row = WorkbenchRowPresentation(
-                        reply: model.editorBody(item), incoming: item.input.body,
-                        preparing: item.isPreparing, failed: item.error != nil && item.state != .cancelled)
-                    WorkbenchMessageRow(subject: item.input.subject, sender: item.correspondents?.sender ?? "发件地址未采集", status: row.status, date: item.capturedAt)
+                    WorkbenchMessageRow(subject: item.input.subject, sender: item.correspondents?.sender ?? "发件地址未采集", date: item.capturedAt)
                         .tag(item.id)
                         .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item) }
                 }
@@ -598,7 +595,6 @@ struct PendingWorkbench: View {
 private struct WorkbenchMessageRow: View {
     let subject: String
     let sender: String
-    let status: String?
     let date: Date
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -607,9 +603,6 @@ private struct WorkbenchMessageRow: View {
                 Text(sender).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            if let status {
-                Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize(horizontal: true, vertical: false)
-            }
             Text(date, format: .dateTime.month(.twoDigits).day(.twoDigits))
                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 .frame(width: 44, alignment: .trailing).lineLimit(1)
@@ -649,8 +642,17 @@ private struct DraftDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
-                        .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
+                            .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
+                        Spacer(minLength: 0)
+                        if let status = WorkbenchRowPresentation(
+                            reply: bodyText, incoming: item.input.body,
+                            preparing: item.isPreparing, failed: item.error != nil && item.state != .cancelled
+                        ).status {
+                            Text(status).font(.caption).foregroundStyle(.secondary).fixedSize()
+                        }
+                    }
                     VStack(alignment: .leading, spacing: 4) {
                         Text("发件人：\(item.correspondents?.sender ?? "发件地址未采集")")
                         Text("收件人（To）：\(recipientAddresses)")
