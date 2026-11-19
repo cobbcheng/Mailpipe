@@ -27,6 +27,21 @@ final class PendingModel: ObservableObject {
     private(set) var hasSharedInbox = false
     var needsPermissionRecovery: Bool { onboarding.completed && settings.suggestionsOnly != true && settings.permission?.delivery != .mailKit }
     var pending: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench && ($0.state.isPending || $0.isPreparing || $0.state == .needsReview || $0.state == .awaitingBody) } }
+    var workbenchRecords: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench } }
+    var unreadCount: Int { workbenchRecords.lazy.filter { self.isUnread($0) }.count }
+
+    func isUnread(_ item: StoredReply) -> Bool {
+        guard let version = item.draftVersion else { return false }
+        return UserDefaults.standard.string(forKey: item.lastOpenedVersionKey) != version
+    }
+
+    func markOpened(_ item: StoredReply) {
+        guard let version = item.draftVersion,
+              UserDefaults.standard.string(forKey: item.lastOpenedVersionKey) != version else { return }
+        objectWillChange.send()
+        UserDefaults.standard.set(version, forKey: item.lastOpenedVersionKey)
+    }
+
     @Published var notice: String?
     @Published var undoDiscardID: String?
     private var noticeTask: Task<Void, Never>?
@@ -357,48 +372,26 @@ final class PendingModel: ObservableObject {
 struct PendingMenu: View {
     @ObservedObject var model: PendingModel
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
 
-    private func showWindow(_ id: String) {
-        dismiss()
-        openWindow(id: id)
+    private func showWorkbench() {
+        openWindow(id: "workbench")
         NSApp.activate(ignoringOtherApps: true)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Mailpipe", systemImage: "envelope").font(.headline)
-                Spacer()
-                Text(!model.onboarding.completed ? "未配置" : model.needsPermissionRecovery ? "需要授权" : model.settings.paused ? "已暂停" : "运行中").foregroundStyle(.secondary)
+        ForEach(model.pending.suffix(3).reversed()) { item in
+            Button {
+                model.selectedID = item.id
+                showWorkbench()
+            } label: {
+                Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
             }
-            Text("待处理 \(model.pending.count)").font(.subheadline)
-            if model.pending.isEmpty { Text("暂时没有待处理的草稿").foregroundStyle(.secondary) }
-            ForEach(model.pending.suffix(4).reversed()) { item in
-                Button {
-                    model.selectedID = item.id
-                    showWindow("workbench")
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.input.subject).lineLimit(1)
-                            Text(item.state.label).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                    }.contentShape(Rectangle())
-                }.buttonStyle(.plain).padding(.vertical, 3)
-            }
-            Divider()
-            Button("打开工作台") { showWindow("workbench") }
-            if !model.onboarding.completed {
-                Button("开始使用") { showWindow("onboarding") }
-            }
-            Button(model.settings.paused ? "恢复处理" : "暂停处理", action: model.togglePause)
-            SettingsButton()
-            Divider()
-            Button("退出 Mailpipe") { NSApp.terminate(nil) }
-        }.padding().frame(width: 320)
+        }
+        Text("待处理 \(model.unreadCount)")
+        Divider()
+        Button("打开工作台", action: showWorkbench)
+        Divider()
+        Button("退出 Mailpipe") { NSApp.terminate(nil) }
     }
 }
 
@@ -416,12 +409,12 @@ struct PendingWorkbench: View {
     @ObservedObject var model: PendingModel
     @State private var showManual = false
     @Environment(\.openWindow) private var openWindow
-    private var visible: [StoredReply] { model.records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench }.reversed() }
+    private var visible: [StoredReply] { model.workbenchRecords.reversed() }
     var body: some View {
         NavigationSplitView {
             List(selection: $model.selectedID) {
                 ForEach(visible) { item in
-                    WorkbenchMessageRow(item: item)
+                    WorkbenchMessageRow(item: item, unread: model.isUnread(item))
                         .tag(item.id)
                         .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item) }
                 }
@@ -488,18 +481,12 @@ private extension StoredReply {
 
 private struct WorkbenchMessageRow: View {
     let item: StoredReply
-    @AppStorage private var lastOpenedVersion: String
-
-    init(item: StoredReply) {
-        self.item = item
-        _lastOpenedVersion = AppStorage(wrappedValue: "", item.lastOpenedVersionKey)
-    }
+    let unread: Bool
 
     var body: some View {
         let subject = item.input.subject
         let sender = item.correspondents?.sender ?? "发件地址未采集"
         let date = item.capturedAt
-        let unread = item.draftVersion.map { $0 != lastOpenedVersion } ?? false
         VStack(alignment: .leading, spacing: 4) {
             Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -597,9 +584,7 @@ private struct DraftDetail: View {
         }
         .onAppear { model.openEditor(item) }
         .task(id: item.draftVersion) {
-            if let version = item.draftVersion {
-                UserDefaults.standard.set(version, forKey: item.lastOpenedVersionKey)
-            }
+            model.markOpened(item)
         }
         .task(id: item.id + model.settings.revision.uuidString) { await model.loadCorrespondents(item, includeBody: true) }
         .alert("重新生成回复？", isPresented: $confirmRegeneration) {
