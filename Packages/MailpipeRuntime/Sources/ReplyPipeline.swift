@@ -458,6 +458,10 @@ public final class ReplyPipeline {
             case .draft(let request):
                 _ = try ReplyDraft.validated(output.content, for: request)
                 current.draftData = output.content; current.state = .draftReady
+                if (current.regenerationCount ?? 0) > 0 {
+                    current.editedBody = nil
+                    current.reviewedDraftVersion = current.draftVersion
+                }
             }
             try store.save(current)
         } catch {

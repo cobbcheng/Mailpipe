@@ -178,6 +178,12 @@ public final class PipelineStore {
         try execute("CREATE TABLE IF NOT EXISTS ingests (id TEXT PRIMARY KEY, record_id TEXT NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS metadata (id TEXT PRIMARY KEY, payload BLOB NOT NULL)")
         try execute("PRAGMA user_version=1")
+        // Finish pending choices from versions that kept regenerated drafts as candidates.
+        for var item in try records() where item.hasDraftCandidate {
+            item.editedBody = nil
+            item.reviewedDraftVersion = item.draftVersion
+            try save(item)
+        }
         for var item in try records() where item.state == .triaging || item.state == .drafting {
             item.state = .needsReview; item.error = "interrupted"
             if !item.runs.isEmpty { item.runs[item.runs.count - 1].error = "interrupted" }
@@ -259,19 +265,8 @@ public final class PipelineStore {
     public func saveEdits(_ id: String, subject: String, body: String) throws {
         guard var item = try record(id), subject.utf8.count <= 2_048,
               body.utf8.count <= 65_536 else { throw MailpipeError.invalidInput }
-        // Editing the initial generated reply acknowledges that version, but never
-        // dismisses a later pending candidate as a side effect of typing.
-        if item.reviewedDraftVersion == nil && (item.regenerationCount ?? 0) == 0 && !item.isPreparing {
-            item.reviewedDraftVersion = item.draftVersion
-        }
+        item.reviewedDraftVersion = item.draftVersion
         item.editedSubject = subject; item.editedBody = body
-        try save(item)
-    }
-    public func resolveDraftCandidate(_ id: String, expected: String, adopt: Bool) throws {
-        guard var item = try record(id), item.hasDraftCandidate,
-              item.draftVersion == expected, let draft = item.draft else { throw MailpipeError.invalidInput }
-        if adopt { item.editedBody = draft.body }
-        item.reviewedDraftVersion = expected
         try save(item)
     }
     public func discard(_ id: String, now: Date = Date()) throws {

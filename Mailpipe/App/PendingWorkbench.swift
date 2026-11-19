@@ -77,17 +77,6 @@ final class PendingModel: ObservableObject {
         if saved { refresh() }
         return saved
     }
-    @discardableResult func resolveCandidate(_ item: StoredReply, adopt: Bool) -> Bool {
-        guard flushEditor(item.id), let version = item.draftVersion else { return false }
-        do {
-            guard let pipeline else { throw PipelineError.storage }
-            try pipeline.store.resolveDraftCandidate(item.id, expected: version, adopt: adopt)
-            if adopt, let updated = try pipeline.store.record(item.id) {
-                editorBuffers[item.id] = DraftEditBuffer(body: updated.displayedBody)
-            }
-            refresh(); return true
-        } catch { notify("未能保存选择，当前编辑和候选稿仍保留。"); return false }
-    }
     func discard(_ id: String) {
         guard flushEditor(id) else { return }
         do {
@@ -113,9 +102,6 @@ final class PendingModel: ObservableObject {
                 return
             }
             guard flushEditor(id) else { return }
-            // Freeze the current reply even when it has not been edited, so the
-            // next generated version can only appear as a candidate.
-            try pipeline.store.saveEdits(id, subject: item.displayedSubject, body: editorBody(item))
             try pipeline.regenerate(id); refresh()
         }
         catch { issue = "无法重新生成。请核对暂停、来信处理授权、工具和邮件有效期；每封最多重新生成三次。" }
@@ -322,7 +308,7 @@ final class PendingModel: ObservableObject {
             extensionObservation = try? ExtensionObservation.read(from: pipeline.inbox)
             records = try pipeline.store.records(); settings = try pipeline.store.settings()
             for item in records where item.draft != nil && item.editedBody == nil {
-                if let buffer = editorBuffers[item.id], buffer.body.isEmpty && buffer.state == .saved {
+                if let buffer = editorBuffers[item.id], buffer.body != item.displayedBody && buffer.state == .saved {
                     editorBuffers[item.id] = DraftEditBuffer(body: item.displayedBody)
                 }
             }
@@ -550,7 +536,6 @@ private struct DraftDetail: View {
     @State private var confirmCopy = false
     @State private var showCompose = false
     @State private var composeRequest: MailComposeRequest?
-    @State private var showCandidate = false
     @State private var editorHeight: CGFloat = 96
     @State private var locateRequest = 0
     @State private var focusRequest = 0
@@ -561,7 +546,6 @@ private struct DraftDetail: View {
     private var incoming: String { item.displayBody ?? item.input.body }
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
     private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved", "identitySourceMismatch"].contains(item.error ?? "") }
-    private var hasDraft: Bool { item.draft != nil || item.editedBody != nil || !bodyText.isEmpty }
     private var recipientAddresses: String {
         guard let recipients = item.correspondents?.recipients, !recipients.isEmpty else { return "收件地址未采集" }
         return recipients.joined(separator: "、")
@@ -620,9 +604,8 @@ private struct DraftDetail: View {
             Button("取消", role: .cancel) { }
             Button("重新生成") { model.regenerate(item.id) }
         } message: {
-            Text("当前编辑会保留。新结果进入候选预览，由你选择采用新稿或保留现稿。最多两次模型调用，会消耗工具额度。")
+            Text("新稿生成成功后会覆盖当前回复。最多两次模型调用，会消耗工具额度。")
         }
-        .sheet(isPresented: $showCandidate) { candidatePreview }
         .sheet(isPresented: $showCompose) {
             if let request = composeRequest { composePreview(request) }
         }
@@ -684,13 +667,6 @@ private struct DraftDetail: View {
                     Button("未能保存，点此重试") { model.flushEditor(item.id) }
                         .font(.caption).buttonStyle(.link)
                 }
-                if item.hasDraftCandidate {
-                    HStack {
-                        Label("新稿待选择，当前编辑未替换", systemImage: "doc.badge.clock").font(.caption)
-                        Spacer()
-                        Button("候选预览") { showCandidate = true }
-                    }.padding(.top, 12)
-                }
             }.padding(.vertical, 16)
             Divider()
             actions.padding(.vertical, 16)
@@ -723,7 +699,7 @@ private struct DraftDetail: View {
         ZStack(alignment: .topLeading) {
             ReplyTextView(
                 text: Binding(get: { bodyText }, set: { model.editBody(item, body: $0) }),
-                enabled: !(item.isPreparing && !hasDraft),
+                enabled: !item.isPreparing,
                 locateRequest: locateRequest,
                 locateRange: locateRange,
                 focusRequest: focusRequest,
@@ -810,23 +786,6 @@ private struct DraftDetail: View {
             Text("状态提示按占位符和少量待核实表述识别，不代表事实核验。")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding().frame(width: 340)
-    }
-    private var candidatePreview: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("候选预览").font(.title2.weight(.semibold))
-            Text("当前编辑保持不变。采用新稿会替换回复正文。") .foregroundStyle(.secondary)
-            ScrollView {
-                Text(item.draft?.body ?? "候选稿暂不可用。")
-                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            HStack {
-                Button("稍后决定") { showCandidate = false }.keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("保留现稿") { if model.resolveCandidate(item, adopt: false) { showCandidate = false } }
-                Button("采用新稿") { if model.resolveCandidate(item, adopt: true) { showCandidate = false } }
-                    .buttonStyle(.borderedProminent)
-            }
-        }.padding(24).frame(width: 560, height: 440)
     }
     private func copyReply() {
         NSPasteboard.general.clearContents()
