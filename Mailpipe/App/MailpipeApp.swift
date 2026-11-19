@@ -44,23 +44,14 @@ enum MailpipeEntryPoint {
 
 @MainActor
 private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate {
-    private enum Request { case launch, reopen }
-    private var present: ((Request) -> Void)?
-    private var pending: Request?
+    private var present: (() -> Void)?
+    private var awaitingWindow = false
 
     func connect(_ action: OpenWindowAction, model: PendingModel) {
-        present = { request in
-            if request == .reopen || model.onboarding.completed || ProcessInfo.processInfo.arguments.contains("--open-workbench") {
-                action(id: "workbench")
-            } else if !model.offeredOnboarding {
-                model.offeredOnboarding = true
-                action(id: "onboarding")
-            }
-            NSApp.activate(ignoringOtherApps: true)
-        }
-        if let pending {
-            self.pending = nil
-            present?(pending)
+        present = { action.openMailpipe(for: model) }
+        if awaitingWindow {
+            awaitingWindow = false
+            present?()
         }
     }
 
@@ -68,18 +59,26 @@ private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate {
         let event = NSAppleEventManager.shared().currentAppleEvent
         guard event?.paramDescriptor(forKeyword: keyAELaunchedAsLogInItem) == nil,
               event?.paramDescriptor(forKeyword: keyAELaunchedAsServiceItem) == nil else { return }
-        if pending == nil { handle(.launch) }
+        showMainWindow()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        handle(.reopen)
+        showMainWindow()
         return false
     }
 
-    private func handle(_ request: Request) {
+    private func showMainWindow() {
         // AppKit can deliver the event before the menu bar label supplies SwiftUI's window action.
-        if let present { present(request) }
-        else { pending = request }
+        if let present { present() }
+        else { awaitingWindow = true }
+    }
+}
+
+extension OpenWindowAction {
+    @MainActor func openMailpipe(for model: PendingModel) {
+        model.showsOnboardingReceipt = false
+        self(id: "workbench")
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
@@ -94,17 +93,29 @@ struct MailpipeApp: App {
             LaunchStatusIcon(model: pending, appDelegate: appDelegate)
         }.menuBarExtraStyle(.menu)
         Window("Mailpipe", id: "workbench") {
-            PendingWorkbench(model: pending).frame(minWidth: 660, minHeight: 380)
-        }
-        .defaultSize(width: 700, height: 420)
-        .commands {
-            CommandGroup(after: .newItem) {
-                WorkbenchCommand()
+            if pending.onboarding.completed && !pending.showsOnboardingReceipt {
+                PendingWorkbench(model: pending).frame(minWidth: 660, minHeight: 380)
+            } else {
+                OnboardingView(model: pending) { pending.showsOnboardingReceipt = false }
+                    .navigationTitle("开始使用 Mailpipe")
+                    .onDisappear { pending.showsOnboardingReceipt = false }
             }
         }
-        Window("开始使用 Mailpipe", id: "onboarding") { OnboardingView(model: pending) }
-            .defaultSize(width: 720, height: 640)
-            Settings { MailpipeSettings(model: pending, diagnostics: model) }
+        .windowResizability(.contentSize)
+        .defaultSize(width: pending.onboarding.completed ? 700 : 480,
+                     height: pending.onboarding.completed ? 420 : 440)
+        .commands {
+            CommandGroup(after: .newItem) {
+                WorkbenchCommand(model: pending)
+            }
+        }
+        Settings {
+            if pending.onboarding.completed {
+                MailpipeSettings(model: pending, diagnostics: model)
+            } else {
+                InitialSetupSettings(model: pending)
+            }
+        }
     }
 }
 
@@ -119,10 +130,31 @@ private struct LaunchStatusIcon: View {
 }
 
 private struct WorkbenchCommand: View {
+    @ObservedObject var model: PendingModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Button("打开工作台") { openWindow(id: "workbench"); NSApp.activate(ignoringOtherApps: true) }
+        Button(model.onboarding.completed ? "打开工作台" : "继续设置 Mailpipe") { openWindow.openMailpipe(for: model) }
             .keyboardShortcut("1", modifiers: .command)
+    }
+}
+
+private struct InitialSetupSettings: View {
+    @ObservedObject var model: PendingModel
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("完成初始设置后，可在这里更改处理方式和授权。")
+            if model.settings.permission != nil || model.settings.suggestionsOnly == true {
+                // Older versions could leave an active grant alongside an unfinished setup draft.
+                if !model.settings.paused { Button("暂停处理", action: model.togglePause) }
+                Button("撤销已有来信处理授权", role: .destructive, action: model.revoke)
+            }
+            Button("继续设置 Mailpipe") {
+                dismiss()
+                openWindow.openMailpipe(for: model)
+            }.keyboardShortcut(.defaultAction)
+        }.padding(32)
     }
 }
 
@@ -177,7 +209,7 @@ struct MailpipeSettings: View {
                 configurationFooter
                 Section {
                     DisclosureGroup("高级诊断") {
-                        Button("重新查找工具") { model.installations = HarnessDiscovery.find().filter { $0.kind == .deepseek } }
+                        Button("重新查找工具", action: model.rediscoverTools)
                         ForEach(model.installations) { tool in
                             Text(tool.executable.path).textSelection(.enabled)
                             Button("检查版本与参数") { diagnostics.inspect(tool) }.disabled(diagnostics.busyIDs.contains(tool.id))

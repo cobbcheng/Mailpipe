@@ -17,7 +17,8 @@ final class PendingModel: ObservableObject {
     @Published var onboardingBusy = false
     @Published var onboardingIssue: String?
     @Published var extensionObservation: ExtensionObservation?
-    var offeredOnboarding = false
+    // Only the window that just finished initial setup presents the receipt.
+    @Published var showsOnboardingReceipt = false
     private var onboardingSession: OnboardingSession?
     private var onboardingTask: Task<Void, Never>?
     private var configurationSave: Task<Void, Never>?
@@ -147,8 +148,8 @@ final class PendingModel: ObservableObject {
         }
     }
     func applyConfiguration() {
-        guard !onboardingBusy else { return }
-        onboarding.completed = false; saveOnboarding(); finishOnboarding()
+        guard onboarding.completed, !onboardingBusy else { return }
+        saveConfiguration(updating: true)
     }
     var selected: StoredReply? { records.first { $0.id == selectedID } }
 
@@ -196,7 +197,7 @@ final class PendingModel: ObservableObject {
             settings = try store.settings()
             // Reconcile a crash between authoritative policy and extension snapshot updates.
             try pipeline?.inbox.setPermission(settings.paused || settings.permission?.delivery != .mailKit ? nil : settings.permission)
-            installations = HarnessDiscovery.find().filter { $0.kind == .deepseek }
+            rediscoverTools()
             refresh(); start()
             display = Task { [weak self] in
                 while !Task.isCancelled {
@@ -206,27 +207,26 @@ final class PendingModel: ObservableObject {
             }
         } catch { issue = "无法打开持久化队列：\(Self.code(error))" }
     }
-    func saveOnboarding() {
+    @discardableResult func saveOnboarding() -> Bool {
         do {
-            try onboardingSession?.save(onboarding)
-            if let session = onboardingSession {
-                onboarding = try session.store.onboarding()
-                onboardingResult = try session.testResult()
-            }
-        } catch { onboardingIssue = Self.code(error) }
-    }
-    func editOnboarding() {
-        onboardingIssue = nil
-        if onboarding.completed {
-            onboarding.id = UUID(); onboarding.completed = false; onboarding.step = 1
-            saveOnboarding()
+            guard let session = onboardingSession else { throw PipelineError.storage }
+            try session.save(onboarding)
+            onboarding = try session.store.onboarding()
+            onboardingResult = try session.testResult()
+            return true
+        } catch {
+            onboardingIssue = "无法保存当前设置：\(Self.code(error))"
+            return false
         }
+    }
+    func rediscoverTools() {
+        installations = HarnessDiscovery.find().filter { $0.kind == .deepseek }
     }
     func testOnboarding() {
         guard !onboardingBusy, let session = onboardingSession,
               installations.contains(where: { $0.executable.path == onboarding.executable }) else { return }
+        guard saveOnboarding() else { return }
         onboardingBusy = true; onboardingIssue = nil
-        saveOnboarding()
         onboardingTask = Task {
             defer {
                 onboardingBusy = false
@@ -250,10 +250,14 @@ final class PendingModel: ObservableObject {
         catch { onboardingIssue = Self.code(error) }
     }
     func finishOnboarding() {
+        guard !onboarding.completed else { return }
+        saveConfiguration(updating: false)
+    }
+    private func saveConfiguration(updating: Bool) {
         guard !onboardingBusy, (onboarding.isSuggestionsOnly || hasSharedInbox), let session = onboardingSession, let pipeline else {
             onboardingIssue = "共享容器不可用；可保存草案，不能授权采集。"; return
         }
-        guard !onboarding.completed else { return }
+        guard saveOnboarding() else { return }
         onboardingIssue = nil; onboardingBusy = true
         let snapshot = onboarding
         configurationSave = Task {
@@ -265,10 +269,12 @@ final class PendingModel: ObservableObject {
                 try Task.checkCancellation()
                 worker?.cancel()
                 defer { start() }
-                try session.activate()
+                try session.activate(updatingConfiguration: updating)
                 let active = try session.store.settings()
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
-                onboarding = try session.store.onboarding(); refresh()
+                let completed = try session.store.onboarding()
+                showsOnboardingReceipt = !updating
+                onboarding = completed; refresh()
                 onboardingIssue = active.suggestionsOnly == true ? "逐封建议已就绪；每封提交前需确认内容和工具。" : active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
             } catch is CancellationError {
                 return
@@ -373,23 +379,22 @@ struct PendingMenu: View {
     @ObservedObject var model: PendingModel
     @Environment(\.openWindow) private var openWindow
 
-    private func showWorkbench() {
-        openWindow(id: "workbench")
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
     var body: some View {
-        ForEach(model.pending.suffix(3).reversed()) { item in
-            Button {
-                model.selectedID = item.id
-                showWorkbench()
-            } label: {
-                Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
+        if model.onboarding.completed {
+            ForEach(model.pending.suffix(3).reversed()) { item in
+                Button {
+                    model.selectedID = item.id
+                    openWindow.openMailpipe(for: model)
+                } label: {
+                    Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
+                }
             }
+            Text("待处理 \(model.unreadCount)")
+            Divider()
+            Button("打开工作台") { openWindow.openMailpipe(for: model) }
+        } else {
+            Button("继续设置 Mailpipe") { openWindow.openMailpipe(for: model) }
         }
-        Text("待处理 \(model.unreadCount)")
-        Divider()
-        Button("打开工作台", action: showWorkbench)
         Divider()
         Button("退出 Mailpipe") { NSApp.terminate(nil) }
     }
@@ -408,7 +413,6 @@ struct SettingsButton: View {
 struct PendingWorkbench: View {
     @ObservedObject var model: PendingModel
     @State private var showManual = false
-    @Environment(\.openWindow) private var openWindow
     private var visible: [StoredReply] { model.workbenchRecords.reversed() }
     var body: some View {
         NavigationSplitView {
@@ -426,13 +430,7 @@ struct PendingWorkbench: View {
             }
         } detail: {
             VStack(spacing: 0) {
-                if !model.onboarding.completed {
-                    HStack {
-                        Label("连接工具并确认处理方式后，为新邮件备好草稿。", systemImage: "info.circle")
-                        Spacer()
-                        Button("开始使用") { openWindow(id: "onboarding") }
-                    }.padding().background(Color(nsColor: .controlBackgroundColor))
-                } else if model.needsPermissionRecovery {
+                if model.needsPermissionRecovery {
                     HStack {
                         Label("请在设置中确认来信处理范围和 AI 工具。已有草稿保留。", systemImage: "exclamationmark.shield")
                         Spacer(); SettingsButton()

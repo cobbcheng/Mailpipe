@@ -37,6 +37,11 @@ app_product = obj('app-product', 'PBXFileReference', explicitFileType='wrapper.a
 ext_product = obj('ext-product', 'PBXFileReference', explicitFileType='wrapper.app-extension',
                   path='MailpipeMailExtension.appex', sourceTree='BUILT_PRODUCTS_DIR', includeInIndex='0')
 package = obj('package', 'XCLocalSwiftPackageReference', relativePath='.')
+lottie = obj('lottie-package', 'XCRemoteSwiftPackageReference',
+             repositoryURL='https://github.com/airbnb/lottie-spm.git',
+             requirement={'kind': 'exactVersion', 'version': '4.6.1'})
+onboarding_art = obj('onboarding-art', 'PBXFileReference', lastKnownFileType='folder',
+                     path='Mailpipe/App/OnboardingArt', sourceTree='SOURCE_ROOT')
 asset_catalog = obj('asset-catalog', 'PBXFileReference', lastKnownFileType='folder.assetcatalog',
                     path='Mailpipe/Assets.xcassets', sourceTree='SOURCE_ROOT')
 app_icon = obj('native-app-icon', 'PBXFileReference', lastKnownFileType='folder.icon',
@@ -56,6 +61,8 @@ for label, source_dir, product, product_type in (
         source_refs.append(ref)
         if file.suffix == '.swift':
             builds.append(obj('build-' + str(file.relative_to(ROOT)), 'PBXBuildFile', fileRef=ref))
+    if label == 'Mailpipe':
+        source_refs.append(onboarding_art)
     source_groups.append(obj(label + '-files', 'PBXGroup', children=source_refs, name=label, sourceTree='<group>'))
     sources = obj(label + '-sources', 'PBXSourcesBuildPhase', buildActionMask='2147483647', files=builds,
                   runOnlyForDeploymentPostprocessing='0')
@@ -64,12 +71,19 @@ for label, source_dir, product, product_type in (
         dep = obj(label + '-product-' + library, 'XCSwiftPackageProductDependency', package=package, productName=library)
         package_products.append(dep)
         framework_files.append(obj(label + '-link-' + library, 'PBXBuildFile', productRef=dep))
+    if label == 'Mailpipe':
+        dep = obj('lottie-product', 'XCSwiftPackageProductDependency', package=lottie, productName='Lottie')
+        package_products.append(dep)
+        framework_files.append(obj('lottie-link', 'PBXBuildFile', productRef=dep))
     frameworks = obj(label + '-frameworks', 'PBXFrameworksBuildPhase', buildActionMask='2147483647',
                      files=framework_files, runOnlyForDeploymentPostprocessing='0')
     asset_build = obj(label + '-asset', 'PBXBuildFile', fileRef=asset_catalog)
     icon_build = obj(label + '-native-icon', 'PBXBuildFile', fileRef=app_icon)
+    resource_files = [asset_build, icon_build]
+    if label == 'Mailpipe':
+        resource_files.append(obj('onboarding-art-build', 'PBXBuildFile', fileRef=onboarding_art))
     resources = obj(label + '-resources', 'PBXResourcesBuildPhase', buildActionMask='2147483647',
-                    files=[asset_build, icon_build], runOnlyForDeploymentPostprocessing='0')
+                    files=resource_files, runOnlyForDeploymentPostprocessing='0')
     phases, dependencies = [sources, frameworks, resources], []
     if label == 'Mailpipe':
         embed = obj('embed-extension-file', 'PBXBuildFile', fileRef=ext_product, settings={'ATTRIBUTES':['RemoveHeadersOnCopy']})
@@ -99,7 +113,7 @@ main = obj('main', 'PBXGroup', children=source_groups + [asset_catalog, app_icon
 project = obj('project', 'PBXProject', attributes={'LastUpgradeCheck':'1600','BuildIndependentTargetsInParallel':'YES'},
               buildConfigurationList=configs('project', {'SDKROOT':'macosx', 'CLANG_ENABLE_MODULES':'YES', 'SWIFT_VERSION':'6.0'}),
               compatibilityVersion='Xcode 14.0', developmentRegion='en', hasScannedForEncodings='0', knownRegions=['en','Base'],
-              mainGroup=main, productRefGroup=products, projectDirPath='', projectRoot='', packageReferences=[package], targets=target_ids)
+              mainGroup=main, productRefGroup=products, projectDirPath='', projectRoot='', packageReferences=[package, lottie], targets=target_ids)
 
 def encode(value, level=0):
     if isinstance(value, dict):

@@ -38,6 +38,8 @@ public final class OnboardingSession {
     }
     public func save(_ value: OnboardingDraft) throws {
         var draft = value
+        // Progress edits cannot complete initial setup or clear a prior consent receipt.
+        draft.completed = try store.onboarding().completed
         draft.step = min(5, max(1, draft.step))
         if draft.testedExecutable != draft.executable || draft.evidenceVersion != Self.evidenceVersion || (draft.testedLevel ?? .l2) != draft.level {
             draft.testID = nil; draft.testedExecutable = nil; draft.evidenceVersion = nil
@@ -73,9 +75,10 @@ public final class OnboardingSession {
               let run = result.runs.last else { return false }
         return run.destination.taskKind == .draft && run.finishedAt != nil && run.error == nil
     }
-    public func activate() throws {
+    public func activate(updatingConfiguration: Bool = false) throws {
         let draft = try store.onboarding()
-        if draft.completed { return }
+        if draft.completed && !updatingConfiguration { return }
+        if updatingConfiguration && !draft.completed { throw MailpipeError.invalidInput }
         guard draft.testedExecutable == draft.executable,
               draft.evidenceVersion == Self.evidenceVersion,
               Self.testPassed(try testResult(), level: draft.level) else { throw MailpipeError.invalidInput }
