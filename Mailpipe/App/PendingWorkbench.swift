@@ -527,6 +527,20 @@ private struct WorkbenchMessageRow: View {
     }
 }
 
+private struct DraftActionStyle: ViewModifier {
+    var prominent = false
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            if prominent { content.buttonStyle(.glassProminent) }
+            else { content.buttonStyle(.glass) }
+        } else {
+            if prominent { content.buttonStyle(.borderedProminent) }
+            else { content.buttonStyle(.bordered) }
+        }
+    }
+}
+
 private struct DraftDetail: View {
     @ObservedObject var model: PendingModel
     let item: StoredReply
@@ -658,7 +672,6 @@ private struct DraftDetail: View {
                         .font(.caption).buttonStyle(.link)
                 }
             }.padding(.vertical, 16)
-            Divider()
             actions.padding(.vertical, 16)
         }
     }
@@ -717,13 +730,12 @@ private struct DraftDetail: View {
                     if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
             } label: { Label("去发送", systemImage: "envelope") }
-                .buttonStyle(.borderedProminent)
+                .modifier(DraftActionStyle(prominent: true))
                 .disabled(model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button {
                 if warnings.requiresCopyConfirmation { confirmCopy = true }
                 else { copyReply() }
             } label: { Label("复制回复", systemImage: "doc.on.doc") }
-                .buttonStyle(.bordered)
                 .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
             Button("重新生成") { confirmRegeneration = true }.disabled(!canRegenerate)
@@ -732,12 +744,12 @@ private struct DraftDetail: View {
                 Divider()
                 Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
             } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多草稿操作")
+                .menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
             Spacer(minLength: 0)
             Button { showExplanation = true } label: { Image(systemName: "info.circle") }
-                .buttonStyle(.borderless).accessibilityLabel("查看处理说明与数据去向")
+                .accessibilityLabel("查看处理说明与数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
-        }.controlSize(.regular)
+        }.modifier(DraftActionStyle()).controlSize(.regular)
     }
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 12) {
