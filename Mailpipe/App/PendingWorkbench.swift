@@ -538,6 +538,8 @@ private struct DraftDetail: View {
     @ObservedObject var model: PendingModel
     let item: StoredReply
     @State private var originalExpanded = false
+    @State private var fullBodyHeight: CGFloat = 0
+    @State private var previewHeight: CGFloat = 0
     @State private var showExplanation = false
     @State private var confirmRegeneration = false
     private var bodyText: String { model.editorBody(item) }
@@ -581,9 +583,7 @@ private struct DraftDetail: View {
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                DisclosureGroup("来信正文", isExpanded: $originalExpanded) {
-                    originalCard.padding(.top, 6)
-                }
+                originalCard
                 draftCard
             }
             .modifier(WorkbenchColumn())
@@ -630,15 +630,50 @@ private struct DraftDetail: View {
             if error != nil { Task { @MainActor in model.notify("Apple Mail 未能打开原邮件。") } }
         }
     }
+    private var originalText: some View {
+        Text(verbatim: incoming.isEmpty ? (item.state == .awaitingBody ? "正在等待 Apple Mail 提供正文。收到后才能交给 Agent 起草回复。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
+            .font(.callout).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var originalCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let truncated = fullBodyHeight > previewHeight + 0.5
+        let expanded = truncated && originalExpanded
+        return VStack(alignment: .leading, spacing: 6) {
+            if truncated {
+                Button {
+                    originalExpanded.toggle()
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("来信正文")
+                            Image(systemName: expanded ? "chevron.down" : "chevron.forward")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        if !expanded { originalText.lineLimit(3) }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "收起来信正文" : "展开来信正文")
+            } else {
+                Text("来信正文")
+            }
+            if !truncated || expanded { originalText.textSelection(.enabled) }
             if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
                 Text("完整原文尚未取得，以下为已保存的正文。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text(incoming.isEmpty ? (item.state == .awaitingBody ? "正在等待 Apple Mail 提供正文。收到后才能交给 Agent 起草回复。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
-                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
+                originalText.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { fullBodyHeight = $0 }
+                originalText.lineLimit(3).onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { previewHeight = $0 }
+            }
+            .hidden().accessibilityHidden(true).allowsHitTesting(false)
         }
     }
     private var draftCard: some View {
