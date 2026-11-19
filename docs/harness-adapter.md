@@ -68,7 +68,7 @@ App 从成功回执记录模型名和 token。
 代理的模型名不足以确定供应方或实付费用。
 
 OpenCode 接受已验收的 CLI 2.3.0。
-连接时可填写 `opencode models` 列出的 `provider/model`。
+在设置的 Agent 页可填写 `opencode models` 列出的 `provider/model`。
 留空时，示例邮件使用隔离环境的默认模型。
 保存授权后，普通起草固定使用试写确认的模型。
 切换模型须重新试写并确认来信范围。

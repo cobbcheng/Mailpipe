@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import HarnessAdapters
 import MailpipeCore
@@ -16,17 +17,81 @@ struct ReplyToolPicker: View {
     @ObservedObject var model: PendingModel
 
     var body: some View {
-        Picker("起草回复的 Agent", selection: Binding(get: { model.selectedTool?.id ?? "" }, set: { id in
-            if let tool = model.installations.first(where: { $0.id == id }) { model.selectTool(tool) }
-        })) {
-            if model.selectedTool == nil { Text("选择 Agent").tag("") }
-            ForEach(model.installations) { tool in
-                if model.installations.filter({ $0.kind == tool.kind }).count > 1 {
-                    Text("\(tool.kind.displayName) · \((tool.executable.path as NSString).abbreviatingWithTildeInPath)").tag(tool.id)
-                } else { Text(tool.kind.displayName).tag(tool.id) }
+        LabeledContent("起草回复的 Agent") {
+            AgentPopUpButton(tools: model.installations, selectedID: model.selectedTool?.id,
+                             isEnabled: !model.onboardingBusy, select: model.selectTool)
+                .modifier(AgentMenuSurface())
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct AgentMenuSurface: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(macOS 26, *) {
+            content.frame(height: 30).glassEffect(.regular.interactive(), in: .capsule)
+        } else {
+            content
+        }
+    }
+}
+
+private struct AgentPopUpButton: NSViewRepresentable {
+    let tools: [HarnessInstallation]
+    let selectedID: String?
+    let isEnabled: Bool
+    let select: (HarnessInstallation) -> Void
+
+    final class Coordinator: NSObject {
+        var parent: AgentPopUpButton
+        init(_ parent: AgentPopUpButton) { self.parent = parent }
+
+        @objc func choose(_ sender: NSPopUpButton) {
+            if let id = sender.selectedItem?.representedObject as? String,
+               let tool = parent.tools.first(where: { $0.id == id }) {
+                parent.select(tool)
             }
         }
-        .disabled(model.onboardingBusy)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: false)
+        if #available(macOS 26, *) { button.isBordered = false }
+        button.controlSize = .large
+        button.lineBreakMode = .byTruncatingMiddle
+        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        button.setAccessibilityLabel("起草回复的 Agent")
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.choose(_:))
+        return button
+    }
+
+    func updateNSView(_ button: NSPopUpButton, context: Context) {
+        context.coordinator.parent = self
+        let ids = tools.map(\.id)
+        if button.itemArray.compactMap({ $0.representedObject as? String }) != ids ||
+            (button.itemArray.first?.tag == -1) != (selectedID == nil) {
+            button.removeAllItems()
+            if selectedID == nil {
+                button.addItem(withTitle: "选择 Agent")
+                button.lastItem?.tag = -1
+            }
+            for tool in tools {
+                let name = tool.kind.displayName
+                let duplicated = tools.filter { $0.kind == tool.kind }.count > 1
+                let path = (tool.executable.path as NSString).abbreviatingWithTildeInPath
+                button.addItem(withTitle: duplicated ? "\(name) · \(path)" : name)
+                button.lastItem?.representedObject = tool.id
+            }
+        }
+        if let selectedID {
+            button.selectItem(at: button.indexOfItem(withRepresentedObject: selectedID))
+        } else {
+            button.selectItem(withTag: -1)
+        }
+        button.isEnabled = isEnabled
     }
 }
 
@@ -146,7 +211,6 @@ struct OnboardingView: View {
         if model.installations.count > 1 || (tool == nil && !model.installations.isEmpty) {
             ReplyToolPicker(model: model)
         }
-        OpenCodeModelField(model: model)
         if model.onboardingBusy {
             ProgressView("正在用示例邮件测试连接…").controlSize(.small)
             Button("取消测试", action: model.cancelOnboardingTest)
