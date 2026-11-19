@@ -95,21 +95,6 @@ private struct AgentPopUpButton: NSViewRepresentable {
     }
 }
 
-struct OpenCodeModelField: View {
-    @ObservedObject var model: PendingModel
-
-    var body: some View {
-        if model.onboarding.harnessKind == .opencode {
-            TextField("供应方/模型（可选）", text: Binding(get: { model.onboarding.openCodeModel ?? "" },
-                                                    set: { model.onboarding.openCodeModel = $0 }))
-                .textFieldStyle(.roundedBorder)
-                .disabled(model.onboardingBusy)
-            Text("可从 opencode models 选择。留空时，示例邮件使用隔离环境的默认模型。授权后，新来信固定使用试写成功的模型。")
-                .font(.callout).foregroundStyle(.secondary)
-        }
-    }
-}
-
 struct OnboardingView: View {
     @ObservedObject var model: PendingModel
     @AccessibilityFocusState private var titleFocused: Bool

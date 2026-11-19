@@ -180,7 +180,6 @@ struct MailpipeSettings: View {
             Form {
                 Section("起草回复的 Agent") {
                     ReplyToolPicker(model: model)
-                    OpenCodeModelField(model: model)
                     Text("连接测试会将一封示例邮件交给\(model.onboarding.harnessKind.modelServiceDescription)试写回复，会消耗额度。").foregroundStyle(.secondary)
                     if model.onboardingBusy {
                         ProgressView("正在连接…")
