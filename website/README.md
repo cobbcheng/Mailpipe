@@ -42,11 +42,12 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
 
 ## 下载状态
 
-0.0.6（build 33）使用 Developer ID 签名并通过 Apple 公证。
+0.1.0（build 34）使用 Developer ID 签名并通过 Apple 公证。
 私有 R2 保存归档。官网通过 Pages 提供静态下载。
 页面与构建脚本共用[发布信息](release.mjs)中的版本、文件名和校验值。
 
 在仓库根目录执行 `node website/build-pages.mjs <含已公证App的ZIP> <全新输出目录>`。
-脚本核对包大小与 SHA-256，并生成首页、robots.txt 和 sitemap.xml。
+脚本核对包大小与 SHA-256，生成三语首页、robots.txt 和 sitemap.xml。
+根路径默认英文。中文使用 /zh/，西班牙语使用 /es/。
 将输出目录的内容部署到现有 Pages 生产项目 `mailpipe-official`。
 发布流程与验收门槛见[部署方法](../docs/deployment.md)。

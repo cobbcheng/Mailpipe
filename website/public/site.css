@@ -545,3 +545,16 @@ nav a:hover { color: var(--muted); }
     transition: none !important;
   }
 }
+
+.site-header select {
+  color: inherit;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  font: inherit;
+}
+@media (max-width: 600px) {
+  .site-header .rails { flex-wrap: wrap; padding-block: 10px; gap: 8px; }
+  .site-header nav { order: 1; width: 100%; }
+}

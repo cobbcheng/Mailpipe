@@ -15,10 +15,11 @@ if (bytes.length !== release.bytes || createHash('sha256').update(bytes).digest(
 const out = resolve(destination);
 await mkdir(out); // Refuse an existing directory rather than publish stale assets.
 await cp(fileURLToPath(new URL('./public/', import.meta.url)), out, {recursive:true});
-for (const [route,file] of [['/','index.html'],['/robots.txt','robots.txt'],['/sitemap.xml','sitemap.xml']]) {
+for (const [route,file] of [['/','index.html'],['/zh/','zh/index.html'],['/es/','es/index.html'],['/robots.txt','robots.txt'],['/sitemap.xml','sitemap.xml']]) {
+  await mkdir(resolve(out,file,".."),{recursive:true});
   await writeFile(join(out,file), await worker.fetch(new Request('https://mailpipeai.com'+route)).text());
 }
 await mkdir(join(out,'downloads'));
 await writeFile(join(out,'downloads',name),bytes);
-await writeFile(join(out,'404.html'),'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>页面不存在</title><p>页面不存在。<a href="/">返回 Mailpipe 官网</a></p></html>');
+await writeFile(join(out,'404.html'),'<!doctype html><html lang="en"><meta charset="utf-8"><title>Page not found</title><p>Page not found. <a href="/">Return to Mailpipe</a></p></html>');
 await writeFile(join(out,'_headers'), '/*\n  X-Content-Type-Options: nosniff\n/downloads/'+name+'\n  Content-Type: application/zip\n  Content-Disposition: attachment; filename="'+name+'"\n');
