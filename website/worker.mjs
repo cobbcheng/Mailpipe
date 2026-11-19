@@ -2,12 +2,34 @@ import { release } from "./release.mjs";
 
 const origin = "https://mailpipeai.com";
 const slogan = "让你的 Agent，帮你回邮件";
-const title = `Mailpipe · ${slogan}`;
-const description = "Mailpipe 用你连接的 DeepSeek Harness 为 Apple Mail 的新来信起草回复。你可以限定邮件主题，在 Mac 上对照原文编辑草稿，再到 Apple Mail 发送。";
+const agents = [
+  { name: "DeepSeek Harness", version: "0.2.2-rc.1", repo: "deepseek-ai/deepseek-harness", tagPrefix: "dsh-v", logo: "deepseek-harness.svg" },
+  { name: "Claude Code", version: "2.1.296", repo: "anthropics/claude-code", command: "claude" },
+  { name: "OpenCode", version: "2.3.0", repo: "anomalyco/opencode", logo: "opencode.svg" },
+  { name: "OpenClaw", version: "2026.11.5", repo: "openclaw/openclaw", logo: "openclaw.svg" },
+  { name: "Hermes Agent", version: "0.23.2", repo: "NousResearch/hermes-agent", logo: "hermes-agent.png" },
+];
+const title = "Mailpipe · Apple Mail 的 AI 邮件回复助手";
+const description = `Mailpipe 是 macOS 上的 Apple Mail 邮件助手。连接 ${agents.map(agent => agent.name).join("、")} 之一，为新来信起草回复。在菜单栏审阅草稿，再到 Apple Mail 发送。`;
 const downloadURL = `/downloads/${release.filename}`;
 const fileSize = `${(release.bytes / 1_000_000).toFixed(2)} MB`;
+const previewImage = `${origin}/detail.jpg?v=${release.build}`;
+const previewAlt = "Mailpipe 菜单栏工作台展示一封 Apple Mail 来信和对应的 AI 回复草稿。";
 
 function homepage() {
+  const app = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "Mailpipe",
+    url: origin + "/",
+    description,
+    applicationCategory: "ProductivityApplication",
+    operatingSystem: "macOS 13+",
+    softwareVersion: release.version,
+    downloadUrl: origin + downloadURL,
+    screenshot: previewImage,
+    inLanguage: "zh-CN",
+  };
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -19,30 +41,34 @@ function homepage() {
 <link rel="icon" href="/icon.png">
 <link rel="preload" href="/fonts/InterDisplay-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/Inter-Medium.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/site.css?v=${release.build}-footer2">
+<link rel="stylesheet" href="/site.css?v=${release.build}-agents">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="zh_CN">
+<meta property="og:site_name" content="Mailpipe">
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${description}">
 <meta property="og:url" content="${origin}/">
-<meta property="og:image" content="${origin}/detail.jpg?v=${release.build}">
+<meta property="og:image" content="${previewImage}">
+<meta property="og:image:alt" content="${previewAlt}">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image:alt" content="${previewAlt}">
+<script type="application/ld+json">${JSON.stringify(app)}</script>
 </head>
 <body>
 <a class="skip" href="#content">跳到主要内容</a>
 <header class="site-header">
   <div class="rails">
     <a class="brand" href="/"><img src="/icon.png" width="28" height="28" alt="">Mailpipe</a>
-    <nav aria-label="主导航"><a href="#workbench">工作台</a><a href="#release">下载</a></nav>
+    <nav aria-label="主导航"><a href="#workbench">工作台</a><a href="#agents" lang="en">Agents</a><a href="#release">下载</a></nav>
   </div>
 </header>
 <main id="content">
   <section class="hero" aria-labelledby="hero-title">
     <div class="rails hero-stack">
       <div class="hero-copy">
-        <p class="platform">适用于 Mac 上的 Apple Mail</p>
+        <p class="platform">Apple Mail 的 AI 回复助手</p>
         <h1 id="hero-title">${slogan}</h1>
-        <p class="lead">授权后，DeepSeek 会为 Apple Mail 的新来信起草回复。<br>从菜单栏打开草稿，对照原文改好，再到 Apple Mail 发送。</p>
+        <p class="lead">选一个你常用的 Agent，为 Apple Mail 的新来信起草回复。<br>从 Mac 菜单栏打开草稿，对照原文改好，再回到邮件里发送。</p>
         <div class="actions">
           <a class="button button-primary" download href="${downloadURL}">下载 Mac 版</a>
           <a class="button button-secondary" href="#workbench">看一封示例回复</a>
@@ -81,13 +107,27 @@ function homepage() {
           <p>Mailpipe 会先在 Mac 上跳过能识别的验证码通知、自动回复和促销邮件。其余符合你设置范围的新来信，才会交给 Agent 起草。</p>
         </article>
         <article>
-          <h2>DeepSeek 会收到什么？</h2>
-          <p>来信和草稿保存在你的 Mac 上。你连接的 DeepSeek Harness 会把获准处理的主题和正文发给 DeepSeek 云端模型，使用你的额度。附件内容不在授权范围内。</p>
+          <h2>模型会读到哪些内容？</h2>
+          <p>Mailpipe 把授权范围内的邮件主题和正文交给你选的 Agent 起草。模型和费用取决于该 Agent 的服务配置。附件内容不在授权范围内，生成的草稿保存在 Mac 上。</p>
         </article>
         <article>
           <h2>能帮我核对代码改动吗？</h2>
-          <p>来信附有 GitHub 拉取请求（PR）链接时，Agent 可以查看公开的代码差异，再起草回复。需要用你的 GitHub 账户查看时，先由你确认。</p>
+          <p>连接 DeepSeek Harness 时，Mailpipe 可以读取来信中 GitHub 拉取请求（PR）的公开代码差异，供起草时参考。需要用你的 GitHub 账户查看时，先由你确认。</p>
         </article>
+      </div>
+    </div>
+  </section>
+  <section id="agents" class="band" aria-labelledby="agents-title">
+    <div class="rails">
+      <div class="band-body agents-body">
+        <h2 id="agents-title">支持的 Agents</h2>
+        <p>请安装下列命令行版本。OpenClaw 和 Hermes Agent 使用官方 DeepSeek Flash 模型。</p>
+        <ul class="agent-wall">
+          ${agents.map(({ name, version, repo, tagPrefix = "v", logo, command }) => `<li><a class="agent-link" href="https://github.com/${repo}/releases/tag/${tagPrefix}${version}">
+            ${logo ? `<img src="/agents/${logo}" width="48" height="48" loading="lazy" alt="">` : `<code class="agent-command" aria-hidden="true">$ ${command}</code>`}
+            <span class="agent-name" lang="en">${name}</span><small class="agent-version">v${version}</small>
+          </a></li>`).join("\n          ")}
+        </ul>
       </div>
     </div>
   </section>
@@ -98,7 +138,7 @@ function homepage() {
           <h2 id="release-title">安装 Mailpipe</h2>
           <ol class="install-steps">
             <li>下载并解压，把 Mailpipe 拖进「应用程序」后打开。</li>
-            <li>按引导连接负责起草回复的 <a href="https://github.com/deepseek-ai/deepseek-harness/blob/master/README.zh.md">DeepSeek Harness</a>。需要先在本机装好它的命令行工具 dsh，并配置好模型。</li>
+            <li>在 Mac 上装好一个<a href="#agents">支持的 Agent</a>，配置模型。在 Mailpipe 的引导中选中它，用示例邮件测试连接。</li>
             <li>在 Apple Mail 的「设置」→「扩展」中勾选 Mailpipe，再回到 Mailpipe 确认来信范围。</li>
           </ol>
         </div>
@@ -117,7 +157,7 @@ function homepage() {
       <img src="/icon.png" width="40" height="40" alt="">
       <div>
         <a class="brand" href="/">Mailpipe</a>
-        <p>Apple Mail 回复助手</p>
+        <p>macOS 上的 AI 邮件助手</p>
       </div>
     </div>
     <div class="footer-contact">

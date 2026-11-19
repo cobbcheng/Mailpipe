@@ -12,6 +12,21 @@
 - 预览使用独立队列、五封合成来信和 example.com 地址。
 - 图标来自仓库的 `design/icon/png/icon_128.png`。
 
+### Agent 标识
+
+下列图形来自各项目的官方仓库。站点本地提供原文件。
+四个项目的许可随图片发布，见[版权声明](public/agents/NOTICES.txt)。
+
+| 名称 | 图形来源 |
+|---|---|
+| DeepSeek Harness | [项目官网的蓝鲸图标](https://github.com/deepseek-ai/deepseek-harness/blob/2e39e70496aa02986ca6a820c5d497e816b69d7e/website/public/favicon.svg) |
+| OpenCode | [官方品牌包的浅色背景标识](https://github.com/anomalyco/opencode/blob/d33b5783338b8b350aafc09f7dc2701eeba52a9a/services/site/public/brand/files/opencode-logo-transparent-light.svg) |
+| OpenClaw | [官方界面的龙虾图标](https://github.com/openclaw/openclaw/blob/fcd7eb6130ed0d3de4a850bda6434f6a8b67664f/ui/public/favicon.svg) |
+| Hermes Agent | [Nous Research 文档站图标](https://github.com/NousResearch/hermes-agent/blob/502009cc3fe7be2d7bb9a42c1670c14ac0ad9e7b/website/static/img/apple-touch-icon.png) |
+
+Claude Code 使用普通文字和真实命令 `claude`。
+Anthropic 对兼容性说明和图形使用有不同要求。见[官方使用说明](https://code.claude.com/docs/en/legal-and-compliance)。
+
 ## 字体
 
 标题绑定 Inter Display，正文绑定 Inter。
