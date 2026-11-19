@@ -71,7 +71,7 @@ function homepage() {
       <div class="band-body notes">
         <article>
           <h3>哪些来信交给 Agent？</h3>
-          <p>你可以授权自动处理所有账户今后的新邮件，也可以按主题限定范围。想逐封决定，就手动粘贴主题和正文，确认后再交给 Agent。</p>
+          <p>在 Apple Mail 中启用 Mailpipe 扩展后，你可以授权 Agent 为所有账户的新来信起草回复。也可以填写一个完整主题，只处理主题完全匹配的新来信。</p>
         </article>
         <article>
           <h3>邮件内容会去哪儿？</h3>

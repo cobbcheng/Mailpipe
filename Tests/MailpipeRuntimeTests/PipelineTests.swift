@@ -384,11 +384,11 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(try pipeline.store.record(id)?.state, .cancelled)
         XCTAssertEqual(try pipeline.store.record(id)?.displayedBody, "Keep this reply")
     }
-    func testManualRegenerationUsesCurrentServiceLevel() async throws {
+    func testRegenerationUsesCurrentServiceLevel() async throws {
         let pipeline = try setup(temporary())
-        try pipeline.updateSettings { $0.suggestionsOnly = true }
-        let id = try pipeline.enqueueManual(id: UUID(), subject: "Synthetic", body: "Please reply", executable: "/fake/dsh")
+        try pipeline.inbox.publish(try capture(pipeline))
         try await pipeline.pump()
+        let id = try XCTUnwrap(pipeline.store.records().first).id
         try pipeline.store.saveEdits(id, subject: "Edited", body: "Keep local reply")
         try pipeline.updateSettings { $0.level = .l1 }
         try pipeline.regenerate(id); try await pipeline.pump()
@@ -398,6 +398,46 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(item.runs.count, 2)
         XCTAssertNotNil(item.draft)
         XCTAssertEqual(item.displayedBody, item.draft?.body)
+    }
+    func testLegacyManualRecordsReopenWithoutDispatchAndKeepLocalEdits() async throws {
+        let directory = try temporary()
+        let inbox = try CaptureInbox(directory: directory.appendingPathComponent("inbox"))
+        let permission = CapturePermission(delivery: .mailKit)
+        var archived = StoredReply(id: "archived", permissionID: permission.id, capturedAt: Date(), messageID: nil,
+            input: MailInput(messageRef: "archived", subject: "Example", body: "Please confirm receipt."), state: .draftReady)
+        archived.manualExecutable = "/fake/dsh"
+        archived.draftData = Data(#"{"schema_version":1,"request_id":"archived-draft","triage_request_id":"archived-triage","message_ref":"archived","subject":"Re: Example","body":"Received."}"#.utf8)
+        archived.editedBody = "Preserved edit"
+        archived.regenerationCount = 1
+        var queued = StoredReply(id: "queued", permissionID: permission.id, capturedAt: Date(), messageID: nil,
+            input: ReplySyntheticFixture.triage.message, state: .queued)
+        queued.manualExecutable = "/fake/dsh"
+        do {
+            let store = try PipelineStore(directory: directory)
+            var settings = PipelineSettings()
+            settings.executable = "/fake/dsh"; settings.paused = true
+            try store.saveSettings(settings)
+            try store.save(archived); try store.save(queued)
+        }
+        let store = try PipelineStore(directory: directory)
+        let fake = FakeReplyModel()
+        let pipeline = ReplyPipeline(store: store, inbox: inbox,
+            resolve: { _, _ in XCTFail("Archived manual records cannot read Mail"); return nil }, model: { _ in fake })
+        XCTAssertEqual(try store.record(queued.id)?.state, .cancelled)
+        let history = try XCTUnwrap(store.record(archived.id))
+        XCTAssertEqual(history.state, .draftReady)
+        XCTAssertTrue(history.canDisplayInWorkbench)
+        XCTAssertEqual(history.draft?.body, "Received.")
+        XCTAssertEqual(history.displayedBody, "Preserved edit")
+        XCTAssertEqual(history.draftData, archived.draftData)
+        try store.saveEdits(history.id, subject: history.displayedSubject, body: "Updated edit")
+        try pipeline.updateSettings { $0.paused = false; $0.permission = permission }
+        XCTAssertFalse(history.canRequestRegeneration(settings: try store.settings()))
+        XCTAssertThrowsError(try pipeline.regenerate(history.id))
+        try await pipeline.loadCorrespondents(history.id, includeBody: true)
+        try await pipeline.pump()
+        XCTAssertEqual(try store.record(history.id)?.displayedBody, "Updated edit")
+        let calls = await fake.calls; XCTAssertEqual(calls, 0)
     }
     func testCancelledRunMustFinishBeforeRegeneration() async throws {
         let pipeline = try setup(temporary())
@@ -659,68 +699,5 @@ extension PipelineTests {
         XCTAssertNil(item.accountID)
         XCTAssertTrue(item.runs.isEmpty)
         let calls = await fake.calls; XCTAssertEqual(calls, 0)
-    }
-}
-
-@MainActor
-final class ManualSuggestionTests: XCTestCase {
-    func setup(_ fake: FakeReplyModel) throws -> ReplyPipeline {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
-        let store = try PipelineStore(directory: root)
-        let pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")),
-            resolve: { _, _ in XCTFail("Manual suggestions must never access Mail"); return nil }, model: { _ in fake })
-        try pipeline.updateSettings { $0.executable = "/fake/dsh"; $0.level = .l1; $0.suggestionsOnly = true }
-        return pipeline
-    }
-    func testExplicitConsentIsIdempotentAndNeverUsesMail() async throws {
-        let fake = FakeReplyModel(), tested = try setup(fake)
-        try await tested.pump(); let initial = await fake.calls; XCTAssertEqual(initial, 0)
-        let id = UUID()
-        for _ in 0..<2 {
-            _ = try tested.enqueueManual(id: id, subject: "Synthetic", body: "Please reply", executable: "/fake/dsh")
-            try await tested.pump()
-        }
-        let calls = await fake.calls; XCTAssertEqual(calls, 1)
-        XCTAssertEqual(try tested.store.record(id.uuidString)?.state, .draftReady)
-        XCTAssertNil(try tested.store.settings().permission)
-        XCTAssertThrowsError(try tested.enqueueManual(id: id, subject: "Changed", body: "Please reply", executable: "/fake/dsh"))
-    }
-    func testPauseRevocationAndToolChangesPreventDispatch() async throws {
-        for change in [0, 1, 2] {
-            let fake = FakeReplyModel(), pipeline = try setup(fake)
-            let id = try pipeline.enqueueManual(id: UUID(), subject: "Synthetic", body: "Please reply", executable: "/fake/dsh")
-            try pipeline.updateSettings {
-                if change == 0 { $0.paused = true }
-                if change == 1 { $0.suggestionsOnly = false }
-                if change == 2 { $0.executable = "/fake/other" }
-            }
-            try await pipeline.pump()
-            let calls = await fake.calls; XCTAssertEqual(calls, 0)
-            XCTAssertNotEqual(try pipeline.store.record(id)?.state, .needsReply)
-        }
-    }
-    func testRevocationDuringTriageStopsDraftAndKeepsUsage() async throws {
-        let fake = FakeReplyModel(), pipeline = try setup(fake)
-        try pipeline.updateSettings { $0.level = .l2 }
-        await fake.setAfterRun {
-            try await MainActor.run { try pipeline.updateSettings { $0.suggestionsOnly = false } }
-        }
-        let id = try pipeline.enqueueManual(id: UUID(), subject: "Synthetic", body: "Please reply", executable: "/fake/dsh")
-        try await pipeline.pump()
-        let item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertEqual(item.state, .needsReview); XCTAssertNil(item.draft)
-        XCTAssertEqual(item.runs.first?.inputTokens, 10)
-        let calls = await fake.calls; XCTAssertEqual(calls, 1)
-        try await pipeline.pump(); let after = await fake.calls; XCTAssertEqual(after, 1)
-    }
-    func testUnconfirmedSpoolAndInvalidInputCannotGrantManualRoute() async throws {
-        let fake = FakeReplyModel(), pipeline = try setup(fake)
-        XCTAssertThrowsError(try pipeline.enqueueManual(id: UUID(), subject: "Synthetic", body: "", executable: "/fake/dsh"))
-        XCTAssertThrowsError(try pipeline.enqueueManual(id: UUID(), subject: "Synthetic", body: String(repeating: "a", count: 16_385), executable: "/fake/dsh"))
-        XCTAssertThrowsError(try pipeline.enqueueManual(id: UUID(), subject: "Synthetic", body: "Please reply", executable: "/fake/other"))
-        let capture = InboundCapture(permissionID: UUID(), subject: "Synthetic", messageID: "synthetic@example.com", raw: Data("Content-Type: text/plain\r\n\r\nPlease reply".utf8))
-        XCTAssertThrowsError(try pipeline.store.importCapture(capture))
-        try await pipeline.pump(); let calls = await fake.calls; XCTAssertEqual(calls, 0)
     }
 }

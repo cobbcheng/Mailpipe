@@ -24,7 +24,7 @@ final class PendingModel: ObservableObject {
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
     private(set) var hasSharedInbox = false
-    var needsPermissionRecovery: Bool { onboarding.completed && settings.suggestionsOnly != true && settings.permission?.delivery != .mailKit }
+    var needsPermissionRecovery: Bool { onboarding.completed && settings.permission?.delivery != .mailKit }
     var pending: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench && ($0.state.isPending || $0.isPreparing || $0.state == .needsReview || $0.state == .awaitingBody) } }
     var workbenchRecords: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench } }
     var unreadCount: Int { workbenchRecords.lazy.filter { self.isUnread($0) }.count }
@@ -44,11 +44,6 @@ final class PendingModel: ObservableObject {
     @Published var notice: String?
     @Published var undoDiscardID: String?
     private var noticeTask: Task<Void, Never>?
-    var toolName: String {
-        installations.first { $0.executable.path == settings.executable }?.kind.displayName
-            ?? settings.executable.map { ($0 as NSString).abbreviatingWithTildeInPath }
-            ?? "Agent"
-    }
     func notify(_ text: String) { notice = text }
     @Published private(set) var editorBuffers: [String: DraftEditBuffer] = [:]
     private var editTasks: [String: Task<Void, Never>] = [:]
@@ -257,9 +252,11 @@ final class PendingModel: ObservableObject {
         saveConfiguration(updating: false)
     }
     private func saveConfiguration(updating: Bool) {
-        guard !onboardingBusy, (onboarding.isSuggestionsOnly || hasSharedInbox), let session = onboardingSession, let pipeline else {
-            onboardingIssue = "无法访问 Mail 扩展的共享目录。可以保存设置进度，或改用手动粘贴。"; return
+        guard !onboardingBusy, let session = onboardingSession, let pipeline else { return }
+        guard hasSharedInbox else {
+            onboardingIssue = "无法访问 Mail 扩展的共享目录。请检查 Mailpipe 的安装。"; return
         }
+        guard onboarding.extensionAcknowledged else { return }
         guard saveOnboarding() else { return }
         onboardingIssue = nil; onboardingBusy = true
         let snapshot = onboarding
@@ -277,7 +274,7 @@ final class PendingModel: ObservableObject {
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding()
                 refresh()
-                onboardingIssue = active.suggestionsOnly == true ? "已设为手动粘贴。每封来信由你确认后交给 Agent。" : active.paused ? "配置已保存，来信处理仍处于暂停状态。" : "已授权 Agent 为新来信起草回复，等待首封符合条件的来信。"
+                onboardingIssue = active.paused ? "配置已保存，来信处理仍处于暂停状态。" : "已授权 Agent 为新来信起草回复，等待首封符合条件的来信。"
             } catch is CancellationError {
                 return
             } catch { onboardingIssue = "授权未完成，原设置保留或等待同步：\(Self.code(error))" }
@@ -285,13 +282,6 @@ final class PendingModel: ObservableObject {
     }
 
     var onboardingTestPassed: Bool { OnboardingSession.testPassed(onboardingResult, level: onboarding.level) }
-    func confirmManual(id: UUID, subject: String, body: String, executable: String) -> Bool {
-        do {
-            guard let pipeline else { return false }
-            selectedID = try pipeline.enqueueManual(id: id, subject: subject, body: body, executable: executable)
-            refresh(); return true
-        } catch { issue = "提交这封来信失败（\(Self.code(error))）。"; return false }
-    }
     func openExtensionSettings() {
         guard let url = URL(string: "mail-pref-pane://extensionspref") else { return }
         if !NSWorkspace.shared.open(url) {
@@ -357,7 +347,7 @@ final class PendingModel: ObservableObject {
         catch { issue = Self.code(error) }
     }
     func revoke() {
-        do { try change { $0.permission = nil; $0.scope = nil; $0.scopes = nil; $0.suggestionsOnly = false } }
+        do { try change { $0.permission = nil; $0.scope = nil; $0.scopes = nil } }
         catch { issue = Self.code(error) }
     }
     func recheck(_ id: String) {
@@ -420,7 +410,6 @@ private struct WorkbenchColumn: ViewModifier {
 
 struct PendingWorkbench: View {
     @ObservedObject var model: PendingModel
-    @State private var showManual = false
     private var visible: [StoredReply] { model.workbenchRecords.reversed() }
     var body: some View {
         NavigationSplitView {
@@ -446,14 +435,6 @@ struct PendingWorkbench: View {
                     .modifier(WorkbenchColumn())
                     .padding(.vertical, 10)
                     .background(Color(nsColor: .controlBackgroundColor))
-                } else if model.settings.suggestionsOnly == true {
-                    HStack {
-                        Text("手动粘贴的来信，由你逐封确认。").foregroundStyle(.secondary)
-                        Spacer()
-                        Button("添加来信…") { showManual = true }.disabled(model.settings.paused)
-                    }
-                    .modifier(WorkbenchColumn())
-                    .padding(.vertical, 10)
                 }
                 if let issue = model.issue {
                     HStack {
@@ -495,7 +476,6 @@ struct PendingWorkbench: View {
             .background(Color(nsColor: .textBackgroundColor))
         }
         .navigationTitle("Mailpipe")
-        .sheet(isPresented: $showManual) { ManualSuggestionView(model: model) }
     }
 }
 
@@ -716,7 +696,7 @@ private struct DraftDetail: View {
                     if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
             } label: { Label("去发送", systemImage: "envelope") }
-                .disabled(model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(item.manualExecutable != nil || model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button {
                 copyReply()
             } label: { Label("复制回复", systemImage: "doc.on.doc") }
@@ -767,7 +747,7 @@ private struct DraftDetail: View {
     private func errorDescription(_ code: String) -> String? {
         if let rejection = MailBodyRejection(rawValue: code) { return rejection.reviewLabel }
         switch code {
-        case "contentExpired": return "来信已超过处理有效期。如需回复，请使用手动粘贴，重新确认这封来信。"
+        case "contentExpired": return "来信已超过处理有效期。"
         case "policyChanged", "revoked": return "处理授权已变更，请在设置中核对。"
         case "identitySourceMismatch": return "已找到原邮件，但采集内容与 Mail 原文不一致。请打开原邮件核对。"
         case "identityUnresolved", "identityUnavailable", "identityAmbiguous": return nil

@@ -27,7 +27,7 @@ final class OnboardingTests: XCTestCase {
         var draft = OnboardingDraft()
         draft.step = 5
         draft.executable = "/fake/dsh"
-        draft.suggestionsOnly = true
+        draft.extensionAcknowledged = true
         draft.completed = true
         try session.save(draft)
         _ = try session.beginTest()
@@ -131,20 +131,16 @@ final class OnboardingCompletionTests: XCTestCase {
     }
     func testEveryLevelCompletesWithoutHigherLevelCalls() async throws {
         for level in [ServiceLevel.l0, .l1, .l2] {
-            for manual in [false, true] {
-                let fake = FakeReplyModel(), isolated = try makeSession(fake)
-                let scope = try AccountScope(accountID: "synthetic", accountName: "Synthetic", mailboxName: "INBOX")
-                var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = level
-                draft.suggestionsOnly = manual; draft.extensionAcknowledged = !manual
-                draft.selectedScopes = manual ? [] : [scope]
-                try isolated.save(draft); _ = try isolated.beginTest(); try await isolated.testPipeline.pump()
-                XCTAssertTrue(OnboardingSession.testPassed(try isolated.testResult(), level: level))
-                try isolated.activate()
-                XCTAssertTrue(try isolated.store.onboarding().completed)
-                XCTAssertEqual(try isolated.store.settings().permission == nil, manual)
-                XCTAssertTrue(try isolated.store.settings().authorizedScopes.isEmpty)
-                let calls = await fake.calls; XCTAssertEqual(calls, 1)
-            }
+            let fake = FakeReplyModel(), isolated = try makeSession(fake)
+            var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = level
+            draft.extensionAcknowledged = true
+            try isolated.save(draft); _ = try isolated.beginTest(); try await isolated.testPipeline.pump()
+            XCTAssertTrue(OnboardingSession.testPassed(try isolated.testResult(), level: level))
+            try isolated.activate()
+            XCTAssertTrue(try isolated.store.onboarding().completed)
+            XCTAssertEqual(try isolated.store.settings().permission?.delivery, .mailKit)
+            XCTAssertTrue(try isolated.store.settings().authorizedScopes.isEmpty)
+            let calls = await fake.calls; XCTAssertEqual(calls, 1)
         }
     }
     func testLevelChangeInvalidatesEvidenceAndDirectDraftPasses() async throws {
@@ -155,21 +151,47 @@ final class OnboardingCompletionTests: XCTestCase {
         XCTAssertNil(try session.testResult())
         for decision in ["no", "unknown"] {
             let other = try makeSession(FakeReplyModel(shouldReply: decision))
-            var input = OnboardingDraft(); input.executable = "/fake/dsh"; input.level = .l1; input.suggestionsOnly = true
+            var input = OnboardingDraft(); input.executable = "/fake/dsh"; input.level = .l1; input.extensionAcknowledged = true
             try other.save(input); _ = try other.beginTest(); try await other.testPipeline.pump()
             try other.activate()
         }
     }
-    func testSuggestionsRevokeAutomaticScopeAndPreservePause() async throws {
+    func testLegacyManualPolicyRequiresNewMailKitConsentAndPreservesPause() async throws {
         let session = try makeSession(FakeReplyModel())
-        var settings = PipelineSettings(); settings.paused = true; settings.permission = CapturePermission()
-        settings.scope = try AccountScope(accountID: "synthetic", accountName: "Synthetic", mailboxName: "INBOX")
+        var settings = PipelineSettings()
+        settings.suggestionsOnly = true
+        settings.paused = true
+        settings.executable = "/fake/dsh"
+        settings.permission = CapturePermission()
+        settings.scope = try AccountScope(accountID: "synthetic", accountName: "Example", mailboxName: "INBOX")
         try session.store.saveSettings(settings)
-        var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = .l1; draft.suggestionsOnly = true
+
+        var draft = OnboardingDraft(); draft.executable = "/fake/dsh"
         try session.save(draft); _ = try session.beginTest(); try await session.testPipeline.pump()
+        draft = try session.store.onboarding()
+        draft.step = 5
+        draft.suggestionsOnly = true
+        draft.extensionAcknowledged = true
+        try session.store.saveOnboarding(draft)
+        XCTAssertThrowsError(try session.store.activateOnboarding(draft))
+        XCTAssertEqual(try session.store.onboarding().step, 3)
+        XCTAssertThrowsError(try session.activate())
+
+        draft.completed = true
+        try session.store.saveOnboarding(draft)
+        var recovered = try session.store.onboarding()
+        XCTAssertTrue(recovered.completed)
+        XCTAssertFalse(recovered.extensionAcknowledged)
         try session.activate()
+        XCTAssertThrowsError(try session.activate(updatingConfiguration: true))
         XCTAssertNil(try session.store.settings().permission)
         XCTAssertTrue(try session.store.settings().authorizedScopes.isEmpty)
+
+        recovered.extensionAcknowledged = true
+        try session.save(recovered)
+        XCTAssertNil(try session.store.settings().permission)
+        try session.activate(updatingConfiguration: true)
+        XCTAssertEqual(try session.store.settings().permission?.delivery, .mailKit)
         XCTAssertTrue(try session.store.settings().paused)
     }
 }
