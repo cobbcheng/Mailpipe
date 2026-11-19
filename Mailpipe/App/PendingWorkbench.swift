@@ -583,6 +583,10 @@ private struct DraftDetail: View {
                         ).status {
                             Text(status).font(.caption).foregroundStyle(.secondary).fixedSize()
                         }
+                        Button("打开原邮件", action: openOriginalMessage)
+                            .controlSize(.small)
+                            .fixedSize()
+                            .disabled(originalMessageURL == nil)
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text("发件人：\(item.correspondents?.sender ?? "发件地址未采集")")
@@ -642,25 +646,14 @@ private struct DraftDetail: View {
         }
     }
     private var originalCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Label("原邮件", systemImage: "envelope")
-                    .font(.headline)
-                Spacer()
-                Button("打开原邮件") { openOriginalMessage() }
-                    .controlSize(.small)
-                    .disabled(originalMessageURL == nil)
-            }.padding(.vertical, 16)
-            Divider()
-            VStack(alignment: .leading, spacing: 10) {
-                if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
-                    Text("完整原文尚未取得，以下为已保存的正文。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Text(incoming.isEmpty ? (item.state == .awaitingBody ? "等待 Mail 提供邮件正文。收到正文前不会调用 AI，也无法重新生成。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
-                    .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }.padding(.vertical, 16)
+        VStack(alignment: .leading, spacing: 10) {
+            if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
+                Text("完整原文尚未取得，以下为已保存的正文。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(incoming.isEmpty ? (item.state == .awaitingBody ? "等待 Mail 提供邮件正文。收到正文前不会调用 AI，也无法重新生成。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
+                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
     private var draftCard: some View {
