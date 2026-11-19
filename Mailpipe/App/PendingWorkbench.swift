@@ -597,15 +597,17 @@ private struct WorkbenchMessageRow: View {
     let sender: String
     let date: Date
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
-                Text(sender).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(sender).font(.callout).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                Text(date, format: Calendar.autoupdatingCurrent.isDateInToday(date)
+                     ? .dateTime.hour().minute().second()
+                     : .dateTime.month(.twoDigits).day(.twoDigits))
+                    .font(.caption).monospacedDigit().fixedSize()
             }
-            Spacer(minLength: 8)
-            Text(date, format: .dateTime.month(.twoDigits).day(.twoDigits))
-                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                .frame(width: 44, alignment: .trailing).lineLimit(1)
+            .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
     }
