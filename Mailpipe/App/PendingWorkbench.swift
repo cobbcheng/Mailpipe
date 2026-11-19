@@ -537,6 +537,7 @@ struct WorkbenchActionStyle: ViewModifier {
 private struct DraftDetail: View {
     @ObservedObject var model: PendingModel
     let item: StoredReply
+    @State private var originalExpanded = false
     @State private var showExplanation = false
     @State private var confirmRegeneration = false
     private var bodyText: String { model.editorBody(item) }
@@ -558,8 +559,11 @@ private struct DraftDetail: View {
                         Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
                             .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
                         Spacer(minLength: 0)
-                        Button("打开原邮件", action: openOriginalMessage)
-                            .modifier(WorkbenchActionStyle())
+                        Button(action: openOriginalMessage) {
+                            actionIcon("打开原邮件", "envelope.open")
+                        }
+                            .help("在 Apple Mail 中打开原邮件")
+                            .modifier(WorkbenchActionStyle(circular: true))
                             .fixedSize()
                             .disabled(originalMessageURL == nil)
                     }
@@ -577,7 +581,9 @@ private struct DraftDetail: View {
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                originalCard
+                DisclosureGroup("来信正文", isExpanded: $originalExpanded) {
+                    originalCard.padding(.top, 6)
+                }
                 draftCard
             }
             .modifier(WorkbenchColumn())
@@ -676,50 +682,40 @@ private struct DraftDetail: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
-    private var actions: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                replyActions
-                draftActions
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                replyActions
-                draftActions
-            }
-        }
-        .modifier(WorkbenchActionStyle())
+    private func actionIcon(_ title: LocalizedStringKey, _ symbol: String) -> some View {
+        Label(title, systemImage: symbol)
+            .labelStyle(.iconOnly)
+            .frame(minWidth: 20, minHeight: 20)
     }
-    private var replyActions: some View {
+
+    private var actions: some View {
         HStack(spacing: 8) {
             Button {
                 Task {
                     if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
-            } label: { Label("去发送", systemImage: "envelope") }
-                .disabled(item.manualExecutable != nil || model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button {
-                copyReply()
-            } label: { Label("复制回复", systemImage: "doc.on.doc") }
+            } label: { actionIcon("在 Apple Mail 中撰写回复", "arrowshape.turn.up.left") }
+            .help("在 Apple Mail 中撰写回复")
+            .disabled(item.manualExecutable != nil || model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button(action: copyReply) { actionIcon("复制回复", "doc.on.doc") }
+                .help("复制回复")
                 .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
-        }
-        .fixedSize()
-    }
-    private var draftActions: some View {
-        HStack(spacing: 8) {
-            Button("重新生成") { confirmRegeneration = true }.disabled(!canRegenerate)
-                .fixedSize()
+            Button { confirmRegeneration = true } label: { actionIcon("重新生成", "arrow.clockwise") }
+                .help("重新生成")
+                .disabled(!canRegenerate)
             Menu {
                 Button("查看数据去向") { showExplanation = true }
                 Divider()
                 Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
-            } label: { Label("更多草稿操作", systemImage: "ellipsis").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
-                .modifier(WorkbenchActionStyle(circular: true)).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
+            } label: { actionIcon("更多草稿操作", "ellipsis") }
+                .help("更多草稿操作").menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
             Spacer(minLength: 0)
-            Button { showExplanation = true } label: { Label("查看数据去向", systemImage: "info").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
-                .modifier(WorkbenchActionStyle(circular: true)).accessibilityLabel("查看数据去向")
+            Button { showExplanation = true } label: { actionIcon("查看数据去向", "info") }
+                .help("查看数据去向").accessibilityLabel("查看数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
         }
+        .modifier(WorkbenchActionStyle(circular: true))
     }
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -730,7 +726,7 @@ private struct DraftDetail: View {
                     Text("模型服务：\(vendor) · \(model)")
                 } else { Text("本次记录未确认具体模型。") }
             } else { Text("这封来信尚无 Agent 调用记录。") }
-            Text("来信和草稿由 Mailpipe 保存在这台 Mac 上。点「去发送」可在 Apple Mail 打开撰写窗口，由你检查并发送。")
+            Text("来信和草稿由 Mailpipe 保存在这台 Mac 上。点回复箭头可在 Apple Mail 打开撰写窗口，由你检查并发送。")
             if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }
             if let readDiff = item.runs.last?.readPullRequestDiff {
                 Text(readDiff ? "核查工具已读取 PR 代码差异。" : "核查工具未取得可读的 PR 代码差异。")
