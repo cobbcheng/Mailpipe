@@ -43,11 +43,11 @@ function homepage() {
           <a class="button button-secondary" href="#workbench">看看回复草稿</a>
           <a class="button button-primary" href="#release">下载</a>
         </div>
-        <p class="note">版本 0.0.3 · build 25 · 已通过 Apple 公证。</p>
+        <p class="note">版本 0.0.4 · build 26 · 已通过 Apple 公证。</p>
       </div>
       <figure class="showcase">
         <div class="app-window">
-          <img src="/detail.jpg" width="2120" height="1480" alt="示例来信询问项目进度。下方的回复草稿留下了待补充的进展和待确认的发布条件。" fetchpriority="high">
+          <img src="/detail.jpg" width="2120" height="1480" alt="示例来信邀请周四下午评审书封，下方的回复草稿写道会先确认日程，再回复具体时间。" fetchpriority="high">
         </div>
       </figure>
     </div>
@@ -88,8 +88,8 @@ function homepage() {
     <div class="rails">
       <div class="band-body stack release-copy">
         <h2>下载 Mac 版 Mailpipe</h2>
-        <p>版本 0.0.3（build 25），7.06 MB。解压后将 Mailpipe 拖入「应用程序」。App 已通过 Developer ID 签名和 Apple 公证。</p>
-        <p><a class="button button-primary" download href="/downloads/Mailpipe-0.0.3-build25-b7a83cc.zip">下载 macOS 安装包</a></p>
+        <p>版本 0.0.4（build 26），7.07 MB。解压后将 Mailpipe 拖入「应用程序」。App 已通过 Developer ID 签名和 Apple 公证。</p>
+        <p><a class="button button-primary" download href="/downloads/Mailpipe-0.0.4-build26-d5c05d8.zip">下载 macOS 安装包</a></p>
       </div>
     </div>
   </section>
