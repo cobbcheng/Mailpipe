@@ -2,6 +2,7 @@
 
 当前已有工程与签名验证记录，尚无完整功能验收。
 
+- [紧凑新手引导与工作台入口](2026-11-19-compact-onboarding.md)
 - [build 9 超限原因与正文候选修复复测](2026-11-17-mime-fix-retest.md)
 - [build 8 更新与 MIME 实机验收](2026-11-17-mime-live.md)
 - [MIME 正文提取审查修复与 macOS 回归](2026-11-17-mime-review-fixes.md)

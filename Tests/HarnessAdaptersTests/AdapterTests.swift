@@ -173,4 +173,36 @@ final class AdapterTests: XCTestCase {
         XCTAssertEqual(matches.count, 1)
         XCTAssertEqual(matches.first?.kind, .deepseek)
     }
+
+    func testDeepSeekSetupLauncherRespectsPATHAndRestoresSavedAlias() throws {
+        let root = try TemporaryDirectory()
+        let versions = root.url.appendingPathComponent(".nvm/versions/node")
+        func install(_ version: String) throws -> URL {
+            let bin = versions.appendingPathComponent(version + "/bin")
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            let target = try root.script("exit 1", name: version + ".js")
+            let launcher = bin.appendingPathComponent("dsh")
+            try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: target)
+            return launcher
+        }
+        let older = try install("v20.9.0")
+        let newer = try install("v20.12.0")
+        func discover(_ path: String) -> [HarnessInstallation] {
+            HarnessDiscovery.find(path: path, home: root.url)
+                .filter { $0.executable.path.hasPrefix(root.url.path + "/") }
+        }
+        let nvm = discover("")
+        XCTAssertEqual(nvm.map(\.executable), [newer, older])
+        let viaPath = discover(older.deletingLastPathComponent().path)
+        XCTAssertEqual(HarnessDiscovery.deepSeekLaunchers(in: viaPath, keeping: nil).first?.executable, older)
+
+        let alias = root.url.appendingPathComponent("dsh")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: newer)
+        for saved in [alias, newer.resolvingSymlinksInPath()] {
+            let matches = HarnessDiscovery.deepSeekLaunchers(in: viaPath, keeping: saved.path)
+            XCTAssertEqual(matches.map(\.executable), [saved, older])
+        }
+        try FileManager.default.removeItem(at: alias)
+        XCTAssertEqual(HarnessDiscovery.deepSeekLaunchers(in: viaPath, keeping: alias.path), viaPath)
+    }
 }

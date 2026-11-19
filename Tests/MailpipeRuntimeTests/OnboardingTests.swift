@@ -21,6 +21,37 @@ final class OnboardingTests: XCTestCase {
         XCTAssertNil(try reopened.settings().permission)
         XCTAssertTrue(try reopened.settings().paused)
     }
+    func testOnlyFinalReviewCanCompleteInitialSetup() async throws {
+        let store = try PipelineStore(directory: root())
+        let session = try OnboardingSession(store: store, model: { _ in FakeReplyModel() })
+        var draft = OnboardingDraft()
+        draft.step = 5
+        draft.executable = "/fake/dsh"
+        draft.suggestionsOnly = true
+        draft.completed = true
+        try session.save(draft)
+        _ = try session.beginTest()
+        try await session.testPipeline.pump()
+
+        XCTAssertThrowsError(try session.activate(updatingConfiguration: true))
+        XCTAssertFalse(try store.onboarding().completed)
+        XCTAssertNil(try store.settings().executable)
+        try session.activate()
+        XCTAssertTrue(try store.onboarding().completed)
+
+        draft = try store.onboarding()
+        draft.completed = false
+        draft.executable = "/fake/replacement"
+        try session.save(draft)
+        XCTAssertThrowsError(try session.activate(updatingConfiguration: true))
+        XCTAssertTrue(try store.onboarding().completed)
+        XCTAssertEqual(try store.settings().executable, "/fake/dsh")
+        _ = try session.beginTest()
+        try await session.testPipeline.pump()
+        try session.activate(updatingConfiguration: true)
+        XCTAssertTrue(try store.onboarding().completed)
+        XCTAssertEqual(try store.settings().executable, "/fake/replacement")
+    }
     func testSyntheticAndAtomicFinalConsent() async throws {
         let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
         var active = PipelineSettings(); active.paused = true; try store.saveSettings(active)
