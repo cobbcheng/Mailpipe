@@ -559,7 +559,7 @@ private struct DraftDetail: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
-                            .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
+                            .font(.title.weight(.semibold)).textSelection(.enabled).lineLimit(3)
                         Spacer(minLength: 0)
                         Button(action: openOriginalMessage) {
                             actionIcon("打开原邮件", "envelope.open")
@@ -587,7 +587,7 @@ private struct DraftDetail: View {
                 draftCard
             }
             .modifier(WorkbenchColumn())
-            .padding(.top, 16)
+            .padding(.top, 7)
             .padding(.bottom, 24)
         }
         .onAppear { model.openEditor(item) }
