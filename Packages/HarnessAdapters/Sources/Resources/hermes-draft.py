@@ -13,12 +13,11 @@ ENDPOINT = "https://api.deepseek.com"
 VERSION = "0.23.2"
 
 
-class ContractError(BaseException):
-    """Stop the turn before Hermes or its provider SDK can retry a rejected request."""
-
-    def __init__(self, code):
-        super().__init__()
-        self.code = code
+def stop(code):
+    # Hermes executes HTTP requests on worker threads. Raising there lets the
+    # native retry loop continue. The host owns this one-shot process and its
+    # disposable workspace, so report the first outcome directly.
+    os._exit(code)
 
 
 def run():
@@ -50,28 +49,28 @@ def run():
         nonlocal sent
         if (sent or request.method != "POST" or str(request.url) not in
                 (ENDPOINT + "/chat/completions", ENDPOINT + "/v1/chat/completions")):
-            raise ContractError(2)
+            stop(2)
         body = json.loads(request.content)
         if (body.get("model") != MODEL or body.get("tools") or body.get("functions") or body.get("stream")
                 or [message["role"] for message in body["messages"]] != ["system", "user"]
                 or body["messages"][1]["content"] != prompt or policy != body["messages"][0]["content"]):
-            raise ContractError(2)
+            stop(2)
         sent = True
         kwargs["follow_redirects"] = False
         try:
             response = native_send(client, request, **kwargs)
             if not response.is_success:
-                raise ContractError({401: 3, 403: 3, 402: 4, 429: 5, 408: 6, 504: 6}.get(response.status_code, 1))
+                stop({401: 3, 403: 3, 402: 4, 429: 5, 408: 6, 504: 6}.get(response.status_code, 1))
             answer = json.loads(response.read())
         except httpx.TimeoutException:
-            raise ContractError(6)
+            stop(6)
         except httpx.TransportError:
-            raise ContractError(1)
+            stop(1)
         choice, = answer["choices"]
         message = choice["message"]
         if (answer["model"] != MODEL or choice["finish_reason"] != "stop" or message["role"] != "assistant"
                 or message.get("tool_calls") or message.get("function_call")):
-            raise ContractError(7)
+            stop(7)
         receipts.append((answer["model"], message["content"], answer["usage"]))
         return response
     httpx.Client.send = restricted_send
@@ -82,7 +81,7 @@ def run():
             return policy
 
         def _execute_tool_calls(self, *args, **kwargs):
-            raise ContractError(2)
+            stop(2)
 
     # Hermes alone resolves the default profile's credentials. This scope uses
     # its native secret lookup without loading user config, hooks or plugins.
@@ -92,7 +91,7 @@ def run():
                            skip_memory=True, skip_background_review=True, quiet_mode=True,
                            reasoning_config={"enabled": False}, fallback_model=None)
         if agent.tools or agent.valid_tool_names or agent.provider != "deepseek" or str(agent.base_url).rstrip("/") not in (ENDPOINT, ENDPOINT + "/v1"):
-            raise ContractError(2)
+            stop(2)
         agent._disable_streaming = True
         result = agent.run_conversation(prompt, system_message=policy)
     if (result.get("completed") is not True or result.get("failed") or result.get("partial")
@@ -110,10 +109,6 @@ try:
     with open(os.devnull, "w") as sink, redirect_stdout(sink), redirect_stderr(sink):
         output = run()
     print(output)
-except ContractError as error:
-    # The module runner catches SystemExit. Return only a fixed exit status to
-    # Mailpipe, including when the SDK raises an exception containing mail or keys.
-    os._exit(error.code)
 except Exception as error:
     reason = str(error).lower()
     if any(term in reason for term in ("api key", "api_key", "credentials", "authentication", "no llm provider")):
