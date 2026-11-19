@@ -641,7 +641,6 @@ private struct DraftDetail: View {
         let truncated = fullBodyHeight > previewHeight + 0.5
         let expanded = truncated && originalExpanded
         return VStack(alignment: .leading, spacing: 6) {
-            if !truncated { Text("来信正文") }
             if !truncated || expanded { originalText.textSelection(.enabled) }
             if truncated {
                 Button {
