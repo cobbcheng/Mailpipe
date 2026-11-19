@@ -77,19 +77,13 @@ public final class OnboardingSession {
         case .l2: return result.state == .draftReady && result.runs.count == 2
         }
     }
-    public func activate(scopes: [AccountScope]) throws {
+    public func activate() throws {
         let draft = try store.onboarding()
         if draft.completed { return }
         guard draft.testedExecutable == draft.executable,
               draft.evidenceVersion == Self.evidenceVersion,
               Self.testPassed(try testResult(), level: draft.level) else { throw MailpipeError.invalidInput }
-        if draft.isSuggestionsOnly {
-            guard scopes.isEmpty else { throw MailpipeError.invalidInput }
-        } else {
-            guard draft.extensionAcknowledged, !scopes.isEmpty, scopes == draft.selections,
-                  Set(scopes.map(\.id)).count == scopes.count,
-                  Set(scopes.map(\.accountID)).count == scopes.count else { throw MailpipeError.invalidInput }
-        }
-        try store.activateOnboarding(draft, scopes: scopes)
+        guard draft.isSuggestionsOnly || draft.extensionAcknowledged else { throw MailpipeError.invalidInput }
+        try store.activateOnboarding(draft)
     }
 }

@@ -6,7 +6,7 @@ import MailpipeRuntime
 struct OnboardingView: View {
     @ObservedObject var model: PendingModel
     @Environment(\.dismiss) private var dismiss
-    private let titles = ["让回复准备得更轻松", "连接 AI 工具", "启用 Mail 扩展", "选择邮箱", "准备就绪"]
+    private let titles = ["让回复准备得更轻松", "连接 AI 工具", "启用 Mail 扩展", "处理方式", "准备就绪"]
     private var toolName: String { model.installations.first { $0.executable.path == model.onboarding.executable }?.kind.displayName ?? "AI 工具" }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -46,14 +46,13 @@ struct OnboardingView: View {
         switch model.onboarding.step {
         case 2: return model.onboardingTestPassed
         case 3: return model.onboarding.extensionAcknowledged || model.onboarding.isSuggestionsOnly
-        case 4: return model.onboarding.isSuggestionsOnly || model.mailboxSelectionValid
         default: return true
         }
     }
     private var canConfirm: Bool {
         !model.onboardingBusy && model.onboardingTestPassed &&
         (model.onboarding.isSuggestionsOnly || (model.onboarding.extensionAcknowledged &&
-        !model.mailboxLoading && model.mailboxSelectionValid && model.hasSharedInbox))
+        model.hasSharedInbox))
     }
     @ViewBuilder private var page: some View {
         switch model.onboarding.step {
@@ -96,7 +95,7 @@ struct OnboardingView: View {
             Text("在 Mail → 设置 → 扩展中启用 Mailpipe，并核对系统显示的权限。")
             Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings).buttonStyle(.borderedProminent)
             Toggle("我已启用 Mailpipe 扩展", isOn: $model.onboarding.extensionAcknowledged)
-            Text("启用后，扩展可接触新邮件；账户未确认前，内容只在本机暂存。你可以随时在 Mail 中关闭扩展。")
+            Text("确认处理方式后，扩展会采集新邮件。你可以随时在 Mail 中关闭扩展。")
                 .foregroundStyle(.secondary)
             if model.extensionObservation != nil { Label("已收到扩展运行回执", systemImage: "checkmark.circle") }
             else { Text("尚未收到扩展运行回执。启用状态仍需收到新邮件后核对。") .foregroundStyle(.secondary) }
@@ -104,22 +103,13 @@ struct OnboardingView: View {
             if model.onboarding.isSuggestionsOnly { Text("已选择逐封建议，可继续。") }
         case 4:
             Picker("处理方式", selection: Binding(get: { model.onboarding.isSuggestionsOnly }, set: { model.onboarding.suggestionsOnly = $0; model.saveOnboarding() })) {
-                Text("自动处理所选收件箱").tag(false)
+                Text("处理 MailKit 收到的新邮件").tag(false)
                 Text("逐封建议").tag(true)
             }
             if model.onboarding.isSuggestionsOnly {
                 Text("由你粘贴来信。每封先确认内容和工具，再提交处理。无需 Mail 自动化权限。")
             } else {
-                Text("选择要处理的账户收件箱。读取列表时，系统可能请求 Mail 自动化权限；此时不读取邮件正文。")
-                Button("读取账户列表", action: model.loadMailboxes).disabled(model.mailboxLoading)
-                if model.mailboxLoading { ProgressView("正在读取…") }
-                if let issue = model.mailboxIssue { Text(issue).foregroundStyle(.secondary) }
-                ForEach(model.mailboxChoices) { account in
-                    Toggle(account.accountName + " · 收件箱", isOn: Binding(get: { model.onboarding.selections.contains(account) }, set: { model.selectMailbox(account, selected: $0) }))
-                }
-                ForEach(model.onboarding.selections.filter { !model.mailboxChoices.contains($0) }) { account in
-                    HStack { Text(account.accountName + " · 需要重新核对"); Button("移除") { model.selectMailbox(account, selected: false) } }
-                }
+                Text("所有账户的新邮件均可交给所选 AI 工具分拣并准备草稿。")
                 TextField("精确主题限制（可选）", text: $model.onboarding.exactSubject)
                 Button("暂不授权，使用逐封建议", action: model.useSuggestions)
             }
@@ -127,8 +117,7 @@ struct OnboardingView: View {
             Label("已连接到 \(toolName)", systemImage: "checkmark.circle")
             if model.onboarding.isSuggestionsOnly { Text("逐封建议：只处理你确认提交的内容。") }
             else {
-                Text("为以下收件箱的新邮件准备回复：").font(.headline)
-                ForEach(model.onboarding.selections) { Text($0.accountName) }
+                Text("从所有账户的 MailKit 来信中准备回复。").font(.headline)
                 if !model.onboarding.exactSubject.isEmpty { Text("仅处理主题：\(model.onboarding.exactSubject)") }
                 Text("只交付主题与提取后的正文，不向模型交付附件内容。确认只授权未来的新邮件。")
             }

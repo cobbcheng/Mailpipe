@@ -190,7 +190,7 @@ public enum AppleMailReplyIdentity {
     // 4194304 matches MailBodyLimits.rawCeiling.
     public static let scriptSource = """
     \(mailboxPathScript)
-    on resolveReply(accountID, mailboxName, targetID, expectedSubject, mailboxPath)
+    on resolveReply(accountID, mailboxName, targetID, expectedSubject, firstMatch, mailboxPath)
         with timeout of 15 seconds
             tell application id "com.apple.mail"
                 set accountsFound to every account whose id is accountID
@@ -207,7 +207,8 @@ public enum AppleMailReplyIdentity {
                 if (count of folders) is not 1 then return {"unresolved"}
                 set selectedBox to item 1 of folders
                 set hits to every message of selectedBox whose message id is targetID
-                if (count of hits) is not 1 then return {"unresolved"}
+                if (count of hits) is 0 then return {"unresolved"}
+                if firstMatch is not "yes" and (count of hits) is not 1 then return {"unresolved"}
                 set hit to item 1 of hits
                 if (subject of hit) is not expectedSubject then return {"unresolved"}
                 if (id of account of mailbox of hit) is not accountID then return {"unresolved"}
@@ -219,7 +220,7 @@ public enum AppleMailReplyIdentity {
         end timeout
     end resolveReply
     """
-    public static func resolve(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil) throws -> Match? {
+    public static func resolve(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil, firstMatch: Bool = false) throws -> Match? {
 #if !os(macOS)
         throw IdentityQueryError.invalidResult
 #else
@@ -227,7 +228,7 @@ public enum AppleMailReplyIdentity {
         guard values.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2_048 }) else { throw IdentityQueryError.invalidScope }
         let path = mailboxPath ?? []
         guard (mailboxPath == nil || !path.isEmpty), path.count <= 33, path.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 }) else { throw IdentityQueryError.invalidScope }
-        let result = try call(source: scriptSource, handler: "resolveReply", arguments: values, path: path)
+        let result = try call(source: scriptSource, handler: "resolveReply", arguments: values + [firstMatch ? "yes" : "no"], path: path)
         return try decodeMatch(result, accountID: accountID)
 #endif
     }

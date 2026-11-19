@@ -40,6 +40,13 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
                     let oversized = raw.count > MailBodyLimits.rawCeiling
                     try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID,
                         raw: oversized ? nil : raw, issue: oversized ? MailBodyRejection.messageTooLarge.rawValue : nil))
+                } else if permission.delivery == .mailKit {
+                    if messageID != nil {
+                        _ = try inbox.publishBodyRequest(permission: permission, subject: message.subject, messageID: messageID) {
+                            try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID, raw: nil))
+                        }
+                    }
+                    decision = .invokeAgainWithBody
                 } else if try inbox.publishBodyRequest(permission: permission, subject: message.subject, messageID: messageID, publish: {
                     try inbox.publish(InboundCapture(permissionID: permission.id, subject: message.subject, messageID: messageID, raw: nil))
                 }) {

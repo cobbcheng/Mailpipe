@@ -221,14 +221,20 @@ public enum ClassificationSchema {
 
 public struct AccountRoute: Sendable {
     public let accountID: String?
+    private let capturePermission: UUID?
     public let allowedHarnesses: Set<HarnessKind>
     public let paused: Bool
     public init(accountID: String?, allowedHarnesses: Set<HarnessKind>, paused: Bool = false) {
+        self.capturePermission = nil
         self.accountID = accountID; self.allowedHarnesses = allowedHarnesses; self.paused = paused
+    }
+    public init(mailKitPermission: UUID, allowedHarnesses: Set<HarnessKind>) {
+        capturePermission = mailKitPermission; accountID = nil
+        self.allowedHarnesses = allowedHarnesses; paused = false
     }
     public func authorize(_ harness: HarnessKind) throws {
         guard !paused else { throw MailpipeError.paused }
-        guard let accountID, !accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard capturePermission != nil || accountID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             throw MailpipeError.unknownAccount
         }
         guard allowedHarnesses.contains(harness) else { throw MailpipeError.routeNotAllowed }

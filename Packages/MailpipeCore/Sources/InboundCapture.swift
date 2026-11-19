@@ -29,7 +29,15 @@ public struct CapturePermission: Codable, Equatable, Sendable {
     public let id: UUID
     public let grantedAt: Date
     public let exactSubject: String?
-    public init(exactSubject: String? = nil) { id = UUID(); grantedAt = Date(); self.exactSubject = exactSubject }
+    public let delivery: Delivery?
+    public enum Delivery: String, Codable, Sendable { case mailKit }
+    public init(exactSubject: String? = nil, delivery: Delivery? = nil) {
+        id = UUID(); grantedAt = Date(); self.exactSubject = exactSubject; self.delivery = delivery
+    }
+    /// Explicitly renewed consent applies to future callbacks. Retain the grant ID for existing drafts.
+    public init(renewing permission: CapturePermission) {
+        id = permission.id; grantedAt = Date(); exactSubject = permission.exactSubject; delivery = .mailKit
+    }
     public func accepts(_ subject: String) -> Bool { exactSubject == nil || exactSubject == subject }
 }
 public struct InboundCapture: Codable, Sendable {

@@ -12,10 +12,6 @@ final class PendingModel: ObservableObject {
     @Published var issue: String?
     @Published var selectedID: String?
     @Published var installations: [HarnessInstallation] = []
-    @Published var mailboxChoices: [AccountScope] = []
-    @Published var mailboxLoading = false
-    @Published var mailboxIssue: String?
-    var attemptedMailboxDiscovery = false
     @Published var onboarding = OnboardingDraft()
     @Published var onboardingResult: StoredReply?
     @Published var onboardingBusy = false
@@ -29,7 +25,7 @@ final class PendingModel: ObservableObject {
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
     private(set) var hasSharedInbox = false
-    var needsPermissionRecovery: Bool { onboarding.completed && settings.suggestionsOnly != true && (settings.permission == nil || settings.authorizedScopes.isEmpty) }
+    var needsPermissionRecovery: Bool { onboarding.completed && settings.suggestionsOnly != true && settings.permission?.delivery != .mailKit }
     var pending: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench && ($0.state.isPending || $0.isPreparing || $0.state == .needsReview || $0.state == .awaitingBody) } }
     @Published var notice: String?
     @Published var undoDiscardID: String?
@@ -113,7 +109,7 @@ final class PendingModel: ObservableObject {
         do {
             guard let pipeline, let item = try pipeline.store.record(id) else { throw PipelineError.storage }
             guard item.canRequestRegeneration(settings: try pipeline.store.settings()) else {
-                issue = item.state == .awaitingBody ? "尚未收到 Mail 提供的正文，暂时无法生成回复。" : "请先核对账户授权、暂停状态和邮件有效期。"
+                issue = item.state == .awaitingBody ? "尚未收到 Mail 提供的正文，暂时无法生成回复。" : "请先核对来信处理授权、暂停状态和邮件有效期。"
                 return
             }
             guard flushEditor(id) else { return }
@@ -122,7 +118,7 @@ final class PendingModel: ObservableObject {
             try pipeline.store.saveEdits(id, subject: item.displayedSubject, body: editorBody(item))
             try pipeline.regenerate(id); refresh()
         }
-        catch { issue = "无法重新生成。请核对暂停、账户授权、工具和邮件有效期；每封最多重新生成三次。" }
+        catch { issue = "无法重新生成。请核对暂停、来信处理授权、工具和邮件有效期；每封最多重新生成三次。" }
     }
     @Published var composeBusy = false
     func prepareCompose(_ item: StoredReply) async -> MailComposeRequest? {
@@ -132,7 +128,7 @@ final class PendingModel: ObservableObject {
             return try await pipeline.prepareMailCompose(id: item.id, subject: item.displayedSubject, body: editorBody(item),
                 senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) })
         } catch {
-            notify("无法准备 Mail 撰写窗口。请核对原邮件仍在授权收件箱、地址和账户权限；当前编辑已保留。")
+            notify("无法准备 Mail 撰写窗口。请核对原邮件位置、地址和 Mail 自动化权限；当前编辑已保留。")
             return nil
         }
     }
@@ -177,38 +173,29 @@ final class PendingModel: ObservableObject {
             pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: inboxURL), resolve: { item, scope in
                 let expected = try store.settings()
                 guard let messageID = item.messageID, expected.permission?.id == item.permissionID,
-                      expected.authorizedScopes.contains(scope) else { return nil }
+                      (item.mailKitBody == true ? expected.permission?.delivery == .mailKit : expected.authorizedScopes.contains(scope)) else { return nil }
                 let match = try await MailReadBridge.shared.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                    messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath) {
+                    messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath, firstMatch: item.mailKitBody == true) {
                     guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
                 }
                 guard let match else { return nil }
                 let source = Data(match.source.utf8)
-                if item.sourceEvidence == nil {
+                if item.mailKitBody != true && item.sourceEvidence == nil {
                     guard let expected = item.sourceDigest, mailSourceDigest(source) == expected else { return nil }
                 }
                 return VerifiedMail(accountID: match.accountID, localID: match.localID, source: source)
-            }, inAuthorizedInbox: { messageID, subject, scopes in
-                let expected = try store.settings()
-                guard expected.permission != nil, !expected.paused, expected.authorizedScopes == scopes else { throw PipelineError.revoked }
-                var results: [Bool?] = []
-                for scope in scopes {
-                    try Task.checkCancellation()
-                    let included = try await MailReadBridge.shared.isInAuthorizedInbox(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                        messageID: messageID, subject: subject, mailboxPath: scope.mailboxPath) {
-                        guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
-                    }
-                    results.append(included)
+            }, composeInboxes: {
+                try await MailReadBridge.shared.inboxes().map {
+                    try AccountScope(accountID: $0.accountID, accountName: $0.accountName,
+                                     mailboxName: $0.path.last!, mailboxPath: $0.path)
                 }
-                return InboxMembershipDecision.combine(results)
             })
             onboardingSession = try OnboardingSession(store: store)
             onboarding = try store.onboarding()
-            attemptedMailboxDiscovery = onboarding.automationDenied == true
             onboardingResult = try onboardingSession?.testResult()
             settings = try store.settings()
             // Reconcile a crash between authoritative policy and extension snapshot updates.
-            try pipeline?.inbox.setPermission(settings.paused ? nil : settings.permission)
+            try pipeline?.inbox.setPermission(settings.paused || settings.permission?.delivery != .mailKit ? nil : settings.permission)
             installations = HarnessDiscovery.find().filter { $0.kind == .deepseek }
             refresh(); start()
             display = Task { [weak self] in
@@ -218,46 +205,6 @@ final class PendingModel: ObservableObject {
                 }
             }
         } catch { issue = "无法打开持久化队列：\(Self.code(error))" }
-    }
-    private func discoverMailboxChoices() async throws -> [AccountScope] {
-        let choices = try await MailReadBridge.shared.inboxes().map {
-            try AccountScope(accountID: $0.accountID, accountName: $0.accountName,
-                             mailboxName: $0.path.last!, mailboxPath: $0.path)
-        }
-        // One selectable account maps to exactly one system-designated inbox.
-        guard Set(choices.map(\.accountID)).count == choices.count else { throw IdentityQueryError.invalidResult }
-        return choices.sorted { ($0.accountName, $0.accountID) < ($1.accountName, $1.accountID) }
-    }
-
-    func loadMailboxes() {
-        guard !mailboxLoading, !onboarding.isSuggestionsOnly else { return }
-        attemptedMailboxDiscovery = true; mailboxLoading = true; mailboxIssue = nil
-        Task { @MainActor in
-            await Task.yield()
-            defer { mailboxLoading = false }
-            do {
-                mailboxChoices = try await discoverMailboxChoices()
-                onboarding.automationDenied = false; saveOnboarding()
-                if mailboxChoices.isEmpty { mailboxIssue = "Apple Mail 尚未发现可用账户的收件箱。请先在 Mail 添加账户，再刷新。" }
-            } catch {
-                mailboxChoices = []
-                if case IdentityQueryError.automation(-1743) = error {
-                    onboarding.automationDenied = true; saveOnboarding()
-                    mailboxIssue = "Mail 自动化权限被拒绝。可以选择“逐封建议”，手动粘贴并确认一封内容；不会自动读取或外发。"
-                } else if case IdentityQueryError.automation(let code) = error {
-                    mailboxIssue = "无法读取账户列表（\(code)），请确认 Mail 可用后重新读取。"
-                } else { mailboxIssue = "无法读取账户列表，请确认 Mail 可用后重新读取。" }
-            }
-        }
-    }
-    func selectMailbox(_ scope: AccountScope, selected: Bool) {
-        var scopes = onboarding.selections.filter { $0.accountID != scope.accountID }
-        if selected { scopes.append(scope) }
-        onboarding.selectedScopes = scopes.sorted { $0.id < $1.id }
-        saveOnboarding()
-    }
-    var mailboxSelectionValid: Bool {
-        !onboarding.selections.isEmpty && onboarding.selections.allSatisfy { mailboxChoices.contains($0) }
     }
     func saveOnboarding() {
         do {
@@ -315,34 +262,16 @@ final class PendingModel: ObservableObject {
                 let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
                 try Task.checkCancellation()
                 guard report.supportsHeadlessRun, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
-                if !snapshot.isSuggestionsOnly {
-                    let current = try await discoverMailboxChoices()
-                    guard onboarding == snapshot else { throw IdentityQueryError.invalidScope }
-                    mailboxChoices = current
-                    guard !snapshot.selections.isEmpty, snapshot.selections.allSatisfy({ current.contains($0) }) else { throw IdentityQueryError.invalidScope }
-                }
                 try Task.checkCancellation()
                 worker?.cancel()
                 defer { start() }
-                try session.activate(scopes: snapshot.isSuggestionsOnly ? [] : snapshot.selections)
+                try session.activate()
                 let active = try session.store.settings()
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding(); refresh()
                 onboardingIssue = active.suggestionsOnly == true ? "逐封建议已就绪；每封提交前需确认内容和工具。" : active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
             } catch is CancellationError {
                 return
-            } catch let error as IdentityQueryError {
-                switch error {
-                case .automation(-1743):
-                    onboarding.automationDenied = true; saveOnboarding()
-                    onboardingIssue = "Mail 自动化权限被拒绝（-1743）。未保存新授权；草案和已有结果保留。可返回选择“逐封建议”，无需 Mail 自动化权限。"
-                case .automation(let code):
-                    onboardingIssue = "Mail 账户核验失败（\(code)）。未保存新授权；草案保留。"
-                case .invalidScope:
-                    onboardingIssue = "无法唯一识别所选账户或邮箱。请核对名称；未保存新授权。"
-                case .invalidResult:
-                    onboardingIssue = "Mail 返回的账户信息无法核验；未保存新授权。"
-                }
             } catch { onboardingIssue = "授权未完成，原设置保留或等待同步：\(Self.code(error))" }
         }
     }
@@ -536,13 +465,13 @@ struct PendingWorkbench: View {
             VStack(spacing: 0) {
                 if !model.onboarding.completed {
                     HStack {
-                        Label("连接工具并选择邮箱后，为新邮件备好草稿。", systemImage: "info.circle")
+                        Label("连接工具并确认处理方式后，为新邮件备好草稿。", systemImage: "info.circle")
                         Spacer()
                         Button("开始使用") { openWindow(id: "onboarding") }
                     }.padding().background(Color(nsColor: .controlBackgroundColor))
                 } else if model.needsPermissionRecovery {
                     HStack {
-                        Label("账户授权已撤销。已有草稿保留，请在设置中恢复。", systemImage: "exclamationmark.shield")
+                        Label("请在设置中确认来信处理范围和 AI 工具。已有草稿保留。", systemImage: "exclamationmark.shield")
                         Spacer(); SettingsButton()
                     }.padding().background(Color(nsColor: .controlBackgroundColor))
                 } else if model.settings.suggestionsOnly == true {

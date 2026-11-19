@@ -10,6 +10,7 @@ private struct MailReadQuery: Codable, Sendable {
     let mailboxName: String
     let messageID: String
     let subject: String
+    var firstMatch: Bool? = nil
     let mailboxPath: [String]?
 }
 
@@ -48,10 +49,10 @@ public actor MailReadBridge {
     var queuedReadCount: Int { waiters.count }
 
     public func resolve(accountID: String, mailboxName: String, messageID: String, subject: String,
-                        mailboxPath: [String]? = nil,
+                        mailboxPath: [String]? = nil, firstMatch: Bool = false,
                         preflight: @escaping @MainActor @Sendable () throws -> Void) async throws -> AppleMailReplyIdentity.Match? {
         let query = MailReadQuery(accountID: accountID, mailboxName: mailboxName, messageID: messageID,
-                                  subject: subject, mailboxPath: mailboxPath)
+                                  subject: subject, firstMatch: firstMatch, mailboxPath: mailboxPath)
         guard case let .match(match) = try await call(.resolve(query), preflight: preflight) else { throw IdentityQueryError.invalidResult }
         return match
     }
@@ -168,7 +169,7 @@ public actor MailReadBridge {
             switch request {
             case let .resolve(query):
                 return .match(try AppleMailReplyIdentity.resolve(accountID: query.accountID, mailboxName: query.mailboxName,
-                    messageID: query.messageID, subject: query.subject, mailboxPath: query.mailboxPath))
+                    messageID: query.messageID, subject: query.subject, mailboxPath: query.mailboxPath, firstMatch: query.firstMatch == true))
             case let .membership(query):
                 return .membership(try AppleMailReplyIdentity.isInAuthorizedInbox(accountID: query.accountID, mailboxName: query.mailboxName,
                     messageID: query.messageID, subject: query.subject, mailboxPath: query.mailboxPath))
