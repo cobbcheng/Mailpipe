@@ -42,7 +42,7 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
 
 ## 下载状态
 
-0.0.5（build 32）使用 Developer ID 签名并通过 Apple 公证。
+0.0.6（build 33）使用 Developer ID 签名并通过 Apple 公证。
 私有 R2 保存归档。官网通过 Pages 提供静态下载。
 页面与构建脚本共用[发布信息](release.mjs)中的版本、文件名和校验值。
 

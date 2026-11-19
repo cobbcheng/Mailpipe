@@ -1,7 +1,7 @@
 export const release = {
-  version: '0.0.5',
-  build: 32,
-  filename: 'Mailpipe-0.0.5-build32-fa5e337.zip',
-  bytes: 7037263,
-  sha256: '272979603353aa33a8f4dc19cc216e4320a394403e2a12767d03d0973a5e3e62',
+  version: '0.0.6',
+  build: 33,
+  filename: 'Mailpipe-0.0.6-build33-aa5eee8.zip',
+  bytes: 7185048,
+  sha256: '5f7172e2e827c0e86a03f991e90a821ad2c5e725c22c29e0c080226947bdb1f0',
 };

@@ -213,3 +213,22 @@ Dock 已能重开工作台，见[窗口验收](validation/2026-11-19-workbench-r
 两份 ZIP 与公证后归档的 7,037,263 字节逐字节一致。
 SHA-256 见[官网发布信息](../website/release.mjs)。
 生产首页、三张截图和样式文件与发布产物逐字节一致。
+
+## 0.0.6 官网发布
+
+2026-11-19 发布 build 33，App 源码为 `aa5eee8`。
+宿主、Mail 扩展和框架均含 arm64、x86_64 两种架构。
+签名标识与权限已和 build 32 逐项比对。
+Apple 公证票据与 Gatekeeper 校验通过。
+两种新 Agent 的实机用量见[合成草稿验收](validation/2026-11-19-openclaw-hermes.md)。
+
+私有 R2 和[官网下载包](https://mailpipeai.com/downloads/Mailpipe-0.0.6-build33-aa5eee8.zip)均已回读。
+两个副本与本地正式包逐字节一致，大小为 7,185,048 字节。
+SHA-256 为 `5f7172e2e827c0e86a03f991e90a821ad2c5e725c22c29e0c080226947bdb1f0`。
+build 32 的公开下载链接也已回读。
+
+官网列出五个起草 Agent 及对应的官方版本。
+首页内容、下载链接、结构化数据、图片、样式、robots.txt 和 sitemap.xml 均已核对。
+Cloudflare 在部分首页响应中加入邮箱保护或访问量统计脚本。
+生产站 Lighthouse 13.6.0 的 SEO 与无障碍评分均为 100/100。
+五个名称和版本均可在原始 HTML 中读取。搜索引擎实际收录情况未验证。
