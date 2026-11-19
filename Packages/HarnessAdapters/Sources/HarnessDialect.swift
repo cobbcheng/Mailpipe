@@ -9,6 +9,8 @@ public protocol HarnessDialect: Sendable {
     var requiredFlags: [String] { get }
     var helpArguments: [String] { get }
     func acceptsVersion(_ version: String) -> Bool
+    func probeInvocation(executable: URL, arguments: [String], directory: URL, environment: [String: String],
+                         outputLimit: Int) throws -> ProcessInvocation
     func prepare(directory: URL, executable: URL, environment: [String: String]) throws -> [String: String]
 }
 
@@ -36,5 +38,10 @@ func classifyFailure(_ data: Data) -> MailpipeError {
 
 public extension HarnessDialect {
     func acceptsVersion(_ version: String) -> Bool { true }
+    func probeInvocation(executable: URL, arguments: [String], directory: URL, environment: [String: String],
+                         outputLimit: Int) throws -> ProcessInvocation {
+        ProcessInvocation(executable: executable, arguments: arguments, workingDirectory: directory,
+                          environment: environment, outputLimit: outputLimit)
+    }
     func prepare(directory: URL, executable: URL, environment: [String: String]) throws -> [String: String] { environment }
 }

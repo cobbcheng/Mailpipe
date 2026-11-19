@@ -11,10 +11,10 @@ public enum MailpipeError: String, Error, Sendable, LocalizedError {
 }
 
 public enum HarnessKind: String, CaseIterable, Codable, Sendable {
-    case deepseek = "dsh", codex, claude, opencode
+    case deepseek = "dsh", codex, claude, opencode, openclaw, hermes
     public var supportsReplyDrafts: Bool {
         switch self {
-        case .deepseek, .claude, .opencode: true
+        case .deepseek, .claude, .opencode, .openclaw, .hermes: true
         case .codex: false
         }
     }
@@ -25,6 +25,8 @@ public enum HarnessKind: String, CaseIterable, Codable, Sendable {
         case .codex: "Codex CLI"
         case .claude: "Claude Code"
         case .opencode: "OpenCode"
+        case .openclaw: "OpenClaw"
+        case .hermes: "Hermes Agent"
         }
     }
 }

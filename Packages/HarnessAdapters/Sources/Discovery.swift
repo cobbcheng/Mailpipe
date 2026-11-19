@@ -18,6 +18,10 @@ public struct HarnessInstallation: Identifiable, Sendable, Equatable {
             try await ClaudeCodeHarnessAdapter(executable: executable, dialect: ClaudeCodeDialect()).inspect()
         case .opencode:
             try await OpenCodeHarnessAdapter(executable: executable, dialect: OpenCodeDialect()).inspect()
+        case .openclaw:
+            try await OpenClawHarnessAdapter(executable: executable, dialect: OpenClawDialect()).inspect()
+        case .hermes:
+            try await HermesHarnessAdapter(executable: executable, dialect: HermesDialect()).inspect()
         case .codex:
             try await CodexCLIAdapter(executable: executable, dialect: CodexCLIDialect()).inspect()
         }
@@ -57,7 +61,11 @@ public enum HarnessDiscovery {
         ] + nodeBins
         var found: [HarnessInstallation] = [], seen: Set<String> = []
         for kind in HarnessKind.allCases {
-            let searchDirectories = kind == .opencode ? directories + [home.appendingPathComponent(".opencode/bin").path] : directories
+            let searchDirectories = switch kind {
+            case .opencode, .openclaw:
+                directories + [home.appendingPathComponent(".\(kind.rawValue)/bin").path]
+            default: directories
+            }
             for directory in searchDirectories {
                 let launchPath = URL(fileURLWithPath: directory).appendingPathComponent(kind.rawValue)
                 let resolved = launchPath.resolvingSymlinksInPath()

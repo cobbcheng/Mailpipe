@@ -26,16 +26,16 @@ public struct CLIAdapter<Dialect: HarnessDialect>: Sendable {
     public func inspect() async throws -> CapabilityReport {
         try await withWorkspace { directory in
             let environment = try dialect.prepare(directory: directory, executable: executable, environment: self.environment)
-            let version = try await runner.run(ProcessInvocation(executable: executable, arguments: ["--version"],
-                workingDirectory: directory, environment: environment, outputLimit: 16_384))
+            let version = try await runner.run(dialect.probeInvocation(executable: executable, arguments: ["--version"],
+                directory: directory, environment: environment, outputLimit: 16_384))
             guard version.exitCode == 0, let versionText = String(data: version.stdout, encoding: .utf8),
                   versionText.count <= 200,
                   versionText.range(of: #"\d+\.\d+\.\d+"#, options: .regularExpression) != nil else {
                 throw MailpipeError.unsupportedVersion
             }
             guard dialect.acceptsVersion(versionText.trimmingCharacters(in: .whitespacesAndNewlines)) else { throw MailpipeError.unsupportedVersion }
-            let help = try await runner.run(ProcessInvocation(executable: executable, arguments: dialect.helpArguments,
-                workingDirectory: directory, environment: environment, outputLimit: 262_144))
+            let help = try await runner.run(dialect.probeInvocation(executable: executable, arguments: dialect.helpArguments,
+                directory: directory, environment: environment, outputLimit: 262_144))
             guard help.exitCode == 0 else { throw MailpipeError.unsupportedVersion }
             let text = String(decoding: help.stdout, as: UTF8.self)
             // Match complete option tokens, not prefixes such as --tools-extra.
@@ -73,9 +73,16 @@ public protocol ReplyModelRunning: Sendable {
 }
 
 public protocol ReplyHarnessDialect: HarnessDialect {
+    func runFailure(_ result: ProcessOutput) -> MailpipeError
     func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                          executable: URL, environment: [String: String]) throws -> ProcessInvocation
     func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int, directory: URL) throws -> ReplyModelOutput
+}
+
+public extension ReplyHarnessDialect {
+    func runFailure(_ result: ProcessOutput) -> MailpipeError {
+        classifyFailure(result.stderr + result.stdout)
+    }
 }
 
 extension CLIAdapter: ReplyModelRunning where Dialect: ReplyHarnessDialect {
@@ -104,7 +111,7 @@ extension CLIAdapter: ReplyModelRunning where Dialect: ReplyHarnessDialect {
             try Task.checkCancellation()
             let result = try await runner.run(invocation)
             try Task.checkCancellation()
-            guard result.exitCode == 0 else { throw classifyFailure(result.stderr + result.stdout) }
+            guard result.exitCode == 0 else { throw dialect.runFailure(result) }
             return try dialect.replyOutput(result.stdout, task: task, inputCharacters: String(decoding: invocation.stdin, as: UTF8.self).count, directory: directory)
         }
     }

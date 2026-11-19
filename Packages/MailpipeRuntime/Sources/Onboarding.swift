@@ -41,6 +41,8 @@ public final class OnboardingSession {
         case .deepseek: "dsh-0.2.2-rc.1/restricted-v1/reply-fixture-v1"
         case .claude: "claude-2.1.296/restricted-v1/reply-fixture-v1"
         case .opencode: "opencode-2.3.0/restricted-v1/model-pin-v1/reply-fixture-v1"
+        case .openclaw: "openclaw-2026.11.5/restricted-v1/reply-fixture-v1"
+        case .hermes: "hermes-0.23.2/restricted-v1/reply-fixture-v1"
         case .codex: nil
         }
     }

@@ -6,7 +6,7 @@ import MailpipeCore
 extension HarnessKind {
     var modelServiceDescription: String {
         switch self {
-        case .deepseek: "DeepSeek 云端模型"
+        case .deepseek, .openclaw, .hermes: "DeepSeek 云端模型"
         case .claude, .opencode: "\(displayName) 配置的模型服务"
         case .codex: "Codex CLI 配置的模型服务"
         }
@@ -208,7 +208,7 @@ struct OnboardingView: View {
             .modifier(WorkbenchActionStyle())
             .help(tool.executable.path)
         } else if model.installations.isEmpty {
-            Text("未找到可用的 Agent。请先安装并配置 OpenCode、Claude Code 或 DeepSeek Harness。")
+            Text("未找到可用的 Agent。请先安装并配置一个支持起草回复的 Agent。")
             Button("重新查找 Agent", action: model.rediscoverTools)
                 .modifier(WorkbenchActionStyle())
         }

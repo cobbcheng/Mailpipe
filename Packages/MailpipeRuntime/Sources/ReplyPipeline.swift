@@ -19,6 +19,8 @@ public func makeReplyModel(for installation: HarnessInstallation) throws -> any 
     case .deepseek: return DeepSeekHarnessAdapter(executable: installation.executable, dialect: DeepSeekHarnessDialect())
     case .claude: return ClaudeCodeHarnessAdapter(executable: installation.executable, dialect: ClaudeCodeDialect())
     case .opencode: return OpenCodeHarnessAdapter(executable: installation.executable, dialect: OpenCodeDialect(model: installation.openCodeModel))
+    case .openclaw: return OpenClawHarnessAdapter(executable: installation.executable, dialect: OpenClawDialect())
+    case .hermes: return HermesHarnessAdapter(executable: installation.executable, dialect: HermesDialect())
     case .codex: throw MailpipeError.unsafeCapability
     }
 }
@@ -460,11 +462,12 @@ public final class ReplyPipeline {
                     throw MailpipeError.invalidOutput
                 }
             }
-            let fixedRoute = installation.kind == .deepseek
-            if fixedRoute || output.actualModel != nil {
+            let modelName = installation.kind == .deepseek ? "deepseek-flash" : output.actualModel
+            if let modelName {
+                let usesOfficialDeepSeek = [.deepseek, .openclaw, .hermes].contains(installation.kind)
                 current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft,
-                    harness: installation.kind, vendor: fixedRoute ? "deepseek-official" : nil,
-                    model: fixedRoute ? "deepseek-flash" : output.actualModel, evidence: .detected)
+                    harness: installation.kind, vendor: usesOfficialDeepSeek ? "deepseek-official" : nil,
+                    model: modelName, evidence: .detected)
             }
             current.runs[last].readPullRequestDiff = output.readPullRequestDiff
             current.runs[last].inputTokens = output.inputTokens; current.runs[last].outputTokens = output.outputTokens

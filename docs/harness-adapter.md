@@ -1,7 +1,8 @@
 # Harness Adapter 契约
 
-普通草稿支持 Claude Code、DeepSeek Harness 和 OpenCode。
+普通草稿支持 DeepSeek Harness、Claude Code、OpenCode、OpenClaw 和 Hermes Agent。
 Codex CLI 仅提供安装与能力检查。
+OpenClaw 与 Hermes 的实测范围见[官方 DeepSeek 合成草稿验收](validation/2026-11-19-openclaw-hermes.md)。
 OpenCode 的版本与实机范围见[菜单栏草稿验收](validation/2026-11-19-opencode-drafts.md)。
 Claude Code 的实测范围见[合成草稿验收](validation/2026-11-19-claude-code-drafts.md)。
 证据见 [DeepSeek 实测](validation/2026-11-16-deepseek-harness.md)。
@@ -30,7 +31,7 @@ DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
 
 Codex 目前只做发现、版本和参数检查。
 真实邮件调用尚未接入，也没有可用入口。
-三种回复工具共用宿主的授权与持久化队列。
+各回复工具共用宿主的授权与持久化队列。
 切换工具须试写并重新授权。旧授权不能转投新工具。
 
 Runner 使用独立进程组、非阻塞管道和单个工作线程。
@@ -43,14 +44,14 @@ Runner 使用独立进程组、非阻塞管道和单个工作线程。
 
 输入上限为 10 封；单封正文上限为 16 KiB。
 stdout 与 stderr 总上限为 1 MiB。
-模型调用最长 120 秒；元数据检查最长 10 秒。
+模型调用最长 120 秒。Hermes 运行时探测限时 30 秒，其余元数据检查限时 10 秒。
 这些是工程保护值，尚无吞吐量实测依据。
 
 输出拒绝多余字段、缺项、重复和批次外 ID。
 证据必须来自输入的 subject 或 body。
 错误展示只返回错误码，不展示原始输出。
 参数齐全只用于启动前检查，不构成安全认证。
-Claude Code 和 OpenCode 普通起草均使用空工具集。
+Claude Code、OpenCode、OpenClaw 和 Hermes Agent 普通起草均使用空工具集。
 下文第 8 节是已确认、尚未实现的工具边界。
 
 ## 1. 问题与接入选择
@@ -61,7 +62,7 @@ Claude Code 和 OpenCode 普通起草均使用空工具集。
 | 本地 HTTP / Gateway | 可复用连接 | 鉴权、服务发现、权限隔离 | P1 验证 |
 | 直连模型 API | 可自建简单调用 | 引入凭据与计费管理 | 不采用 |
 
-回复入口为 `dsh`、`claude --print` 和 `opencode run --standalone`。
+原有回复入口为 `dsh`、`claude --print` 和 `opencode run --standalone`。
 Claude 仅支持已验收的 CLI 2.1.296。
 Claude 的模型与认证由 CLI 从用户配置加载。
 App 从成功回执记录模型名和 token。
@@ -71,6 +72,20 @@ OpenCode 接受已验收的 CLI 2.3.0。
 未指定模型时，示例邮件使用隔离环境的默认模型。
 保存授权后，普通起草固定使用试写确认的模型。
 切换模型须重新试写并确认来信范围。
+
+OpenClaw 接受 2026.11.5，用一次性 `agent exec` 起草。
+在 OpenClaw 本机配置中使用
+`openclaw models auth paste-api-key --provider deepseek` 保存密钥。
+子进程自行读取其原生认证存储，调用官方 `deepseek/deepseek-flash`。
+关闭插件、技能和模型工具。临时目录承载本轮会话。
+仅接受单轮纯文本结果，并核对返回的提供方和模型。
+
+Hermes Agent 接受 0.23.2 的官方原生启动器。
+在 Hermes 默认配置目录的 `.env` 设置 `DEEPSEEK_API_KEY`。
+启动器在自带的 Python 环境执行单次 `AIAgent` 起草。
+禁用工具、工作目录上下文、记忆和后台评审。
+Hermes 自行加载凭据，API 请求限于官方 DeepSeek 的 `deepseek-flash`。
+该适配器不启动 Hermes Gateway，也不使用其个人会话。
 
 ## 2. 能力探测与生命周期
 

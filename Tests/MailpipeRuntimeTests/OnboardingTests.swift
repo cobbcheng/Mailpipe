@@ -107,6 +107,14 @@ final class OnboardingTests: XCTestCase {
     func testChangingOpenCodeModelRequiresNewGrantAndSkipsOldMail() async throws {
         try await checkSwitch(from: .opencode, to: .opencode)
     }
+    func testSwitchFromOpenCodeToOpenClawRequiresNewGrantAndSkipsOldMail() async throws {
+        try await checkSwitch(from: .opencode, to: .openclaw)
+    }
+
+    func testSwitchFromOpenClawToHermesRequiresNewGrantAndSkipsOldMail() async throws {
+        try await checkSwitch(from: .openclaw, to: .hermes)
+    }
+
     private func checkSwitch(from original: HarnessKind, to replacement: HarnessKind) async throws {
         let path = try root(), store = try PipelineStore(directory: path)
         let ref = replacement == .opencode ? "fixture/flash" : "fixture-flash"
@@ -154,7 +162,7 @@ final class OnboardingTests: XCTestCase {
         let run = try XCTUnwrap(next.runs.last)
         XCTAssertEqual(run.destination.harness, replacement)
         XCTAssertEqual(run.destination.model, ref)
-        XCTAssertNil(run.destination.vendor)
+        XCTAssertEqual(run.destination.vendor, [.openclaw, .hermes].contains(replacement) ? "deepseek-official" : nil)
         XCTAssertEqual(run.destination.evidence, .detected)
         XCTAssertNil(run.actualCost)
         XCTAssertThrowsError(try pipeline.regenerate(nextID, approvedPullRequest: "https://github.com/example/example/pull/1"))
