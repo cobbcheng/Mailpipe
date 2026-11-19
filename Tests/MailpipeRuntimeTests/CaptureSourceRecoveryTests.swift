@@ -25,10 +25,10 @@ final class CaptureSourceRecoveryTests: XCTestCase {
         }
         let permission = try XCTUnwrap(pipeline!.store.settings().permission)
         try pipeline!.inbox.publish(InboundCapture(permissionID: permission.id, subject: "你好", messageID: "source@example.com", raw: nil))
-        try pipeline!.importInbox()
+        try await pipeline!.importInbox()
         let id = try XCTUnwrap(pipeline!.store.records().first?.id)
         try pipeline!.inbox.publish(InboundCapture(permissionID: permission.id, subject: "你好", messageID: "source@example.com", raw: captured))
-        try pipeline!.importInbox()
+        try await pipeline!.importInbox()
         XCTAssertEqual(try pipeline!.store.records().count, 1)
         XCTAssertEqual(try pipeline!.store.record(id)?.state, .awaitingAccount)
         XCTAssertNotNil(try pipeline!.store.record(id)?.sourceEvidence)
@@ -70,7 +70,7 @@ final class CaptureSourceRecoveryTests: XCTestCase {
             }
             let permission = try XCTUnwrap(pipeline.store.settings().permission)
             try pipeline.inbox.publish(InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "source@example.com", raw: capture))
-            try pipeline.importInbox()
+            try await pipeline.importInbox()
             if mode == "revoked" { try pipeline.updateSettings { $0.permission = nil } }
             try await pipeline.pump()
             let count = await fake.calls; XCTAssertEqual(count, 0, mode)

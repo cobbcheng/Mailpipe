@@ -1,7 +1,7 @@
 import Foundation
 import MailpipeCore
 
-public enum IdentityQueryError: Error { case invalidScope, automation(Int), invalidResult }
+public enum IdentityQueryError: Error, Codable { case invalidScope, automation(Int), invalidResult }
 public struct IdentityQuery: Sendable {
     public let accountName: String
     public let mailboxName: String
@@ -75,8 +75,8 @@ public enum AppleMailIdentityProbe {
 /// so a Message-ID collision cannot authorize unrelated content.
 @MainActor
 public enum AppleMailReplyIdentity {
-    public struct Match: Sendable { public let accountID: String; public let localID: String; public let source: String }
-    public struct MailboxChoice: Sendable {
+    public struct Match: Sendable, Codable { public let accountID: String; public let localID: String; public let source: String }
+    public struct MailboxChoice: Sendable, Codable {
         public let accountID: String
         public let accountName: String
         public let path: [String]

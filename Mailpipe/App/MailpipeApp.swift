@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import HarnessAdapters
+import MailBridge
 import MailpipeCore
 
 @MainActor
@@ -31,6 +32,16 @@ final class WorkbenchModel: ObservableObject {
 }
 
 @main
+enum MailpipeEntryPoint {
+    @MainActor static func main() {
+        if MailReadBridge.runHelperIfRequested() { return }
+        // LSUIElement keeps every read helper out of the Dock from launch.
+        // Only the interactive host presents a regular application.
+        NSApplication.shared.setActivationPolicy(.regular)
+        MailpipeApp.main()
+    }
+}
+
 struct MailpipeApp: App {
     @StateObject private var model = WorkbenchModel()
     @StateObject private var pending = PendingModel()

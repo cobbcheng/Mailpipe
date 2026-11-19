@@ -163,3 +163,14 @@ Mail 与更新后的宿主已恢复运行。
 旧记录只在安全来源核验通过后补齐地址。
 不把账户地址或 Reply-To 当作原收件人。
 124 项隔离回归通过；继续沿用签名与权限，不创建备份。
+
+2026-11-19：本地测试包更新至 build 20。
+宿主与扩展保留原签名、权限和双架构。
+工作台与菜单栏点击通过[卡顿修复验收](validation/2026-11-19-workbench-responsiveness.md)。
+
+同日清除重复测试包，从空安装位置装入 build 21。
+系统仅登记一个宿主和一个已启用的 Mail 扩展。
+重装与授权复核见[实机记录](validation/2026-11-19-workbench-responsiveness.md#build-21-清理重装)。
+
+同日更新 build 22，修复查询子进程反复显示 Dock 图标。
+签名、双架构与安装路径已核对。见[实机记录](validation/2026-11-19-workbench-responsiveness.md#build-22-的-dock-图标)。

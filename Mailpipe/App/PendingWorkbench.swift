@@ -24,6 +24,7 @@ final class PendingModel: ObservableObject {
     var offeredOnboarding = false
     private var onboardingSession: OnboardingSession?
     private var onboardingTask: Task<Void, Never>?
+    private var configurationSave: Task<Void, Never>?
     private var pipeline: ReplyPipeline?
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
@@ -39,9 +40,14 @@ final class PendingModel: ObservableObject {
     private var editTasks: [String: Task<Void, Never>] = [:]
     private var addressLoads: Set<String> = []
     func loadCorrespondents(_ item: StoredReply) async {
-        guard item.correspondents == nil, addressLoads.insert(item.id + settings.revision.uuidString).inserted, let pipeline else { return }
+        let key = item.id + settings.revision.uuidString
+        guard !Task.isCancelled, item.correspondents == nil, let pipeline, addressLoads.insert(key).inserted else { return }
         // One attempt per visible row/session, not a background mailbox scan.
         try? await pipeline.loadCorrespondents(item.id)
+        if Task.isCancelled {
+            addressLoads.remove(key)
+            return
+        }
         if let updated = try? pipeline.store.record(item.id), let index = records.firstIndex(where: { $0.id == item.id }) {
             records[index] = updated
         }
@@ -169,9 +175,14 @@ final class PendingModel: ObservableObject {
             }
             let store = try PipelineStore(directory: root)
             pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: inboxURL), resolve: { item, scope in
-                guard let messageID = item.messageID,
-                      let match = try AppleMailReplyIdentity.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                          messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath) else { return nil }
+                let expected = try store.settings()
+                guard let messageID = item.messageID, expected.permission?.id == item.permissionID,
+                      expected.authorizedScopes.contains(scope) else { return nil }
+                let match = try await MailReadBridge.shared.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
+                    messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath) {
+                    guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
+                }
+                guard let match else { return nil }
                 let source = Data(match.source.utf8)
                 if let evidence = item.sourceEvidence {
                     guard evidence.matches(source) else { return nil }
@@ -180,10 +191,16 @@ final class PendingModel: ObservableObject {
                 }
                 return VerifiedMail(accountID: match.accountID, localID: match.localID, source: source)
             }, inAuthorizedInbox: { messageID, subject, scopes in
+                let expected = try store.settings()
+                guard expected.permission != nil, !expected.paused, expected.authorizedScopes == scopes else { throw PipelineError.revoked }
                 var results: [Bool?] = []
                 for scope in scopes {
-                    results.append(try AppleMailReplyIdentity.isInAuthorizedInbox(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                        messageID: messageID, subject: subject, mailboxPath: scope.mailboxPath))
+                    try Task.checkCancellation()
+                    let included = try await MailReadBridge.shared.isInAuthorizedInbox(accountID: scope.accountID, mailboxName: scope.mailboxName,
+                        messageID: messageID, subject: subject, mailboxPath: scope.mailboxPath) {
+                        guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
+                    }
+                    results.append(included)
                 }
                 return InboxMembershipDecision.combine(results)
             })
@@ -204,8 +221,8 @@ final class PendingModel: ObservableObject {
             }
         } catch { issue = "无法打开持久化队列：\(Self.code(error))" }
     }
-    private func discoverMailboxChoices() throws -> [AccountScope] {
-        let choices = try AppleMailReplyIdentity.inboxes().map {
+    private func discoverMailboxChoices() async throws -> [AccountScope] {
+        let choices = try await MailReadBridge.shared.inboxes().map {
             try AccountScope(accountID: $0.accountID, accountName: $0.accountName,
                              mailboxName: $0.path.last!, mailboxPath: $0.path)
         }
@@ -221,7 +238,7 @@ final class PendingModel: ObservableObject {
             await Task.yield()
             defer { mailboxLoading = false }
             do {
-                mailboxChoices = try discoverMailboxChoices()
+                mailboxChoices = try await discoverMailboxChoices()
                 onboarding.automationDenied = false; saveOnboarding()
                 if mailboxChoices.isEmpty { mailboxIssue = "Apple Mail 尚未发现可用账户的收件箱。请先在 Mail 添加账户，再刷新。" }
             } catch {
@@ -294,21 +311,28 @@ final class PendingModel: ObservableObject {
         guard !onboarding.completed else { return }
         onboardingIssue = nil; onboardingBusy = true
         let snapshot = onboarding
-        Task {
-            defer { onboardingBusy = false }
+        configurationSave = Task {
+            defer { onboardingBusy = false; configurationSave = nil }
             do {
                 let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
+                try Task.checkCancellation()
                 guard report.supportsHeadlessRun, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
                 if !snapshot.isSuggestionsOnly {
-                    let current = try discoverMailboxChoices()
+                    let current = try await discoverMailboxChoices()
+                    guard onboarding == snapshot else { throw IdentityQueryError.invalidScope }
                     mailboxChoices = current
                     guard !snapshot.selections.isEmpty, snapshot.selections.allSatisfy({ current.contains($0) }) else { throw IdentityQueryError.invalidScope }
                 }
+                try Task.checkCancellation()
+                worker?.cancel()
+                defer { start() }
                 try session.activate(scopes: snapshot.isSuggestionsOnly ? [] : snapshot.selections)
                 let active = try session.store.settings()
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding(); refresh()
                 onboardingIssue = active.suggestionsOnly == true ? "逐封建议已就绪；每封提交前需确认内容和工具。" : active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
+            } catch is CancellationError {
+                return
             } catch let error as IdentityQueryError {
                 switch error {
                 case .automation(-1743):
@@ -392,6 +416,7 @@ final class PendingModel: ObservableObject {
     }
     private func change(_ edit: (inout PipelineSettings) -> Void) throws {
         guard let pipeline else { throw PipelineError.storage }
+        configurationSave?.cancel()
         worker?.cancel()
         defer { start(); refresh() }
         try pipeline.updateSettings(edit)
@@ -434,6 +459,14 @@ enum WorkbenchFilter: String, CaseIterable, Identifiable {
 struct PendingMenu: View {
     @ObservedObject var model: PendingModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
+
+    private func showWindow(_ id: String) {
+        dismiss()
+        openWindow(id: id)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -445,7 +478,8 @@ struct PendingMenu: View {
             if model.pending.isEmpty { Text("暂时没有待处理的草稿").foregroundStyle(.secondary) }
             ForEach(model.pending.suffix(4).reversed()) { item in
                 Button {
-                    model.selectedID = item.id; openWindow(id: "workbench"); NSApp.activate(ignoringOtherApps: true)
+                    model.selectedID = item.id
+                    showWindow("workbench")
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
@@ -458,9 +492,9 @@ struct PendingMenu: View {
                 }.buttonStyle(.plain).padding(.vertical, 3)
             }
             Divider()
-            Button("打开工作台") { openWindow(id: "workbench"); NSApp.activate(ignoringOtherApps: true) }
+            Button("打开工作台") { showWindow("workbench") }
             if !model.onboarding.completed {
-                Button("开始使用") { openWindow(id: "onboarding"); NSApp.activate(ignoringOtherApps: true) }
+                Button("开始使用") { showWindow("onboarding") }
             }
             Button(model.settings.paused ? "恢复处理" : "暂停处理", action: model.togglePause)
             SettingsButton()
