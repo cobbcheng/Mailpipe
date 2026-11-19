@@ -6,8 +6,8 @@ import worker from './worker.mjs';
 
 const [source, destination] = process.argv.slice(2);
 if (!source || !destination) throw new Error('Usage: node build-pages.mjs <release.zip> <new-output-dir>');
-const name = 'Mailpipe-0.0.2-build23-fa03be5.zip';
-const sha = '0d6fad7f1695c7527c0b5c43aa05616f3a468fe3c7ed968d823b0fd8cec0f9a8';
+const name = 'Mailpipe-0.0.3-build25-b7a83cc.zip';
+const sha = 'cbdc8b0d5d16d154258bd2e396d7fc117e27da1d32e4be118a307b27378821dd';
 const bytes = await readFile(source);
 if (createHash('sha256').update(bytes).digest('hex') !== sha) throw new Error('Unexpected release SHA-256');
 const out = resolve(destination);
