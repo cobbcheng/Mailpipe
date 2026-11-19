@@ -26,8 +26,281 @@ actor FakeReplyModel: ReplyModelRunning {
     }
 }
 
+/// Keep a synthetic Mail read outstanding while a separate main-actor task uses the workbench.
+@MainActor
+private final class DelayedMailRead {
+    let started = XCTestExpectation(description: "Mail read started")
+    private(set) var calls = 0
+    private var reply: CheckedContinuation<Void, Never>?
+    private var finished = false
+
+    func waitForReply() async {
+        calls += 1
+        guard !finished, calls == 1 else { return }
+        await withCheckedContinuation { continuation in
+            reply = continuation
+            started.fulfill()
+        }
+    }
+
+    func finish() {
+        finished = true
+        reply?.resume()
+        reply = nil
+    }
+}
+
 @MainActor
 final class PipelineTests: XCTestCase {
+    func testAddressLoadPreservesConcurrentEditsAndHonorsRevocation() async throws {
+        let root = try temporary()
+        let store = try PipelineStore(directory: root.appendingPathComponent("state"))
+        let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
+        let raw = Data("From: sender@example.com\nTo: recipient@example.com\n\nBody".utf8)
+        var settings = PipelineSettings()
+        settings.permission = CapturePermission()
+        settings.scope = try AccountScope(accountID: "test", accountName: "Test", mailboxName: "INBOX")
+        try store.saveSettings(settings)
+        let id = try store.importCapture(InboundCapture(permissionID: settings.permission!.id, subject: "Synthetic", messageID: "test@example.com", raw: raw))
+        var item = try XCTUnwrap(store.record(id)); item.correspondents = nil; item.displayBody = nil; try store.save(item)
+        let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { item, scope in
+            var current = try XCTUnwrap(store.record(item.id))
+            current.editedBody = "Concurrent edit"; current.state = .cancelled
+            try store.save(current)
+            return VerifiedMail(accountID: scope.accountID, localID: "1", source: raw)
+        })
+        try await pipeline.loadCorrespondents(id, includeBody: true)
+        item = try XCTUnwrap(store.record(id))
+        XCTAssertEqual(item.displayBody, "Body")
+        XCTAssertEqual(item.editedBody, "Concurrent edit")
+        XCTAssertEqual(item.state, .cancelled)
+        XCTAssertEqual(item.correspondents?.sender, "sender@example.com")
+        item.correspondents = nil; try store.save(item)
+        let revoked = ReplyPipeline(store: store, inbox: inbox, resolve: { _, scope in
+            var changed = try store.settings(); changed.permission = nil; changed.revision = UUID()
+            try store.saveSettings(changed)
+            return VerifiedMail(accountID: scope.accountID, localID: "1", source: raw)
+        })
+        try await revoked.loadCorrespondents(id)
+        XCTAssertNil(try store.record(id)?.correspondents)
+    }
+    func testCorrespondentsEnrichmentIsVerifiedAndDoesNotRunModel() async throws {
+        let root = try temporary()
+        let store = try PipelineStore(directory: root.appendingPathComponent("state"))
+        let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
+        let fake = FakeReplyModel()
+        let raw = Data("From: sender@example.com\nTo: alias@example.com\nReply-To: reply@example.com\n\nOriginal body".utf8)
+        let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, scope in
+            VerifiedMail(accountID: scope.accountID, localID: "1", source: raw)
+        }, model: { _ in fake })
+        try pipeline.updateSettings {
+            $0.permission = CapturePermission(); $0.paused = true
+            $0.scope = try? AccountScope(accountID: "test", accountName: "account@example.com", mailboxName: "INBOX")
+        }
+        let permission = try XCTUnwrap(store.settings().permission)
+        let id = try store.importCapture(InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "test@example.com", raw: raw))
+        var old = try XCTUnwrap(store.record(id))
+        XCTAssertEqual(old.correspondents?.recipients, ["alias@example.com"])
+        old.correspondents = nil; old.editedBody = "Keep my edit"
+        try store.save(old)
+        try await pipeline.loadCorrespondents(id)
+        var filled = try XCTUnwrap(store.record(id))
+        XCTAssertEqual(filled.correspondents?.sender, "sender@example.com")
+        XCTAssertEqual(filled.correspondents?.recipients, ["alias@example.com"])
+        XCTAssertEqual(filled.editedBody, old.editedBody)
+        XCTAssertEqual(filled.state, old.state)
+        XCTAssertEqual(filled.input, old.input)
+        XCTAssertTrue(filled.runs.isEmpty)
+        filled.correspondents = nil; filled.sourceDigest = "incorrect"
+        try store.save(filled)
+        try await pipeline.loadCorrespondents(id)
+        XCTAssertNil(try store.record(id)?.correspondents)
+        filled.sourceDigest = mailSourceDigest(raw); filled.excludedFromAuthorizedInbox = true
+        try store.save(filled)
+        try await pipeline.loadCorrespondents(id)
+        XCTAssertNil(try store.record(id)?.correspondents)
+        let calls = await fake.calls; XCTAssertEqual(calls, 0)
+    }
+    func testOutsideInboxCaptureIsExcludedAndExistingRecordIsPreserved() async throws {
+        let root = try temporary()
+        let store = try PipelineStore(directory: root.appendingPathComponent("state"))
+        let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
+        let fake = FakeReplyModel()
+        let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, _ in XCTFail("Must not read source"); return nil },
+            inAuthorizedInbox: { _, _, _ in false }, model: { _ in fake })
+        try pipeline.updateSettings {
+            $0.permission = CapturePermission(); $0.executable = "/fake/dsh"
+            $0.scope = try? AccountScope(accountID: "test", accountName: "test", mailboxName: "INBOX")
+        }
+        let permission = try XCTUnwrap(store.settings().permission)
+        let existing = InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "old@example.com", raw: nil)
+        let id = try store.importCapture(existing)
+        try inbox.publish(InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "new@example.com", raw: nil))
+        try await pipeline.pump()
+        XCTAssertEqual(try store.records().count, 1)
+        let kept = try XCTUnwrap(store.record(id))
+        XCTAssertEqual(kept.state, .awaitingBody)
+        XCTAssertEqual(kept.excludedFromAuthorizedInbox, true)
+        XCTAssertEqual(kept.input.body, "")
+        XCTAssertTrue(try inbox.files().isEmpty)
+        let calls = await fake.calls; XCTAssertEqual(calls, 0)
+    }
+    func testUnknownInboxMembershipRetainsCaptureWithoutDispatch() async throws {
+        let root = try temporary()
+        let store = try PipelineStore(directory: root.appendingPathComponent("state"))
+        let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
+        let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, _ in XCTFail("No source read"); return nil }, inAuthorizedInbox: { _, _, _ in nil })
+        try pipeline.updateSettings { $0.permission = CapturePermission() }
+        let permission = try XCTUnwrap(store.settings().permission)
+        try inbox.publish(InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "delayed@example.com", raw: nil))
+        try await pipeline.pump()
+        XCTAssertTrue(try store.records().isEmpty)
+        XCTAssertEqual(try inbox.files().count, 1)
+    }
+    func testUnknownExistingRecordPreservesBodyAndDisplayWithoutDispatch() async throws {
+        let root = try temporary()
+        let store = try PipelineStore(directory: root.appendingPathComponent("state"))
+        let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
+        let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, _ in XCTFail("Unknown must not read source"); return nil }, inAuthorizedInbox: { _, _, _ in nil })
+        try pipeline.updateSettings { $0.permission = CapturePermission(); $0.executable = "/fake/dsh" }
+        let permission = try XCTUnwrap(store.settings().permission)
+        let raw = Data("Subject: Synthetic\r\nMessage-ID: <existing@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nExisting body".utf8)
+        let id = try store.importCapture(InboundCapture(permissionID: permission.id, subject: "Synthetic", messageID: "existing@example.com", raw: raw))
+        var item = try XCTUnwrap(store.record(id)); item.excludedFromAuthorizedInbox = true; try store.save(item)
+        try await pipeline.pump()
+        item = try XCTUnwrap(store.record(id))
+        XCTAssertNil(item.excludedFromAuthorizedInbox)
+        XCTAssertEqual(item.input.body, "Existing body")
+        XCTAssertTrue(item.canDisplayInWorkbench)
+        XCTAssertTrue(item.runs.isEmpty)
+    }
+    func testMissingIDsDoNotConsumeMembershipBudget() async throws {
+        let root = try temporary()
+        let store = try PipelineStore(directory: root.appendingPathComponent("state"))
+        let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
+        let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, _ in nil }, inAuthorizedInbox: { _, _, _ in true })
+        try pipeline.updateSettings { $0.permission = CapturePermission() }
+        let permission = try XCTUnwrap(store.settings().permission)
+        for _ in 0..<2 { try inbox.publish(InboundCapture(permissionID: permission.id, subject: "Missing", messageID: nil, raw: nil)) }
+        try inbox.publish(InboundCapture(permissionID: permission.id, subject: "Valid", messageID: "valid@example.com", raw: nil))
+        try await pipeline.importInbox()
+        XCTAssertEqual(try store.records().map(\.messageID), ["valid@example.com"])
+        XCTAssertEqual(try inbox.files().count, 2)
+    }
+    func testScopeTimeoutDoesNotStarveFollowingCapture() async throws {
+        let root = try temporary()
+        let store = try PipelineStore(directory: root.appendingPathComponent("state"))
+        let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
+        let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, _ in nil }, inAuthorizedInbox: { id, _, _ in
+            if id == "timeout@example.com" { throw PipelineError.storage }; return true
+        })
+        try pipeline.updateSettings { $0.permission = CapturePermission() }
+        let permission = try XCTUnwrap(store.settings().permission)
+        try inbox.publish(InboundCapture(permissionID: permission.id, subject: "Timeout", messageID: "timeout@example.com", raw: nil))
+        try inbox.publish(InboundCapture(permissionID: permission.id, subject: "Valid", messageID: "valid@example.com", raw: nil))
+        try await pipeline.importInbox()
+        XCTAssertEqual(try store.records().map(\.messageID), ["valid@example.com"])
+        XCTAssertEqual(try inbox.files().count, 1)
+        try await pipeline.importInbox()
+    }
+    func testPendingCaptureCheckYieldsToWorkbenchAndIgnoresStaleExclusion() async throws {
+        for change in ["pause", "scope", "revoke", "cancelTask"] {
+            let configured = try setup(try temporary())
+            let delayed = DelayedMailRead()
+            let pipeline = ReplyPipeline(store: configured.store, inbox: configured.inbox,
+                resolve: { _, _ in XCTFail("No source read"); return nil },
+                inAuthorizedInbox: { _, _, _ in await delayed.waitForReply(); return false })
+            try pipeline.inbox.publish(try capture(pipeline))
+            let importing = Task { try await pipeline.importInbox() }
+            let status = await XCTWaiter.fulfillment(of: [delayed.started], timeout: 3)
+            XCTAssertEqual(status, .completed, change)
+            try await pipeline.pump()
+            switch change {
+            case "pause": try pipeline.updateSettings { $0.paused = true }
+            case "scope": try pipeline.updateSettings { $0.scope = nil }
+            case "revoke": try pipeline.updateSettings { $0.permission = nil }
+            default: importing.cancel()
+            }
+            delayed.finish()
+            do { try await importing.value; XCTAssertNotEqual(change, "cancelTask") }
+            catch is CancellationError { XCTAssertEqual(change, "cancelTask") }
+            XCTAssertEqual(delayed.calls, 1, change)
+            XCTAssertTrue(try pipeline.store.records().isEmpty, change)
+            XCTAssertEqual(try pipeline.inbox.files().count, 1, change)
+        }
+    }
+
+    func testChangingPermissionDoesNotQueryNewMailboxesWithOldRecord() async throws {
+        let configured = try setup(try temporary())
+        let pipeline = ReplyPipeline(store: configured.store, inbox: configured.inbox,
+            resolve: { _, _ in XCTFail("Revoked identity lookup"); return nil },
+            inAuthorizedInbox: { _, _, _ in XCTFail("Revoked membership lookup"); return true })
+        let id = try pipeline.store.importCapture(try capture(pipeline))
+        try pipeline.updateSettings { $0.permission = CapturePermission() }
+        try await pipeline.pump()
+        XCTAssertEqual(try pipeline.store.record(id)?.state, .cancelled)
+        XCTAssertEqual(try pipeline.store.record(id)?.error, "revoked")
+    }
+
+    func testRecordMembershipDoesNotOverwriteWorkbenchEditDiscardOrCancel() async throws {
+        let configured = try setup(try temporary())
+        let delayed = DelayedMailRead()
+        let fake = FakeReplyModel()
+        let pipeline = ReplyPipeline(store: configured.store, inbox: configured.inbox,
+            resolve: { _, _ in XCTFail("Cancelled mail must not resolve"); return nil },
+            inAuthorizedInbox: { _, _, _ in await delayed.waitForReply(); return true }, model: { _ in fake })
+        let id = try pipeline.store.importCapture(try capture(pipeline))
+        let pumping = Task { try await pipeline.pump() }
+        let status = await XCTWaiter.fulfillment(of: [delayed.started], timeout: 3)
+        XCTAssertEqual(status, .completed)
+        try pipeline.cancel(id)
+        try pipeline.store.saveEdits(id, subject: "Edited", body: "Keep these edits")
+        try pipeline.store.discard(id)
+        delayed.finish()
+        try await pumping.value
+        let current = try XCTUnwrap(pipeline.store.record(id))
+        XCTAssertEqual(current.editedBody, "Keep these edits")
+        XCTAssertNotNil(current.discardedAt)
+        XCTAssertEqual(current.state, .cancelled)
+        let calls = await fake.calls
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testLateIdentityResultOrErrorCannotUndoCancellation() async throws {
+        for lookupFails in [false, true] {
+            let configured = try setup(try temporary())
+            let delayed = DelayedMailRead()
+            let fake = FakeReplyModel()
+            let pipeline = ReplyPipeline(store: configured.store, inbox: configured.inbox, resolve: { _, scope in
+                await delayed.waitForReply()
+                if lookupFails { throw PipelineError.storage }
+                return VerifiedMail(accountID: scope.accountID, localID: "one")
+            }, model: { _ in fake })
+            let id = try pipeline.store.importCapture(try capture(pipeline))
+            let pumping = Task { try await pipeline.pump() }
+            let status = await XCTWaiter.fulfillment(of: [delayed.started], timeout: 3)
+            XCTAssertEqual(status, .completed)
+            try pipeline.cancel(id)
+            delayed.finish()
+            try await pumping.value
+            let current = try XCTUnwrap(pipeline.store.record(id))
+            XCTAssertEqual(current.state, .cancelled)
+            XCTAssertEqual(current.error, "cancelled")
+            XCTAssertTrue(current.runs.isEmpty)
+            let calls = await fake.calls
+            XCTAssertEqual(calls, 0)
+        }
+    }
+
+    func testFailedBodyPublicationReleasesOnlyItsOwnClaim() throws {
+        let inbox = try CaptureInbox(directory: try temporary().appendingPathComponent("inbox"))
+        let permission = CapturePermission(); try inbox.setPermission(permission)
+        XCTAssertThrowsError(try inbox.publishBodyRequest(permission: permission, subject: "Synthetic", messageID: "one@example.com") { throw PipelineError.quota })
+        XCTAssertTrue(try inbox.publishBodyRequest(permission: permission, subject: "Synthetic", messageID: "one@example.com") { })
+        XCTAssertFalse(try inbox.publishBodyRequest(permission: permission, subject: "Synthetic", messageID: "one@example.com") { XCTFail("Duplicate request") })
+        XCTAssertTrue(try inbox.publishBodyRequest(permission: permission, subject: "Synthetic", messageID: "two@example.com") { })
+        XCTAssertFalse(try inbox.claimBody(permission: permission, subject: "Synthetic", messageID: "one@example.com"))
+    }
     func temporary() throws -> URL {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
@@ -68,36 +341,6 @@ final class PipelineTests: XCTestCase {
         XCTAssertNil(legacy.editedBody)
         XCTAssertEqual(legacy.displayedBody, item.draft?.body)
     }
-    func testCandidateRequiresExplicitChoiceAndVersionCheck() async throws {
-        let pipeline = try setup(temporary())
-        try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
-        let id = try XCTUnwrap(pipeline.store.records().first).id
-        try pipeline.store.saveEdits(id, subject: "Hidden subject", body: "Keep my edit")
-        try pipeline.regenerate(id); try await pipeline.pump()
-        var item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertTrue(item.hasDraftCandidate)
-        XCTAssertEqual(item.displayedBody, "Keep my edit")
-        let version = try XCTUnwrap(item.draftVersion)
-        // Typing while a candidate is waiting does not dismiss it.
-        try pipeline.store.saveEdits(id, subject: item.displayedSubject, body: "Newer edit")
-        XCTAssertTrue(try XCTUnwrap(pipeline.store.record(id)).hasDraftCandidate)
-        XCTAssertThrowsError(try pipeline.store.resolveDraftCandidate(id, expected: "stale", adopt: true))
-        try pipeline.store.resolveDraftCandidate(id, expected: version, adopt: false)
-        item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertFalse(item.hasDraftCandidate)
-        XCTAssertEqual(item.displayedBody, "Newer edit")
-        // An identical output from a later run is still a new candidate.
-        try pipeline.regenerate(id); try await pipeline.pump()
-        item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertTrue(item.hasDraftCandidate)
-        XCTAssertNotEqual(item.draftVersion, version)
-        let newVersion = try XCTUnwrap(item.draftVersion)
-        try pipeline.store.resolveDraftCandidate(id, expected: newVersion, adopt: true)
-        item = try XCTUnwrap(pipeline.store.record(id))
-        XCTAssertFalse(item.hasDraftCandidate)
-        XCTAssertEqual(item.displayedBody, item.draft?.body)
-        XCTAssertEqual(item.displayedSubject, "Hidden subject")
-    }
     func testReplyBodyEditsSurviveStoreReopen() async throws {
         let root = try temporary()
         var pipeline: ReplyPipeline? = try setup(root)
@@ -108,7 +351,7 @@ final class PipelineTests: XCTestCase {
         let reopened = try PipelineStore(directory: root.appendingPathComponent("state"))
         XCTAssertEqual(try reopened.record(id)?.displayedBody, "Persisted reply only")
     }
-    func testRegenerationIsBoundedAndPreservesEdits() async throws {
+    func testRegenerationIsBoundedAndReplacesBody() async throws {
         let fake = FakeReplyModel(), pipeline = try setup(temporary(), fake: fake)
         try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
         let id = try XCTUnwrap(pipeline.store.records().first).id
@@ -117,11 +360,14 @@ final class PipelineTests: XCTestCase {
             try pipeline.regenerate(id)
             XCTAssertThrowsError(try pipeline.regenerate(id))
             try await pipeline.pump()
-            XCTAssertEqual(try pipeline.store.record(id)?.displayedBody, "My local edit")
+            let saved = try XCTUnwrap(pipeline.store.record(id))
+            XCTAssertEqual(saved.displayedBody, try XCTUnwrap(saved.draft).body)
+            XCTAssertEqual(saved.displayedSubject, "My subject")
+            XCTAssertFalse(saved.hasDraftCandidate)
             XCTAssertEqual(try pipeline.store.record(id)?.state, .draftReady)
         }
         XCTAssertThrowsError(try pipeline.regenerate(id))
-        let count = await fake.calls; XCTAssertEqual(count, 8)
+        let count = await fake.calls; XCTAssertEqual(count, 4)
         try pipeline.store.discard(id)
         XCTAssertThrowsError(try pipeline.regenerate(id))
     }
@@ -148,9 +394,10 @@ final class PipelineTests: XCTestCase {
         try pipeline.regenerate(id); try await pipeline.pump()
         let item = try XCTUnwrap(pipeline.store.record(id))
         XCTAssertEqual(item.level, .l1)
-        XCTAssertEqual(item.state, .needsReply)
-        XCTAssertEqual(item.runs.count, 3)
-        XCTAssertEqual(item.displayedBody, "Keep local reply")
+        XCTAssertEqual(item.state, .draftReady)
+        XCTAssertEqual(item.runs.count, 2)
+        XCTAssertNotNil(item.draft)
+        XCTAssertEqual(item.displayedBody, item.draft?.body)
     }
     func testCancelledRunMustFinishBeforeRegeneration() async throws {
         let pipeline = try setup(temporary())
@@ -186,7 +433,7 @@ final class PipelineTests: XCTestCase {
             XCTAssertEqual(item.state, ambiguous ? .needsReview : .draftReady)
             if ambiguous { XCTAssertEqual(item.error, "identityAmbiguous") }
             else { XCTAssertEqual(item.scopeID, scopes[1].id) }
-            let count = await fake.calls; XCTAssertEqual(count, ambiguous ? 0 : 2)
+            let count = await fake.calls; XCTAssertEqual(count, ambiguous ? 0 : 1)
         }
     }
     func testLegacySettingsAndMultipleSelectionPersistSeparately() throws {
@@ -207,9 +454,9 @@ final class PipelineTests: XCTestCase {
         var pipeline: ReplyPipeline? = try setup(root, fake: fake)
         let input = try capture(pipeline!)
         try pipeline!.inbox.publish(input)
-        try pipeline!.importInbox()
+        try await pipeline!.importInbox()
         try pipeline!.inbox.publish(input) // deletion-before-crash replay of the same ingest
-        try pipeline!.importInbox()
+        try await pipeline!.importInbox()
         XCTAssertEqual(try pipeline!.store.records().count, 1)
         pipeline = nil
         let store = try PipelineStore(directory: root.appendingPathComponent("state"))
@@ -221,7 +468,7 @@ final class PipelineTests: XCTestCase {
         try resumed.inbox.publish(try capture(resumed)) // a separate callback for the same account/message/content
         try await resumed.pump()
         XCTAssertEqual(try store.records().count, 1)
-        let count = await fake.calls; XCTAssertEqual(count, 2)
+        let count = await fake.calls; XCTAssertEqual(count, 1)
     }
     func testPauseRevokeAndUnknownAccountPreventCalls() async throws {
         let root = try temporary(), fake = FakeReplyModel()
@@ -237,19 +484,22 @@ final class PipelineTests: XCTestCase {
         try await pipeline.pump()
         XCTAssertEqual(try pipeline.store.records().first?.state, .cancelled)
     }
-    func testNoAndL1DoNotDraft() async throws {
-        for (reply, level, expected) in [("no", ServiceLevel.l2, ReplyState.noReply), ("unknown", .l2, .needsReview), ("yes", .l1, .needsReply), ("yes", .l0, .noReply)] {
-            let fake = FakeReplyModel(shouldReply: reply), pipeline = try setup(try temporary(), fake: fake)
+    func testEveryAuthorizedMessageGoesDirectlyToDraft() async throws {
+        for level in [ServiceLevel.l0, .l1, .l2] {
+            let fake = FakeReplyModel(shouldReply: "no"), pipeline = try setup(try temporary(), fake: fake)
             try pipeline.updateSettings { $0.level = level }
             try pipeline.inbox.publish(try capture(pipeline)); try await pipeline.pump()
-            XCTAssertEqual(try pipeline.store.records().first?.state, expected)
-            let count = await fake.calls; XCTAssertEqual(count, 1)
+            let item = try XCTUnwrap(pipeline.store.records().first)
+            XCTAssertEqual(item.state, .draftReady)
+            XCTAssertEqual(item.runs.map(\.destination.taskKind), [.draft])
+            XCTAssertNil(item.decisionData)
+            XCTAssertNotNil(item.draft)
         }
     }
-    func testRestartDoesNotReplayUnknownCallAndWriterLock() throws {
+    func testRestartDoesNotReplayUnknownCallAndWriterLock() async throws {
         let root = try temporary()
         var pipeline: ReplyPipeline? = try setup(root)
-        try pipeline!.inbox.publish(try capture(pipeline!)); try pipeline!.importInbox()
+        try pipeline!.inbox.publish(try capture(pipeline!)); try await pipeline!.importInbox()
         var item = try XCTUnwrap(pipeline!.store.records().first)
         item.state = .triaging; try pipeline!.store.save(item)
         XCTAssertThrowsError(try PipelineStore(directory: root.appendingPathComponent("state")))
@@ -258,13 +508,13 @@ final class PipelineTests: XCTestCase {
         XCTAssertEqual(try store.records().first?.state, .needsReview)
         XCTAssertEqual(try store.records().first?.error, "interrupted")
     }
-    func testSymlinkAndUnsupportedMIME() throws {
+    func testSymlinkAndUnsupportedMIME() async throws {
         let root = try temporary(), pipeline = try setup(root)
         let target = root.appendingPathComponent("private")
         try Data("secret".utf8).write(to: target)
         let link = pipeline.inbox.directory.appendingPathComponent("bad.capture")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
-        try pipeline.importInbox()
+        try await pipeline.importInbox()
         XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
         XCTAssertEqual(try pipeline.store.issue(), "invalidCapture")
         XCTAssertThrowsError(try PlainMailBody.decode(Data("Content-Type: multipart/mixed; boundary=x\r\n\r\nbody".utf8))) { error in
@@ -275,14 +525,14 @@ final class PipelineTests: XCTestCase {
         let imported = InboundCapture(permissionID: try XCTUnwrap(pipeline.store.settings().permission).id,
             subject: "Synthetic", messageID: "html@example.com", raw: html)
         try pipeline.inbox.publish(imported)
-        try pipeline.importInbox()
+        try await pipeline.importInbox()
         let record = try XCTUnwrap(pipeline.store.records().first { $0.messageID == "html@example.com" })
         XCTAssertEqual(record.input.body, "Please reply")
         XCTAssertEqual(record.state, .awaitingAccount)
         XCTAssertNil(record.error)
         let sealed = Data("Content-Type: application/pkcs7-mime; smime-type=enveloped-data\r\n\r\nsecret".utf8)
         try pipeline.inbox.publish(InboundCapture(permissionID: imported.permissionID, subject: "Synthetic", messageID: "sealed@example.com", raw: sealed))
-        try pipeline.importInbox()
+        try await pipeline.importInbox()
         let rejected = try XCTUnwrap(pipeline.store.records().first { $0.messageID == "sealed@example.com" })
         XCTAssertEqual(rejected.state, .needsReview)
         XCTAssertEqual(rejected.error, MailBodyRejection.encryptedContent.rawValue)
@@ -301,7 +551,7 @@ actor PausingReplyModel: ReplyModelRunning {
 }
 
 extension PipelineTests {
-    func testPauseDuringTriageDiscardsDecisionAndDoesNotDraft() async throws {
+    func testPauseDuringDraftDiscardsOutput() async throws {
         let root = try temporary()
         let store = try PipelineStore(directory: root.appendingPathComponent("state"))
         let fake = PausingReplyModel { var settings = try store.settings(); settings.paused = true; try store.saveSettings(settings) }
@@ -313,7 +563,7 @@ extension PipelineTests {
         let record = try XCTUnwrap(store.record(id))
         XCTAssertEqual(record.state, .needsReview)
         XCTAssertEqual(record.error, "paused")
-        XCTAssertNil(record.decisionData)
+        XCTAssertNil(record.draftData)
         XCTAssertEqual(record.runs.count, 1)
         XCTAssertEqual(record.runs.first?.inputTokens, 10)
         try pipeline.updateSettings { $0.paused = false }
@@ -325,9 +575,9 @@ extension PipelineTests {
         var pipeline: ReplyPipeline? = try setup(root, fake: fake)
         let full = try capture(pipeline!)
         let metadata = InboundCapture(permissionID: full.permissionID, subject: full.subject, messageID: full.messageID, raw: nil)
-        try pipeline!.inbox.publish(metadata); try pipeline!.importInbox()
+        try pipeline!.inbox.publish(metadata); try await pipeline!.importInbox()
         XCTAssertEqual(try pipeline!.store.records().first?.state, .awaitingBody)
-        try pipeline!.inbox.publish(full); try pipeline!.importInbox()
+        try pipeline!.inbox.publish(full); try await pipeline!.importInbox()
         XCTAssertEqual(try pipeline!.store.records().count, 1)
         var item = try XCTUnwrap(pipeline!.store.records().first)
         item.accountID = "test"; item.localID = "one"; item.revision = try pipeline!.store.settings().revision
@@ -340,7 +590,7 @@ extension PipelineTests {
         XCTAssertEqual(try store.record(item.id)?.state, .draftReady)
         let count = await fake.calls; XCTAssertEqual(count, 2) // one prior triage, one resumed draft
     }
-    func testRevokedCaptureIsNotImportedAndBodyRequestIsOneShot() throws {
+    func testRevokedCaptureIsNotImportedAndBodyRequestIsOneShot() async throws {
         let pipeline = try setup(try temporary())
         let capture = try capture(pipeline)
         let permission = try XCTUnwrap(pipeline.store.settings().permission)
@@ -348,7 +598,7 @@ extension PipelineTests {
         XCTAssertFalse(try pipeline.inbox.claimBody(permission: permission, subject: capture.subject, messageID: capture.messageID))
         try pipeline.inbox.publish(capture)
         try pipeline.updateSettings { $0.permission = nil }
-        try pipeline.importInbox()
+        try await pipeline.importInbox()
         XCTAssertTrue(try pipeline.store.records().isEmpty)
         XCTAssertTrue(try pipeline.inbox.files().isEmpty)
     }
@@ -432,7 +682,7 @@ final class ManualSuggestionTests: XCTestCase {
             try await tested.pump()
         }
         let calls = await fake.calls; XCTAssertEqual(calls, 1)
-        XCTAssertEqual(try tested.store.record(id.uuidString)?.state, .needsReply)
+        XCTAssertEqual(try tested.store.record(id.uuidString)?.state, .draftReady)
         XCTAssertNil(try tested.store.settings().permission)
         XCTAssertThrowsError(try tested.enqueueManual(id: id, subject: "Changed", body: "Please reply", executable: "/fake/dsh"))
     }

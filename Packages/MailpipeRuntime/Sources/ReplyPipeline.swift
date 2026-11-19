@@ -16,15 +16,134 @@ public typealias MailIdentityResolver = @MainActor @Sendable (StoredReply, Accou
 public final class ReplyPipeline {
     public let store: PipelineStore
     public let inbox: CaptureInbox
+    private let composeInboxes: @MainActor () async throws -> [AccountScope]
     private let resolve: MailIdentityResolver
     private let model: @Sendable (String) -> any ReplyModelRunning
     private var pumping = false
+    private let inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) async throws -> Bool?)?
+    private var scopeChecked: Set<String> = []
+    private var nextCaptureCheck: [String: Date] = [:]
+    private var nextRecordCheck: [String: Date] = [:]
     public init(store: PipelineStore, inbox: CaptureInbox, resolve: @escaping MailIdentityResolver,
+                composeInboxes: @escaping @MainActor () async throws -> [AccountScope] = { [] },
+                inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) async throws -> Bool?)? = nil,
                 model: @escaping @Sendable (String) -> any ReplyModelRunning = {
                     DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: $0), dialect: DeepSeekHarnessDialect())
                 }) {
-        self.store = store; self.inbox = inbox; self.resolve = resolve; self.model = model
+        self.composeInboxes = composeInboxes
+        self.store = store; self.inbox = inbox; self.resolve = resolve; self.model = model; self.inAuthorizedInbox = inAuthorizedInbox
     }
+    private func mailReadStillAuthorized(_ settings: PipelineSettings) throws -> Bool {
+        try Task.checkCancellation()
+        return try store.hasCurrentMailReadAuthorization(settings)
+    }
+
+    /// Read-only enrichment for older rows, using the same source/account proof as dispatch.
+    /// No state transition, body replacement, model call or email mutation.
+    public func loadCorrespondents(_ id: String, includeBody: Bool = false) async throws {
+        try Task.checkCancellation()
+        guard let item = try store.record(id), item.mailKitBody != true, (item.correspondents == nil || (includeBody && item.displayBody == nil)), item.discardedAt == nil,
+              !item.syntheticAuthorized, item.manualExecutable == nil,
+              item.excludedFromAuthorizedInbox != true else { return }
+        let settings = try store.settings()
+        if includeBody && (settings.paused || item.capturedAt < Date().addingTimeInterval(-7 * 86_400)) { return }
+        guard settings.permission?.id == item.permissionID else { return }
+        let scopes = settings.authorizedScopes.filter { item.accountID == nil || $0.accountID == item.accountID }
+        var matches: [VerifiedMail] = []
+        for scope in scopes {
+            let result = try await resolve(item, scope)
+            guard try mailReadStillAuthorized(settings) else { return }
+            guard let verified = result, verified.accountID == scope.accountID,
+                  item.localID == nil || verified.localID == item.localID,
+                  let source = verified.source else { continue }
+            let valid = item.sourceEvidence?.matches(source)
+                ?? (item.sourceDigest != nil && mailSourceDigest(source) == item.sourceDigest)
+            if valid { matches.append(verified) }
+        }
+        guard matches.count == 1, let source = matches.first?.source,
+              var current = try store.record(id),
+              current.discardedAt == nil, current.excludedFromAuthorizedInbox != true,
+              current.localID == item.localID, current.accountID == item.accountID,
+              current.sourceEvidence == item.sourceEvidence, current.sourceDigest == item.sourceDigest else { return }
+        current.correspondents = MailCorrespondents(source)
+        if includeBody, current.displayBody == nil { current.displayBody = try? PlainMailBody.displayText(source) }
+        try store.save(current)
+    }
+    public func prepareMailCompose(id: String, subject: String, body: String,
+        senderAddress: @MainActor (String, [String]) throws -> String) async throws -> MailComposeRequest {
+        guard let item = try store.record(id), item.excludedFromAuthorizedInbox != true,
+              item.manualExecutable == nil, !item.syntheticAuthorized, item.discardedAt == nil,
+              !item.isPreparing, item.state != .cancelled, !item.input.body.isEmpty,
+              item.displayedSubject == subject, item.displayedBody == body,
+              item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
+              let messageID = item.messageID else { throw MailComposeError.unavailable }
+        let settings = try store.settings()
+        guard !settings.paused, settings.permission?.id == item.permissionID else { throw MailComposeError.unavailable }
+        let scopes = item.mailKitBody == true ? try await composeInboxes() : settings.authorizedScopes.filter {
+            item.accountID == nil || $0.accountID == item.accountID
+        }
+        guard try mailReadStillAuthorized(settings) else { throw MailComposeError.unavailable }
+        var matches: [(AccountScope, VerifiedMail)] = []
+        for scope in scopes {
+            try Task.checkCancellation()
+            let result = try await resolve(item, scope)
+            guard try mailReadStillAuthorized(settings) else { throw MailComposeError.unavailable }
+            guard let verified = result, verified.accountID == scope.accountID,
+                  item.localID == nil || verified.localID == item.localID, let source = verified.source else { continue }
+            if item.mailKitBody == true {
+                matches.append((scope, verified))
+                break
+            }
+            guard item.sourceEvidence?.matches(source) ?? (item.sourceDigest != nil && item.sourceDigest == mailSourceDigest(source))
+            else { continue }
+            matches.append((scope, verified))
+        }
+        guard matches.count == 1, let (scope, match) = matches.first, let source = match.source,
+              try store.settings().revision == settings.revision else { throw MailComposeError.unavailable }
+        let latestSettings = try store.settings()
+        guard !latestSettings.paused, latestSettings.permission?.id == item.permissionID,
+              let latest = try store.record(id), latest.discardedAt == nil, !latest.isPreparing, latest.state != .cancelled,
+              latest.excludedFromAuthorizedInbox != true, latest.displayedSubject == subject,
+              latest.displayedBody == body, latest.capturedAt > Date().addingTimeInterval(-7 * 86_400)
+        else { throw MailComposeError.changedSinceConfirmation }
+        let recipients = try MailReplyRecipients.parse(source)
+        let addresses = MailCorrespondents(source)
+        let sender = try senderAddress(scope.accountID, (addresses?.recipients ?? []) + (addresses?.cc ?? []))
+        return try MailComposeRequest(recordID: id, accountID: scope.accountID, accountName: scope.accountName,
+            sender: sender, recipients: recipients, subject: subject, body: body,
+            originalSubject: item.input.subject, messageID: messageID, localID: match.localID,
+            sourceDigest: contentDigest(source), settingsRevision: settings.revision)
+    }
+
+    public func openMailCompose(confirmedRequest: MailComposeRequest,
+        senderAddress: @MainActor (String, [String]) throws -> String,
+        open: @MainActor (MailComposeRequest) async throws -> MailComposeReceipt) async throws -> MailComposeReceipt {
+        let fresh = try await prepareMailCompose(id: confirmedRequest.recordID, subject: confirmedRequest.subject,
+            body: confirmedRequest.body, senderAddress: senderAddress)
+        guard fresh == confirmedRequest else { throw MailComposeError.changedSinceConfirmation }
+        let finalSettings = try store.settings()
+        guard !finalSettings.paused, finalSettings.revision == fresh.settingsRevision,
+              var current = try store.record(fresh.recordID), current.permissionID == finalSettings.permission?.id,
+              current.discardedAt == nil, current.state != .cancelled, !current.isPreparing,
+              current.excludedFromAuthorizedInbox != true,
+              current.displayedSubject == fresh.subject, current.displayedBody == fresh.body else {
+            throw MailComposeError.changedSinceConfirmation
+        }
+        // Each explicit click is a new compose request. Never replay one on startup.
+        let attempt = MailComposeHandoff(fingerprint: fresh.fingerprint)
+        current.composeHandoff = attempt
+        try store.save(current)
+        let receipt: MailComposeReceipt
+        do { receipt = try await open(fresh) }
+        catch { throw MailComposeError.outcomeUnknown }
+        guard !receipt.outgoingID.isEmpty, var latest = try store.record(fresh.recordID),
+              latest.composeHandoff?.fingerprint == fresh.fingerprint,
+              latest.composeHandoff?.startedAt == attempt.startedAt else { throw MailComposeError.outcomeUnknown }
+        latest.composeHandoff?.receipt = receipt
+        try store.save(latest)
+        return receipt
+    }
+
     public func updateSettings(_ change: (inout PipelineSettings) -> Void) throws {
         let previous = try store.settings()
         var settings = previous; change(&settings)
@@ -34,7 +153,15 @@ public final class ReplyPipeline {
         try store.saveSettings(settings)
         try inbox.setPermission(settings.paused ? nil : settings.permission)
     }
-    public func importInbox() throws {
+    public func importInbox() async throws {
+        guard !pumping else { return }
+        pumping = true
+        defer { pumping = false }
+        try await importCaptures()
+    }
+
+    private func importCaptures() async throws {
+        try Task.checkCancellation()
         try inbox.pruneClaims()
         if let issue = try inbox.issue() { try store.note(issue) }
         let files = try inbox.files().sorted {
@@ -42,7 +169,9 @@ public final class ReplyPipeline {
             let b = (try? FileManager.default.attributesOfItem(atPath: $1.path)[.modificationDate] as? Date) ?? .distantPast
             return a < b
         }
+        var membershipQueries = 0
         for file in files {
+            try Task.checkCancellation()
             let capture: InboundCapture
             do {
                 capture = try JSONDecoder().decode(InboundCapture.self, from: CaptureInbox.read(file, limit: MailBodyLimits.captureFileCeiling))
@@ -53,7 +182,49 @@ public final class ReplyPipeline {
                 if values.isDirectory != true || values.isSymbolicLink == true { try FileManager.default.removeItem(at: file) }
                 continue
             }
-            do { try store.importCapture(capture) }
+            let currentSettings = try store.settings()
+            if currentSettings.permission?.delivery == .mailKit && currentSettings.paused { return }
+            if let inAuthorizedInbox, currentSettings.permission?.delivery != .mailKit {
+                let settings = try store.settings()
+                guard capture.permissionID == settings.permission?.id,
+                      capture.capturedAt > Date().addingTimeInterval(-86_400) else {
+                    try store.note("captureExpiredOrRevoked")
+                    nextCaptureCheck.removeValue(forKey: file.path)
+                    try FileManager.default.removeItem(at: file); continue
+                }
+                guard !settings.paused else { continue }
+                if let next = nextCaptureCheck[file.path], next > Date() { continue }
+                guard let messageID = capture.messageID else { continue }
+                guard membershipQueries < 2 else { break }
+                membershipQueries += 1
+                let membership: Bool?
+                do { membership = try await inAuthorizedInbox(messageID, capture.subject, settings.authorizedScopes) }
+                catch is CancellationError { throw CancellationError() }
+                catch {
+                    guard try mailReadStillAuthorized(settings) else { continue }
+                    // A Mail timeout must not starve unrelated candidates or authorize this one.
+                    nextCaptureCheck[file.path] = Date().addingTimeInterval(30)
+                    continue
+                }
+                guard try mailReadStillAuthorized(settings),
+                      capture.capturedAt > Date().addingTimeInterval(-86_400) else { continue }
+                guard let included = membership else {
+                    nextCaptureCheck[file.path] = Date().addingTimeInterval(30)
+                    // Mail indexing can lag the callback. Keep the bounded staging file, not a visible record.
+                    continue
+                }
+                nextCaptureCheck.removeValue(forKey: file.path)
+                if !included {
+                    // Only discard a confirmed outside-scope staging file, never an existing record or Mail message.
+                    try FileManager.default.removeItem(at: file); continue
+                }
+            }
+            do {
+                let id = try store.importCapture(capture)
+                if inAuthorizedInbox != nil, var imported = try store.record(id) {
+                    imported.excludedFromAuthorizedInbox = false; try store.save(imported)
+                }
+            }
             catch PipelineError.quota { try store.note("quota"); break }
             catch PipelineError.revoked {
                 try store.note("captureExpiredOrRevoked")
@@ -69,14 +240,17 @@ public final class ReplyPipeline {
         item.state = .awaitingAccount; item.error = nil; try store.save(item)
     }
     /// User-confirmed retry only. Reverify captured mail and preserve local edits.
-    public func regenerate(_ id: String) throws {
+    public func regenerate(_ id: String, approvedPullRequest: String? = nil) throws {
         let settings = try store.settings()
         guard var item = try store.record(id), !settings.paused, !item.isPreparing,
               item.discardedAt == nil, !item.runs.contains(where: { $0.finishedAt == nil }),
               (item.regenerationCount ?? 0) < 3,
               item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
               let executable = settings.executable else { throw MailpipeError.invalidInput }
-        if let tool = item.manualExecutable {
+        if item.mailKitBody == true {
+            guard item.canRequestRegeneration(settings: settings) else { throw PipelineError.revoked }
+            item.state = .queued; item.revision = settings.revision
+        } else if let tool = item.manualExecutable {
             guard settings.suggestionsOnly == true, tool == executable else { throw PipelineError.revoked }
             item.state = .queued; item.revision = settings.revision
         } else if item.syntheticAuthorized {
@@ -89,6 +263,7 @@ public final class ReplyPipeline {
             item.state = .awaitingAccount
         }
         item.level = settings.level
+        item.approvedPullRequest = approvedPullRequest
         item.regenerationCount = (item.regenerationCount ?? 0) + 1
         item.error = nil
         try store.save(item)
@@ -101,21 +276,65 @@ public final class ReplyPipeline {
     public func pump() async throws {
         guard !pumping else { return }
         pumping = true; defer { pumping = false }
-        try importInbox()
-        for item in try store.records().prefix(1_000) {
+        try await importCaptures()
+        var membershipQueries = 0
+        for var item in try store.records().prefix(1_000) {
             try Task.checkCancellation()
-            if try store.settings().paused { return }
+            let settings = try store.settings()
+            guard !settings.paused else { return }
+            if item.mailKitBody != true, settings.permission?.id == item.permissionID, !item.syntheticAuthorized, item.manualExecutable == nil, let inAuthorizedInbox {
+                let key = item.id + settings.revision.uuidString
+                if !scopeChecked.contains(key) {
+                    if let next = nextRecordCheck[key], next > Date() { continue }
+                    guard let current = try store.record(item.id), current.discardedAt == nil,
+                          current.permissionID == settings.permission?.id else { continue }
+                    item = current
+                    let included: Bool?
+                    do {
+                        if let messageID = item.messageID {
+                            guard membershipQueries < 2 else { continue }
+                            membershipQueries += 1
+                            included = try await inAuthorizedInbox(messageID, item.input.subject, settings.authorizedScopes)
+                        } else { included = nil }
+                    } catch is CancellationError { throw CancellationError() }
+                    catch {
+                        guard try mailReadStillAuthorized(settings) else { continue }
+                        nextRecordCheck[key] = Date().addingTimeInterval(30)
+                        continue
+                    }
+                    guard try mailReadStillAuthorized(settings), let current = try store.record(item.id) else { continue }
+                    item = current
+                    guard let included else {
+                        // Unknown is not exclusion. Preserve substantive existing content but do not dispatch.
+                        item.excludedFromAuthorizedInbox = nil; try store.save(item)
+                        nextRecordCheck[key] = Date().addingTimeInterval(30)
+                        continue
+                    }
+                    nextRecordCheck.removeValue(forKey: key)
+                    item.excludedFromAuthorizedInbox = !included
+                    try store.save(item)
+                    scopeChecked.insert(key)
+                }
+                if item.excludedFromAuthorizedInbox == true { continue }
+            }
             if [.awaitingAccount, .queued, .draftQueued].contains(item.state) { try await process(item.id) }
         }
     }
     private func process(_ id: String) async throws {
-        guard var item = try store.record(id) else { return }
+        try Task.checkCancellation()
+        guard var item = try store.record(id), [.awaitingAccount, .queued, .draftQueued].contains(item.state),
+              item.discardedAt == nil, item.excludedFromAuthorizedInbox != true else { return }
         let settings = try store.settings()
         guard let executable = settings.executable, executable.hasPrefix("/"), !settings.paused else { return }
         guard item.capturedAt > Date().addingTimeInterval(-7 * 86_400) else {
             item.state = .needsReview; item.error = "contentExpired"; try store.save(item); return
         }
-        if let confirmedTool = item.manualExecutable {
+        if item.mailKitBody == true {
+            guard settings.permission?.id == item.permissionID, settings.permission?.delivery == .mailKit,
+                  settings.suggestionsOnly != true, !item.input.body.isEmpty else {
+                item.state = .cancelled; item.error = "revoked"; try store.save(item); return
+            }
+        } else if let confirmedTool = item.manualExecutable {
             guard settings.suggestionsOnly == true, confirmedTool == executable else {
                 item.state = .cancelled; item.error = "revoked"; try store.save(item); return
             }
@@ -126,31 +345,48 @@ public final class ReplyPipeline {
             let scopes = settings.authorizedScopes
             guard !scopes.isEmpty else { return }
             if item.accountID == nil {
+                func currentCandidate() throws -> StoredReply? {
+                    guard try mailReadStillAuthorized(settings),
+                          let current = try store.record(id), current.state == item.state, current.accountID == nil,
+                          current.discardedAt == nil, current.excludedFromAuthorizedInbox != true,
+                          current.sourceDigest == item.sourceDigest, current.sourceEvidence == item.sourceEvidence,
+                          current.capturedAt > Date().addingTimeInterval(-7 * 86_400) else { return nil }
+                    return current
+                }
                 do {
                     var matches: [(AccountScope, VerifiedMail)] = []
+                    var sourceMismatch = false
                     for scope in scopes {
-                        if let verified = try await resolve(item, scope), verified.accountID == scope.accountID {
-                            matches.append((scope, verified))
+                        let result = try await resolve(item, scope)
+                        guard let current = try currentCandidate() else { return }
+                        item = current
+                        guard let verified = result, verified.accountID == scope.accountID else { continue }
+                        if let evidence = item.sourceEvidence,
+                           verified.source.map(evidence.matches) != true {
+                            sourceMismatch = true
+                            continue
                         }
+                        matches.append((scope, verified))
                     }
                     guard matches.count == 1, let (scope, verified) = matches.first else {
-                        item.error = matches.isEmpty ? "identityUnresolved" : "identityAmbiguous"
+                        item.error = matches.isEmpty ? (sourceMismatch ? "identitySourceMismatch" : "identityUnresolved") : "identityAmbiguous"
                         item.state = .needsReview; try store.save(item); return
                     }
-                    if let evidence = item.sourceEvidence {
-                        guard let source = verified.source, evidence.matches(source) else {
-                            item.error = "identityUnresolved"; item.state = .needsReview; try store.save(item); return
-                        }
+                    if item.sourceEvidence != nil, let source = verified.source {
+                        item.displayBody = try? PlainMailBody.displayText(source)
                         item.input = MailInput(messageRef: item.id, subject: item.input.subject, body: try PlainMailBody.decode(source))
                     }
+                    if let source = verified.source { item.correspondents = MailCorrespondents(source) }
                     item.accountID = verified.accountID; item.localID = verified.localID; item.scopeID = scope.id
-                } catch let rejection as MailBodyRejection {
-                    item.error = rejection.rawValue
-                    item.state = .needsReview; try store.save(item); return
+                } catch is CancellationError {
+                    throw CancellationError()
                 } catch {
-                    item.error = "identityUnavailable"; item.state = .needsReview; try store.save(item); return
+                    guard var current = try currentCandidate() else { return }
+                    current.error = (error as? MailBodyRejection)?.rawValue ?? "identityUnavailable"
+                    current.state = .needsReview
+                    try store.save(current)
+                    return
                 }
-                guard try store.settings().revision == settings.revision else { return }
                 if let duplicate = try store.records().first(where: {
                     $0.id != item.id && $0.accountID == item.accountID && $0.localID == item.localID &&
                     $0.input.subject == item.input.subject && $0.input.body == item.input.body
@@ -170,15 +406,9 @@ public final class ReplyPipeline {
         guard item.revision == settings.revision else {
             item.state = .needsReview; item.error = "policyChanged"; try store.save(item); return
         }
-        if item.state == .queued {
-            try await invoke(id: id, task: .triage(item.triageRequest), kind: .triage, executable: executable)
-        }
-        guard var refreshed = try store.record(id), refreshed.state == .draftQueued else { return }
-        guard let decision = refreshed.decision else {
-            refreshed.state = .needsReview; refreshed.error = "invalidStoredDecision"; try store.save(refreshed); return
-        }
-        let request = try ReplyDraftRequest(requestID: refreshed.id + "-draft", triage: refreshed.triageRequest, decision: decision, level: refreshed.level)
-        try await invoke(id: id, task: .draft(request), kind: .draft, executable: executable)
+        var request = try ReplyDraftRequest(message: item.input)
+        request.approvedPullRequest = item.approvedPullRequest
+        try await generateDraft(id: id, request: request, executable: executable)
     }
     private func authorize(_ id: String, revision: UUID) throws {
         try Task.checkCancellation()
@@ -186,39 +416,36 @@ public final class ReplyPipeline {
         guard !settings.paused else { throw MailpipeError.paused }
         guard settings.revision == revision, let item = try store.record(id),
               item.state == .triaging || item.state == .drafting,
-              (item.manualExecutable == settings.executable && item.manualExecutable != nil && settings.suggestionsOnly == true) || item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
+              (item.mailKitBody == true && settings.permission?.delivery == .mailKit && settings.permission?.id == item.permissionID && settings.suggestionsOnly != true) || (item.manualExecutable == settings.executable && item.manualExecutable != nil && settings.suggestionsOnly == true) || item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
     }
-    private func invoke(id: String, task: ReplyModelTask, kind: ReplyTaskKind, executable: String) async throws {
+    private func generateDraft(id: String, request: ReplyDraftRequest, executable: String) async throws {
         guard var item = try store.record(id), let revision = item.revision else { throw PipelineError.storage }
-        item.state = kind == .triage ? .triaging : .drafting
-        let destination = try DataDestination(messageRef: id, runID: UUID().uuidString, taskKind: kind, harness: .deepseek)
+        item.state = .drafting
+        let destination = try DataDestination(messageRef: id, runID: UUID().uuidString, taskKind: .draft, harness: .deepseek)
         item.runs.append(PipelineRun(destination: destination, startedAt: Date()))
         try store.save(item)
         do {
-            let output = try await model(executable).run(task, route: AccountRoute(accountID: item.accountID, allowedHarnesses: [.deepseek])) { [self] in
+            let route = item.mailKitBody == true ? AccountRoute(mailKitPermission: item.permissionID, allowedHarnesses: [.deepseek])
+                : AccountRoute(accountID: item.accountID, allowedHarnesses: [.deepseek])
+            let output = try await model(executable).run(.draft(request), route: route) { [self] in
                 try await MainActor.run { try self.authorize(id, revision: revision) }
             }
             guard var current = try store.record(id) else { throw PipelineError.storage }
             let last = current.runs.count - 1
-            current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: kind, harness: .deepseek,
+            current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft, harness: .deepseek,
                 vendor: "deepseek-official", model: "deepseek-flash", evidence: .detected)
+            current.runs[last].readPullRequestDiff = output.readPullRequestDiff
             current.runs[last].inputTokens = output.inputTokens; current.runs[last].outputTokens = output.outputTokens
             current.runs[last].inputCharacters = output.inputCharacters; current.runs[last].outputCharacters = output.outputCharacters
             current.runs[last].finishedAt = Date()
             try store.save(current)
             try authorize(id, revision: revision)
-            switch task {
-            case .triage(let request):
-                let decision = try ReplyDecision.validated(output.content, for: request)
-                current.decisionData = output.content
-                switch current.level.disposition(for: decision) {
-                case .none: current.state = decision.shouldReply == .unknown ? .needsReview : .noReply
-                case .needsReply: current.state = .needsReply
-                case .generateDraft: current.state = .draftQueued
-                }
-            case .draft(let request):
-                _ = try ReplyDraft.validated(output.content, for: request)
-                current.draftData = output.content; current.state = .draftReady
+            _ = try ReplyDraft.validated(output.content, for: request)
+            current.draftData = output.content
+            current.state = .draftReady
+            if (current.regenerationCount ?? 0) > 0 {
+                current.editedBody = nil
+                current.reviewedDraftVersion = current.draftVersion
             }
             try store.save(current)
         } catch {

@@ -4,6 +4,7 @@ public enum MailpipeError: String, Error, Sendable, LocalizedError {
     case invalidInput, invalidOutput, unsupportedVersion, unsafeCapability
     case notInstalled, launchFailed, processFailed, timedOut, outputLimit, cancelled
     case authRequired, rateLimited, quotaExhausted, unknownAccount, routeNotAllowed, paused
+    case outputJSON, outputFields, outputReference, outputSummary, outputEvidence
     case mailBridgeUnavailable
 
     public var errorDescription: String? { rawValue }
@@ -71,6 +72,15 @@ public struct ClassificationResponse: Codable, Equatable, Sendable {
 
     /// Codable alone ignores unknown keys. Check the closed shape before decoding.
     public static func validated(_ data: Data, for request: ClassificationRequest) throws -> Self {
+        do { return try validateFields(data, for: request) }
+        catch let error as MailpipeError {
+            switch error {
+            case .outputFields, .outputReference, .outputSummary, .outputEvidence: throw MailpipeError.invalidOutput
+            default: throw error
+            }
+        }
+    }
+    static func validateFields(_ data: Data, for request: ClassificationRequest) throws -> Self {
         try request.validate()
         guard data.count <= 262_144 else { throw MailpipeError.outputLimit }
         do {
@@ -82,29 +92,29 @@ public struct ClassificationResponse: Codable, Equatable, Sendable {
                 guard Set(row.keys) == ["message_ref", "category", "needs_action", "summary", "evidence"],
                       let evidence = row["evidence"] as? [[String: Any]],
                       evidence.allSatisfy({ Set($0.keys) == ["field", "text"] }) else {
-                    throw MailpipeError.invalidOutput
+                    throw MailpipeError.outputFields
                 }
             }
             let response = try JSONDecoder().decode(Self.self, from: data)
             guard response.schemaVersion == 1, response.requestID == request.requestID,
                   response.results.count == request.messages.count,
                   Set(response.results.map(\.messageRef)) == Set(request.messages.map(\.messageRef)) else {
-                throw MailpipeError.invalidOutput
+                throw MailpipeError.outputReference
             }
             for row in response.results {
                 guard let input = request.messages.first(where: { $0.messageRef == row.messageRef }),
                       (1...3).contains(row.summary.count),
-                      row.summary.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.count <= 280 }),
-                      row.evidence.count <= 5 else { throw MailpipeError.invalidOutput }
+                      row.summary.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.count <= 280 }) else { throw MailpipeError.outputSummary }
+                guard row.evidence.count <= 5 else { throw MailpipeError.outputEvidence }
                 for proof in row.evidence {
                     let source: String
                     switch proof.field {
                     case "subject": source = input.subject
                     case "body": source = input.body
-                    default: throw MailpipeError.invalidOutput
+                    default: throw MailpipeError.outputEvidence
                     }
                     guard !proof.text.isEmpty, proof.text.count <= 500, source.contains(proof.text) else {
-                        throw MailpipeError.invalidOutput
+                        throw MailpipeError.outputEvidence
                     }
                 }
             }
@@ -172,13 +182,13 @@ public enum ClassificationSchema {
               "summary": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "type": "string", "minLength": 1, "maxLength": 280
                 },
                 "minItems": 1,
                 "maxItems": 3
               },
               "evidence": {
-                "type": "array",
+                "type": "array", "maxItems": 5,
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
@@ -195,7 +205,8 @@ public enum ClassificationSchema {
                       ]
                     },
                     "text": {
-                      "type": "string"
+                      "type": "string", "minLength": 1, "maxLength": 500,
+                      "description": "Copy a continuous verbatim substring of the specified input field, keeping punctuation and whitespace. If no suitable quote exists, return an empty evidence array."
                     }
                   }
                 }
@@ -210,14 +221,20 @@ public enum ClassificationSchema {
 
 public struct AccountRoute: Sendable {
     public let accountID: String?
+    private let capturePermission: UUID?
     public let allowedHarnesses: Set<HarnessKind>
     public let paused: Bool
     public init(accountID: String?, allowedHarnesses: Set<HarnessKind>, paused: Bool = false) {
+        self.capturePermission = nil
         self.accountID = accountID; self.allowedHarnesses = allowedHarnesses; self.paused = paused
+    }
+    public init(mailKitPermission: UUID, allowedHarnesses: Set<HarnessKind>) {
+        capturePermission = mailKitPermission; accountID = nil
+        self.allowedHarnesses = allowedHarnesses; paused = false
     }
     public func authorize(_ harness: HarnessKind) throws {
         guard !paused else { throw MailpipeError.paused }
-        guard let accountID, !accountID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard capturePermission != nil || accountID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
             throw MailpipeError.unknownAccount
         }
         guard allowedHarnesses.contains(harness) else { throw MailpipeError.routeNotAllowed }

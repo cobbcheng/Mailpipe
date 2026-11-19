@@ -30,31 +30,33 @@ final class OnboardingTests: XCTestCase {
         let scope = try AccountScope(accountID: "synthetic", accountName: "Synthetic", mailboxName: "INBOX")
         let scopes = [scope, try AccountScope(accountID: "second", accountName: "Other", mailboxName: "INBOX")]
         draft.selectedScopes = scopes; try session.save(draft)
-        XCTAssertThrowsError(try session.activate(scopes: scopes))
+        XCTAssertThrowsError(try session.activate())
         _ = try session.beginTest()
         XCTAssertThrowsError(try session.beginTest())
         try await session.testPipeline.pump()
         XCTAssertEqual(try session.testResult()?.state, .draftReady)
         XCTAssertNil(try store.settings().permission)
         XCTAssertTrue(try store.settings().paused)
-        try session.activate(scopes: scopes)
+        try session.activate()
         let permission = try store.settings().permission
         XCTAssertNotNil(permission); XCTAssertTrue(try store.settings().paused)
-        XCTAssertEqual(try store.settings().authorizedScopes, scopes)
+        XCTAssertTrue(try store.settings().authorizedScopes.isEmpty)
+        XCTAssertEqual(try store.settings().permission?.delivery, .mailKit)
         XCTAssertTrue(try store.onboarding().completed)
-        try session.activate(scopes: scopes)
+        try session.activate()
         XCTAssertEqual(try store.settings().permission, permission)
-        let count = await fake.calls; XCTAssertEqual(count, 2)
+        let count = await fake.calls; XCTAssertEqual(count, 1)
     }
-    func testOneInboxPerAccountAtConfirmation() async throws {
+    func testLegacyMailboxSelectionsDoNotLimitMailKitConsent() async throws {
         let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
         let session = try OnboardingSession(store: store, model: { _ in fake })
         var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.extensionAcknowledged = true
         let scopes = try ["INBOX", "Archive"].map { try AccountScope(accountID: "same-account", accountName: "Synthetic", mailboxName: $0) }
         draft.selectedScopes = scopes; try session.save(draft)
         _ = try session.beginTest(); try await session.testPipeline.pump()
-        XCTAssertThrowsError(try session.activate(scopes: scopes))
-        XCTAssertNil(try store.settings().permission)
+        try session.activate()
+        XCTAssertEqual(try store.settings().permission?.delivery, .mailKit)
+        XCTAssertTrue(try store.settings().authorizedScopes.isEmpty)
     }
     func testChangingToolInvalidatesEvidence() async throws {
         let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
@@ -73,7 +75,7 @@ final class OnboardingTests: XCTestCase {
         try session.resetTest()
         _ = try session.beginTest(); try await session.testPipeline.pump()
         XCTAssertEqual(try session.testPipeline.store.record(abandoned)?.state, .cancelled)
-        let count = await fake.calls; XCTAssertEqual(count, 2)
+        let count = await fake.calls; XCTAssertEqual(count, 1)
     }
     func testReopenDoesNotRunPendingTest() async throws {
         let path = try root(), fake = FakeReplyModel()
@@ -106,15 +108,15 @@ final class OnboardingCompletionTests: XCTestCase {
                 draft.selectedScopes = manual ? [] : [scope]
                 try isolated.save(draft); _ = try isolated.beginTest(); try await isolated.testPipeline.pump()
                 XCTAssertTrue(OnboardingSession.testPassed(try isolated.testResult(), level: level))
-                try isolated.activate(scopes: draft.selections)
+                try isolated.activate()
                 XCTAssertTrue(try isolated.store.onboarding().completed)
                 XCTAssertEqual(try isolated.store.settings().permission == nil, manual)
-                XCTAssertEqual(try isolated.store.settings().authorizedScopes, draft.selections)
-                let calls = await fake.calls; XCTAssertEqual(calls, level == .l2 ? 2 : 1)
+                XCTAssertTrue(try isolated.store.settings().authorizedScopes.isEmpty)
+                let calls = await fake.calls; XCTAssertEqual(calls, 1)
             }
         }
     }
-    func testLevelChangeInvalidatesEvidenceAndNonYesCannotPass() async throws {
+    func testLevelChangeInvalidatesEvidenceAndDirectDraftPasses() async throws {
         let fake = FakeReplyModel(), session = try makeSession(fake)
         var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = .l1
         try session.save(draft); _ = try session.beginTest(); try await session.testPipeline.pump()
@@ -124,7 +126,7 @@ final class OnboardingCompletionTests: XCTestCase {
             let other = try makeSession(FakeReplyModel(shouldReply: decision))
             var input = OnboardingDraft(); input.executable = "/fake/dsh"; input.level = .l1; input.suggestionsOnly = true
             try other.save(input); _ = try other.beginTest(); try await other.testPipeline.pump()
-            XCTAssertThrowsError(try other.activate(scopes: []))
+            try other.activate()
         }
     }
     func testSuggestionsRevokeAutomaticScopeAndPreservePause() async throws {
@@ -134,7 +136,7 @@ final class OnboardingCompletionTests: XCTestCase {
         try session.store.saveSettings(settings)
         var draft = OnboardingDraft(); draft.executable = "/fake/dsh"; draft.level = .l1; draft.suggestionsOnly = true
         try session.save(draft); _ = try session.beginTest(); try await session.testPipeline.pump()
-        try session.activate(scopes: [])
+        try session.activate()
         XCTAssertNil(try session.store.settings().permission)
         XCTAssertTrue(try session.store.settings().authorizedScopes.isEmpty)
         XCTAssertTrue(try session.store.settings().paused)

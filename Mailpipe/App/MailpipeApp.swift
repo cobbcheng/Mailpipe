@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import HarnessAdapters
+import MailBridge
 import MailpipeCore
 
 @MainActor
@@ -31,6 +32,16 @@ final class WorkbenchModel: ObservableObject {
 }
 
 @main
+enum MailpipeEntryPoint {
+    @MainActor static func main() {
+        if MailReadBridge.runHelperIfRequested() { return }
+        // LSUIElement keeps every read helper out of the Dock from launch.
+        // Only the interactive host presents a regular application.
+        NSApplication.shared.setActivationPolicy(.regular)
+        MailpipeApp.main()
+    }
+}
+
 struct MailpipeApp: App {
     @StateObject private var model = WorkbenchModel()
     @StateObject private var pending = PendingModel()
@@ -41,9 +52,9 @@ struct MailpipeApp: App {
             LaunchStatusIcon(model: pending)
         }.menuBarExtraStyle(.window)
         Window("Mailpipe", id: "workbench") {
-            PendingWorkbench(model: pending).frame(minWidth: 780, minHeight: 560)
+            PendingWorkbench(model: pending).frame(minWidth: 660, minHeight: 380)
         }
-        .defaultSize(width: 1060, height: 740)
+        .defaultSize(width: 700, height: 420)
         .commands {
             CommandGroup(after: .newItem) {
                 WorkbenchCommand()
@@ -91,40 +102,23 @@ struct MailpipeSettings: View {
                     Text("回复备好后保留在菜单栏。打开工作台审阅，再复制到 Mail。")
                         .foregroundStyle(.secondary)
                 }
-                Section("回复准备") {
-                    Picker("准备方式", selection: $model.onboarding.level) {
-                        Text("备好草稿").tag(ServiceLevel.l2)
-                        Text("仅提示需要回复").tag(ServiceLevel.l1)
-                        Text("仅整理摘要").tag(ServiceLevel.l0)
-                    }
-                    Text("更改准备方式后，请在 AI 工具中测试，再保存配置。") .foregroundStyle(.secondary)
-                }
                 configurationFooter
             }.formStyle(.grouped).tabItem { Label("通用", systemImage: "gearshape") }
             Form {
-                Section("账户与邮箱") {
+                Section("来信处理") {
                     Picker("处理方式", selection: Binding(get: { model.onboarding.isSuggestionsOnly }, set: { model.onboarding.suggestionsOnly = $0; model.saveOnboarding() })) {
-                        Text("自动处理所选收件箱").tag(false)
+                        Text("处理 MailKit 收到的新邮件").tag(false)
                         Text("逐封建议").tag(true)
                     }
                     if !model.onboarding.isSuggestionsOnly {
-                        Text("仅处理确认后收到的新邮件。读取账户列表时，系统可能请求 Mail 自动化权限。") .foregroundStyle(.secondary)
-                        Button("读取账户列表", action: model.loadMailboxes).disabled(model.mailboxLoading)
-                        if model.mailboxLoading { ProgressView("正在读取…") }
-                        if let issue = model.mailboxIssue { Text(issue).foregroundStyle(.secondary) }
-                        ForEach(model.mailboxChoices) { account in
-                            Toggle(account.accountName, isOn: Binding(get: { model.onboarding.selections.contains(account) }, set: { model.selectMailbox(account, selected: $0) }))
-                        }
-                        ForEach(model.onboarding.selections.filter { !model.mailboxChoices.contains($0) }) { account in
-                            HStack { Text(account.accountName + " · 收件箱"); Spacer(); Button("移除") { model.selectMailbox(account, selected: false) } }
-                        }
+                        Text("所有账户的新邮件均可交给所选 AI 工具分拣并准备草稿。").foregroundStyle(.secondary)
                         TextField("精确主题限制（可选）", text: $model.onboarding.exactSubject)
                         Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings)
                         Toggle("我已在 Mail 中启用扩展", isOn: $model.onboarding.extensionAcknowledged)
                     } else { Text("每封由你粘贴内容，并确认交给哪个工具。无需 Mail 自动化权限。") }
                 }
                 configurationFooter
-            }.formStyle(.grouped).tabItem { Label("账户与邮箱", systemImage: "envelope") }
+            }.formStyle(.grouped).tabItem { Label("来信处理", systemImage: "envelope") }
             Form {
                 Section("AI 工具") {
                     Picker("工具", selection: $model.onboarding.executable) {
@@ -133,7 +127,7 @@ struct MailpipeSettings: View {
                             Text(tool.kind.displayName + (model.installations.count > 1 ? " \(index + 1)" : "")).tag(tool.executable.path)
                         }
                     }.disabled(model.onboardingBusy)
-                    Text("内容会交给所选工具配置的模型。连接测试使用固定合成邮件，最多两次调用，会消耗额度。") .foregroundStyle(.secondary)
+                    Text("内容会交给所选工具配置的模型。连接测试使用固定合成邮件，一次调用，会消耗额度。") .foregroundStyle(.secondary)
                     if model.onboardingBusy {
                         ProgressView("正在连接…")
                         Button("取消测试", action: model.cancelOnboardingTest)
@@ -168,7 +162,7 @@ struct MailpipeSettings: View {
                     Text("Mailpipe 不设邮件中转服务器。邮件是否离开本机，取决于你选择的工具及其模型配置。")
                     Text("只交付主题与提取后的正文；不向模型交付附件内容。不读取已发送邮件来学习。")
                     Text("复制草稿不会发送邮件。丢弃草稿不会删除来信或改变未来处理策略。")
-                    Button("撤销采集与账户授权", role: .destructive, action: model.revoke)
+                    Button("撤销来信处理授权", role: .destructive, action: model.revoke)
                     Text("撤销后不再授权新邮件处理，已有草稿与暂停状态保留。") .foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped).tabItem { Label("隐私与数据", systemImage: "hand.raised") }
@@ -178,12 +172,9 @@ struct MailpipeSettings: View {
     private var selectedToolName: String { model.installations.first { $0.executable.path == model.onboarding.executable }?.kind.displayName ?? "AI 工具" }
     private var configurationFooter: some View {
         Section {
-            if !model.onboarding.isSuggestionsOnly && !model.mailboxSelectionValid {
-                Text("请在账户与邮箱中读取并核对收件箱，再保存。").foregroundStyle(.secondary)
-            }
             if let issue = model.onboardingIssue { Text(issue).foregroundStyle(.secondary) }
             Button("保存配置", action: model.applyConfiguration)
-                .disabled(model.onboardingBusy || !model.onboardingTestPassed || (!model.onboarding.isSuggestionsOnly && (!model.mailboxSelectionValid || !model.onboarding.extensionAcknowledged || !model.hasSharedInbox)))
+                .disabled(model.onboardingBusy || !model.onboardingTestPassed || (!model.onboarding.isSuggestionsOnly && (!model.onboarding.extensionAcknowledged || !model.hasSharedInbox)))
         }
     }
 }

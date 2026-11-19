@@ -4,6 +4,49 @@ import MailpipeCore
 
 @MainActor
 final class AdapterTests: XCTestCase {
+    func testNativeInstructionsAreBoundedEphemeralAndNotProjectOrCredentials() throws {
+        let root = try TemporaryDirectory()
+        let user = root.url.appendingPathComponent("user")
+        let dsh = user.appendingPathComponent(".dsh")
+        let agents = user.appendingPathComponent(".agents")
+        try FileManager.default.createDirectory(at: dsh, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+        try Data("Prefer short replies.".utf8).write(to: dsh.appendingPathComponent("AGENTS.md"))
+        try Data("Use a warm closing.".utf8).write(to: agents.appendingPathComponent("AGENTS.md"))
+        try Data("must not copy".utf8).write(to: dsh.appendingPathComponent("credentials.yaml"))
+        let work = root.url.appendingPathComponent("work")
+        let env = try DeepSeekHarnessDialect().prepare(directory: work, executable: root.url.appendingPathComponent("dsh"), environment: ["HOME": user.path])
+        XCTAssertEqual(try String(contentsOfFile: env["DSH_HOME"]! + "/AGENTS.md", encoding: .utf8), "Prefer short replies.")
+        XCTAssertEqual(try String(contentsOfFile: env["DSH_AGENTS_HOME"]! + "/AGENTS.md", encoding: .utf8), "Use a warm closing.")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: env["DSH_HOME"]! + "/credentials.yaml"))
+        let patch = try String(contentsOf: work.appendingPathComponent("deepseek-restricted.yml"), encoding: .utf8)
+        let prefix = "    personaPrefix: "
+        let line = try XCTUnwrap(patch.components(separatedBy: "\n").first { $0.hasPrefix(prefix) })
+        let policy = try JSONDecoder().decode(String.self, from: Data(line.dropFirst(prefix.count).utf8))
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = repo.appendingPathComponent("Packages/HarnessAdapters/Sources/Resources/reply-policy.md")
+        let expected = try String(contentsOf: source, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(policy, expected)
+        XCTAssertFalse(patch.contains("__MAILPIPE_REPLY_POLICY__"))
+        XCTAssertTrue(patch.contains("instructionFileCandidates: []"))
+        XCTAssertTrue(patch.contains("localInstructionFileCandidates: []"))
+        XCTAssertTrue(patch.contains("- id: tool-fs\n  disabled: true"))
+    }
+    func testMissingOversizedAndSymlinkNativeInstructionsFallBackWithoutReadingTarget() throws {
+        let root = try TemporaryDirectory()
+        let user = root.url.appendingPathComponent("user")
+        try FileManager.default.createDirectory(at: user.appendingPathComponent(".dsh"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: user.appendingPathComponent(".agents"), withIntermediateDirectories: true)
+        let large = user.appendingPathComponent(".dsh/AGENTS.md")
+        try Data(repeating: 65, count: 16_385).write(to: large)
+        try FileManager.default.createSymbolicLink(at: user.appendingPathComponent(".agents/AGENTS.md"), withDestinationURL: large)
+        let env = try DeepSeekHarnessDialect().prepare(directory: root.url.appendingPathComponent("work"), executable: root.url.appendingPathComponent("dsh"), environment: ["HOME": user.path])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: env["DSH_HOME"]! + "/AGENTS.md"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: env["DSH_AGENTS_HOME"]! + "/AGENTS.md"))
+        let missing = try DeepSeekHarnessDialect().prepare(directory: root.url.appendingPathComponent("empty"), executable: root.url.appendingPathComponent("dsh"), environment: ["HOME": root.url.appendingPathComponent("absent").path])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing["DSH_HOME"]! + "/AGENTS.md"))
+    }
     func testDeepSeekRunUsesStdinAndCleansWorkspace() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let runner = RecordingRunner(inspectionOutputs(dialect) + [ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.decision))])
@@ -78,6 +121,44 @@ final class AdapterTests: XCTestCase {
         var foreign = events; foreign[3]["sessionId"] = "foreign"; try rejected(foreign)
         try rejected(events + [["type":"error"]])
         try rejected(Array(events.dropLast()))
+    }
+    func testOptionalLookupRequiresMatchingReceiptWhenCalled() throws {
+        let tool = "mcp__mailpipe__read_pr_diff"
+        let dialect = DeepSeekHarnessDialect()
+        var events = try deepseekEvents(ReplySyntheticFixture.draft).split(separator: 10).map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0)) as? [String: Any])
+        }
+        events[1]["registry"] = [tool]
+        events[1]["advertised"] = [tool]
+        func decode() throws -> DeepSeekEnvelope {
+            let data = try events.reduce(into: Data()) { buffer, row in
+                buffer.append(try JSONSerialization.data(withJSONObject: row))
+                buffer.append(10)
+            }
+            return try dialect.decodeEnvelope(data, review: true)
+        }
+        XCTAssertNil(try decode().readPullRequestDiff)
+        events.insert(["type": "tool_call", "tool": tool, "callId": "one", "input": [String: String]()], at: 2)
+        XCTAssertThrowsError(try decode())
+        events.insert(["type": "tool_result", "callId": "other", "status": "completed"], at: 3)
+        XCTAssertThrowsError(try decode())
+        events[3]["callId"] = "one"
+        events[3]["truncated"] = true
+        events[3]["result"] = "MAILPIPE_PR_PATCH_READ\n" + #"{"changes":[{"file":"example.swift","patch":"+example"}]}"#
+        XCTAssertEqual(try decode().readPullRequestDiff, true)
+        events.insert(["type": "thinking", "truncated": true], at: 4)
+        XCTAssertEqual(try decode().readPullRequestDiff, true)
+        let final = events.count - 1
+        let original = try XCTUnwrap(events[final]["text"] as? String)
+        events[final]["text"] = "```json\n" + original + "\n```"
+        XCTAssertEqual(try decode().content, Data(original.utf8))
+        events[final]["truncated"] = true
+        XCTAssertThrowsError(try decode())
+        events[final].removeValue(forKey: "truncated")
+        events[3]["status"] = "error"
+        XCTAssertEqual(try decode().readPullRequestDiff, false)
+        events[2]["tool"] = "bash"
+        XCTAssertThrowsError(try decode())
     }
     func testMinimalEnvironmentDropsCredentialsAndInjectionVariables() {
         let env = ProbeEnvironment.minimal(from: ["ANTHROPIC_API_KEY":"secret", "OPENAI_API_KEY":"secret", "DYLD_INSERT_LIBRARIES":"bad", "CLAUDE_CODE_SIMPLE":"1"])

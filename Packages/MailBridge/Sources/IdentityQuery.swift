@@ -1,7 +1,7 @@
 import Foundation
 import MailpipeCore
 
-public enum IdentityQueryError: Error { case invalidScope, automation(Int), invalidResult }
+public enum IdentityQueryError: Error, Codable { case invalidScope, automation(Int), invalidResult }
 public struct IdentityQuery: Sendable {
     public let accountName: String
     public let mailboxName: String
@@ -75,8 +75,8 @@ public enum AppleMailIdentityProbe {
 /// so a Message-ID collision cannot authorize unrelated content.
 @MainActor
 public enum AppleMailReplyIdentity {
-    public struct Match: Sendable { public let accountID: String; public let localID: String; public let source: String }
-    public struct MailboxChoice: Sendable {
+    public struct Match: Sendable, Codable { public let accountID: String; public let localID: String; public let source: String }
+    public struct MailboxChoice: Sendable, Codable {
         public let accountID: String
         public let accountName: String
         public let path: [String]
@@ -101,6 +101,52 @@ public enum AppleMailReplyIdentity {
         error "Mailbox hierarchy too deep" number -2700
     end pathForBox
     """
+    /// Metadata-only scope gate. It never requests message source or content.
+    public static let membershipScript = """
+    \(mailboxPathScript)
+    on inAuthorizedInbox(accountID, mailboxName, targetID, expectedSubject, mailboxPath)
+        with timeout of 15 seconds
+            tell application id "com.apple.mail"
+                set accountsFound to every account whose id is accountID
+                if (count of accountsFound) is not 1 then return {"unknown"}
+                set folders to {}
+                repeat with box in every mailbox of inbox
+                    if (id of account of box) is accountID then
+                        if ((count of mailboxPath) is 0 and (name of box) is mailboxName) or (my pathForBox(box)) is mailboxPath then set end of folders to contents of box
+                    end if
+                end repeat
+                if (count of folders) is not 1 then return {"unknown"}
+                set hits to every message of item 1 of folders whose message id is targetID
+                if (count of hits) is 0 then
+                    repeat with otherBox in every mailbox of item 1 of accountsFound
+                        set otherHits to every message of otherBox whose message id is targetID
+                        repeat with otherHit in otherHits
+                            if (subject of otherHit) is expectedSubject then return {"excluded"}
+                        end repeat
+                    end repeat
+                    return {"unknown"}
+                end if
+                if (count of hits) is not 1 then return {"excluded"}
+                set hit to item 1 of hits
+                if (subject of hit) is not expectedSubject then return {"excluded"}
+                if (junk mail status of hit) then return {"excluded"}
+                if (id of account of mailbox of hit) is not accountID then return {"excluded"}
+                return {"included"}
+            end tell
+        end timeout
+    end inAuthorizedInbox
+    """
+    public static func isInAuthorizedInbox(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil) throws -> Bool? {
+#if !os(macOS)
+        throw IdentityQueryError.invalidResult
+#else
+        guard [accountID, mailboxName, messageID, subject].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 }) else { throw IdentityQueryError.invalidScope }
+        let result = try call(source: membershipScript, handler: "inAuthorizedInbox", arguments: [accountID, mailboxName, messageID, subject], path: mailboxPath ?? [])
+        guard result.numberOfItems == 1, let status = result.atIndex(1)?.stringValue,
+              ["included", "excluded", "unknown"].contains(status) else { throw IdentityQueryError.invalidResult }
+        return status == "unknown" ? nil : status == "included"
+#endif
+    }
     public static let catalogScript = """
     \(mailboxPathScript)
     on listMailboxes()
@@ -144,7 +190,7 @@ public enum AppleMailReplyIdentity {
     // 4194304 matches MailBodyLimits.rawCeiling.
     public static let scriptSource = """
     \(mailboxPathScript)
-    on resolveReply(accountID, mailboxName, targetID, expectedSubject, mailboxPath)
+    on resolveReply(accountID, mailboxName, targetID, expectedSubject, firstMatch, mailboxPath)
         with timeout of 15 seconds
             tell application id "com.apple.mail"
                 set accountsFound to every account whose id is accountID
@@ -161,10 +207,12 @@ public enum AppleMailReplyIdentity {
                 if (count of folders) is not 1 then return {"unresolved"}
                 set selectedBox to item 1 of folders
                 set hits to every message of selectedBox whose message id is targetID
-                if (count of hits) is not 1 then return {"unresolved"}
+                if (count of hits) is 0 then return {"unresolved"}
+                if firstMatch is not "yes" and (count of hits) is not 1 then return {"unresolved"}
                 set hit to item 1 of hits
                 if (subject of hit) is not expectedSubject then return {"unresolved"}
                 if (id of account of mailbox of hit) is not accountID then return {"unresolved"}
+                if (junk mail status of hit) then return {"unresolved"}
                 set rawSource to source of hit
                 if (count of characters of rawSource) > 4194304 then return {"messageTooLarge"}
                 return {"unique", id of chosenAccount as text, id of hit as text, rawSource}
@@ -172,7 +220,7 @@ public enum AppleMailReplyIdentity {
         end timeout
     end resolveReply
     """
-    public static func resolve(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil) throws -> Match? {
+    public static func resolve(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil, firstMatch: Bool = false) throws -> Match? {
 #if !os(macOS)
         throw IdentityQueryError.invalidResult
 #else
@@ -180,7 +228,7 @@ public enum AppleMailReplyIdentity {
         guard values.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2_048 }) else { throw IdentityQueryError.invalidScope }
         let path = mailboxPath ?? []
         guard (mailboxPath == nil || !path.isEmpty), path.count <= 33, path.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 }) else { throw IdentityQueryError.invalidScope }
-        let result = try call(source: scriptSource, handler: "resolveReply", arguments: values, path: path)
+        let result = try call(source: scriptSource, handler: "resolveReply", arguments: values + [firstMatch ? "yes" : "no"], path: path)
         return try decodeMatch(result, accountID: accountID)
 #endif
     }

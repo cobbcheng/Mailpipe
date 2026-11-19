@@ -70,7 +70,16 @@ public struct PipelineRun: Codable, Sendable {
     public var inputCharacters: Int?
     public var outputCharacters: Int?
     public var error: String?
+    public var readPullRequestDiff: Bool?
     public var actualCost: Double?
+}
+public enum InboxMembershipDecision {
+    public static func combine(_ results: [Bool?]) -> Bool? {
+        let included = results.filter { $0 == true }.count
+        if included == 1 { return true }
+        if included > 1 || results.isEmpty || results.contains(where: { $0 == nil }) { return nil }
+        return false
+    }
 }
 public struct StoredReply: Codable, Identifiable, Sendable {
     public let id: String
@@ -82,6 +91,9 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var error: String?
     public var sourceDigest: String?
     public var sourceEvidence: MailSourceEvidence?
+    public var displayBody: String?
+    public var correspondents: MailCorrespondents?
+    public var composeHandoff: MailComposeHandoff?
     public var accountID: String?
     public var localID: String?
     public var scopeID: String?
@@ -90,8 +102,10 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var decisionData: Data?
     public var draftData: Data?
     public var runs: [PipelineRun] = []
+    public var mailKitBody: Bool?
     public var manualExecutable: String? // Host-only, single-message confirmation; never imported from the spool.
     public var syntheticAuthorized = false
+    public var excludedFromAuthorizedInbox: Bool?
     public var editedSubject: String?
     public var editedBody: String?
     public var reviewedDraftVersion: String?
@@ -105,19 +119,37 @@ public struct StoredReply: Codable, Identifiable, Sendable {
         draftVersion != reviewedDraftVersion && draft?.body != editedBody && draft != nil
     }
     public var discardedAt: Date?
+    public var approvedPullRequest: String?
     public var regenerationCount: Int?
     public var isPreparing: Bool { [.awaitingAccount, .queued, .triaging, .draftQueued, .drafting].contains(state) }
     public var displayedSubject: String { editedSubject ?? draft?.subject ?? input.subject }
     public var displayedBody: String { editedBody ?? draft?.body ?? "" }
+    /// UI preflight only; dispatch still rechecks the authoritative policy.
+    public func canRequestRegeneration(settings: PipelineSettings, now: Date = Date()) -> Bool {
+        guard excludedFromAuthorizedInbox != true, state != .awaitingBody, !settings.paused, !isPreparing, discardedAt == nil,
+              !runs.contains(where: { $0.finishedAt == nil }), (regenerationCount ?? 0) < 3,
+              capturedAt > now.addingTimeInterval(-7 * 86_400), let executable = settings.executable else { return false }
+        if let tool = manualExecutable { return settings.suggestionsOnly == true && tool == executable }
+        if mailKitBody == true { return settings.permission?.id == permissionID && settings.permission?.delivery == .mailKit && !input.body.isEmpty }
+        if syntheticAuthorized { return true }
+        return settings.permission?.id == permissionID && settings.authorizedScopes.contains {
+            $0.id == scopeID || (scopeID == nil && $0.accountID == accountID)
+        }
+    }
+    public var canDisplayInWorkbench: Bool {
+        guard excludedFromAuthorizedInbox != true else { return false }
+        // Keep existing substantive content during a transient scope lookup failure.
+        return mailKitBody == true || syntheticAuthorized || manualExecutable != nil || excludedFromAuthorizedInbox == false ||
+            draft != nil || !input.body.isEmpty || !(editedBody ?? "").isEmpty
+    }
     public var canRecheckIdentity: Bool {
         state == .needsReview && runs.isEmpty && (!input.body.isEmpty ||
-            (sourceEvidence != nil && ["identityUnresolved", "identityUnavailable", "identityAmbiguous"].contains(error ?? "")))
+            (sourceEvidence != nil && ["identitySourceMismatch", "identityUnresolved", "identityUnavailable", "identityAmbiguous"].contains(error ?? "")))
     }
     public var triageRequest: ReplyTriageRequest { ReplyTriageRequest(requestID: id + "-triage", message: input) }
     public var decision: ReplyDecision? { decisionData.flatMap { try? ReplyDecision.validated($0, for: triageRequest) } }
     public var draft: ReplyDraft? {
-        guard let decision, let draftData,
-              let request = try? ReplyDraftRequest(requestID: id + "-draft", triage: triageRequest, decision: decision, level: level) else { return nil }
+        guard let draftData, let request = try? ReplyDraftRequest(message: input) else { return nil }
         return try? ReplyDraft.validated(draftData, for: request)
     }
 }
@@ -147,6 +179,12 @@ public final class PipelineStore {
         try execute("CREATE TABLE IF NOT EXISTS ingests (id TEXT PRIMARY KEY, record_id TEXT NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS metadata (id TEXT PRIMARY KEY, payload BLOB NOT NULL)")
         try execute("PRAGMA user_version=1")
+        // Finish pending choices from versions that kept regenerated drafts as candidates.
+        for var item in try records() where item.hasDraftCandidate {
+            item.editedBody = nil
+            item.reviewedDraftVersion = item.draftVersion
+            try save(item)
+        }
         for var item in try records() where item.state == .triaging || item.state == .drafting {
             item.state = .needsReview; item.error = "interrupted"
             if !item.runs.isEmpty { item.runs[item.runs.count - 1].error = "interrupted" }
@@ -192,19 +230,31 @@ public final class PipelineStore {
         }
     }
     public func settings() throws -> PipelineSettings { try values(PipelineSettings.self, table: "metadata", id: "settings").first ?? PipelineSettings() }
+    public func hasCurrentMailReadAuthorization(_ expected: PipelineSettings) throws -> Bool {
+        let current = try settings()
+        return current.revision == expected.revision && current.paused == expected.paused &&
+            current.permission == expected.permission && current.authorizedScopes == expected.authorizedScopes
+    }
     public func saveSettings(_ value: PipelineSettings) throws { try put(value, id: "settings", table: "metadata") }
     public func onboarding() throws -> OnboardingDraft {
         try values(OnboardingDraft.self, table: "metadata", id: "onboarding").first ?? OnboardingDraft()
     }
     public func saveOnboarding(_ draft: OnboardingDraft) throws { try put(draft, id: "onboarding", table: "metadata") }
-    public func activateOnboarding(_ draft: OnboardingDraft, scopes: [AccountScope]) throws {
+    public func activateOnboarding(_ draft: OnboardingDraft) throws {
         try execute("BEGIN IMMEDIATE")
         do {
             var settings = try settings()
             var completed = draft; completed.completed = true
-            settings.scope = nil; settings.scopes = scopes; settings.executable = draft.executable; settings.level = draft.level
+            let subject = draft.exactSubject.isEmpty ? nil : draft.exactSubject
+            if !draft.isSuggestionsOnly, let previous = settings.permission,
+               previous.exactSubject == subject, settings.executable == draft.executable {
+                settings.permission = CapturePermission(renewing: previous)
+            } else {
+                settings.scope = nil; settings.scopes = nil
+                settings.permission = draft.isSuggestionsOnly ? nil : CapturePermission(exactSubject: subject, delivery: .mailKit)
+            }
+            settings.executable = draft.executable; settings.level = draft.level
             settings.suggestionsOnly = draft.isSuggestionsOnly
-            settings.permission = draft.isSuggestionsOnly ? nil : CapturePermission(exactSubject: draft.exactSubject.isEmpty ? nil : draft.exactSubject)
             settings.revision = UUID() // Preserve existing pause; never resume implicitly.
             try saveSettings(settings); try saveOnboarding(completed)
             try execute("COMMIT")
@@ -216,19 +266,8 @@ public final class PipelineStore {
     public func saveEdits(_ id: String, subject: String, body: String) throws {
         guard var item = try record(id), subject.utf8.count <= 2_048,
               body.utf8.count <= 65_536 else { throw MailpipeError.invalidInput }
-        // Editing the initial generated reply acknowledges that version, but never
-        // dismisses a later pending candidate as a side effect of typing.
-        if item.reviewedDraftVersion == nil && (item.regenerationCount ?? 0) == 0 && !item.isPreparing {
-            item.reviewedDraftVersion = item.draftVersion
-        }
+        item.reviewedDraftVersion = item.draftVersion
         item.editedSubject = subject; item.editedBody = body
-        try save(item)
-    }
-    public func resolveDraftCandidate(_ id: String, expected: String, adopt: Bool) throws {
-        guard var item = try record(id), item.hasDraftCandidate,
-              item.draftVersion == expected, let draft = item.draft else { throw MailpipeError.invalidInput }
-        if adopt { item.editedBody = draft.body }
-        item.reviewedDraftVersion = expected
         try save(item)
     }
     public func discard(_ id: String, now: Date = Date()) throws {
@@ -253,6 +292,9 @@ public final class PipelineStore {
         guard let permission = settings.permission, permission.id == capture.permissionID,
               permission.accepts(capture.subject), capture.capturedAt >= permission.grantedAt,
               capture.capturedAt > Date().addingTimeInterval(-86_400) else { throw PipelineError.revoked }
+        }
+        if !syntheticGrant, settings.permission?.delivery == .mailKit {
+            return try importMailKitBody(capture, settings: settings)
         }
         guard try records().count < 1_000 else { throw PipelineError.quota }
         // Header-only entries are candidates, not account identities. Merge a body result
@@ -280,12 +322,50 @@ public final class PipelineStore {
             messageID: capture.messageID, input: MailInput(messageRef: id, subject: capture.subject, body: body),
             state: bodyIssue != nil ? .needsReview : (body.isEmpty && evidence == nil ? .awaitingBody : .awaitingAccount), error: bodyIssue)
         item.sourceDigest = capture.raw.flatMap(mailSourceDigest)
+        if !body.isEmpty, let raw = capture.raw { item.displayBody = try? PlainMailBody.displayText(raw) }
         item.sourceEvidence = evidence
+        item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
         item.syntheticAuthorized = syntheticGrant
+        return try commitIngest(capture.id, recordID: id, saving: item)
+    }
+
+    private func importMailKitBody(_ capture: InboundCapture, settings: PipelineSettings) throws -> String {
+        guard !settings.paused, settings.suggestionsOnly != true else { throw PipelineError.revoked }
+        let rows = try records()
+        let matching = rows.filter {
+            capture.messageID?.isEmpty == false && $0.messageID == capture.messageID &&
+            !$0.syntheticAuthorized && $0.manualExecutable == nil
+        }
+        if let first = matching.first(where: { !$0.input.body.isEmpty }) {
+            return try commitIngest(capture.id, recordID: first.id, saving: nil)
+        }
+        let pending = matching.first { $0.mailKitBody == true && $0.permissionID == capture.permissionID &&
+            $0.discardedAt == nil && $0.runs.isEmpty && [.awaitingBody, .needsReview].contains($0.state) }
+        guard pending != nil || rows.count < 1_000 else { throw PipelineError.quota }
+        if let pending, capture.raw == nil, capture.issue == nil {
+            return try commitIngest(capture.id, recordID: pending.id, saving: nil)
+        }
+        let id = pending?.id ?? UUID().uuidString
+        var body = "", error = capture.issue
+        if let raw = capture.raw {
+            do { body = try PlainMailBody.decode(raw, fromMailKit: true) }
+            catch let reason as MailBodyRejection { error = reason.rawValue }
+        }
+        var item = StoredReply(id: id, permissionID: capture.permissionID, capturedAt: capture.capturedAt,
+            messageID: capture.messageID, input: MailInput(messageRef: id, subject: capture.subject, body: body),
+            state: error != nil ? .needsReview : (body.isEmpty ? .awaitingBody : .queued), error: error)
+        item.mailKitBody = true
+        item.level = settings.level; item.revision = settings.revision
+        item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
+        if let raw = capture.raw, !body.isEmpty { item.displayBody = try? PlainMailBody.displayText(raw, fromMailKit: true) }
+        return try commitIngest(capture.id, recordID: id, saving: item)
+    }
+
+    private func commitIngest(_ captureID: UUID, recordID id: String, saving item: StoredReply?) throws -> String {
         try execute("BEGIN IMMEDIATE")
         do {
-            try save(item)
-            let stmt = try statement("INSERT INTO ingests (id,record_id) VALUES (?,?)", [capture.id.uuidString, id])
+            if let item { try save(item) }
+            let stmt = try statement("INSERT INTO ingests (id,record_id) VALUES (?,?)", [captureID.uuidString, id])
             defer { sqlite3_finalize(stmt) }
             guard sqlite3_step(stmt) == SQLITE_DONE else { throw PipelineError.storage }
             try execute("COMMIT")

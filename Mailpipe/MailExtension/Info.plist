@@ -16,18 +16,16 @@
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundleShortVersionString</key>
-	<string>0.0.1</string>
-	<key>CFBundleVersion</key>
-	<string>14</string>
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.2</string>
+	<key>CFBundleVersion</key>
+	<string>23</string>
+	<key>MailpipeAppGroup</key>
+	<string>$(MAILPIPE_APP_GROUP)</string>
 	<key>NSExtension</key>
 	<dict>
-		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.email.extension</string>
-		<key>NSExtensionPrincipalClass</key>
-		<string>$(PRODUCT_MODULE_NAME).MailExtension</string>
 		<key>NSExtensionAttributes</key>
 		<dict>
 			<key>MEExtensionCapabilities</key>
@@ -35,8 +33,10 @@
 				<string>MEMessageActionHandler</string>
 			</array>
 		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.email.extension</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).MailExtension</string>
 	</dict>
-	<key>MailpipeAppGroup</key>
-	<string>$(MAILPIPE_APP_GROUP)</string>
 </dict>
 </plist>

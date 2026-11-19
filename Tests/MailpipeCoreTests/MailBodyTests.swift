@@ -20,6 +20,19 @@ final class MailBodyTests: XCTestCase {
         }
     }
 
+    func testMailKitAlternativeWithoutBoundaryParameter() throws {
+        let body = "--alt\r\nContent-Type: text/plain\r\n\r\nHello\r\n--alt--\r\n"
+        let header = "Content-Type: multipart/alternative"
+        let raw = Data((header + "\r\n\r\n" + body).utf8)
+        XCTAssertThrowsError(try PlainMailBody.decode(raw))
+        XCTAssertEqual(try PlainMailBody.decode(raw, fromMailKit: true), "Hello")
+        XCTAssertEqual(try PlainMailBody.displayText(raw, fromMailKit: true), "Hello")
+        for invalid in [header + "; boundary=other\r\n\r\n" + body,
+                        header + "\r\n\r\n" + body.replacingOccurrences(of: "--alt--", with: "--other--")] {
+            XCTAssertThrowsError(try PlainMailBody.decode(Data(invalid.utf8), fromMailKit: true))
+        }
+    }
+
     func testPlainUTF8QuotedPrintableAndBase64() throws {
         XCTAssertEqual(try text("plain-utf8"), "Please reply about Friday.")
         XCTAssertEqual(try text("plain-qp"), "Please reply")
@@ -218,6 +231,21 @@ final class MailBodyTests: XCTestCase {
         XCTAssertThrowsError(try PlainMailBody.decode(nul)) { error in
             XCTAssertEqual(error as? MailBodyRejection, .malformedMIME)
         }
+    }
+
+    func testDisplayPreservesLongTextAndParagraphBreaks() throws {
+        let history = String(repeating: "quoted history ", count: 20_000)
+        let body = "First line\r\nSecond line\r\n\r\n\r\nOn Friday, Ada wrote:\r\n> " + history + "END"
+        XCTAssertEqual(try PlainMailBody.displayText(plain(body)), body.replacingOccurrences(of: "\r\n", with: "\n"))
+        let model = try PlainMailBody.decode(plain(body))
+        XCTAssertLessThanOrEqual(model.utf8.count, MailBodyLimits.modelBudget)
+        XCTAssertFalse(model.contains("END"))
+    }
+
+    func testDisplayConvertsHTMLDocumentWithPlainContentType() throws {
+        let html = "<html><body><p>One<br>Two</p><p>Three</p></body></html>"
+        XCTAssertEqual(try PlainMailBody.displayText(plain(html)), "One\nTwo\n\nThree")
+        XCTAssertEqual(try PlainMailBody.decode(plain(html)), html)
     }
 
     private func plain(_ body: String) -> Data {

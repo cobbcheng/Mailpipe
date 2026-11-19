@@ -54,6 +54,20 @@ final class MailSourceEvidenceTests: XCTestCase {
         XCTAssertTrue(try JSONDecoder().decode(MailSourceEvidence.self, from: encoded).matches(full))
     }
 
+    func testEquivalentMultipartSerializationVerifiesEveryPart() throws {
+        let type = "multipart/mixed; boundary=example"
+        let payload = "Preamble\r\n--example\r\nContent-Type: text/plain\r\n\r\nhello\r\n"
+            + "--example\r\nContent-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n\r\nYWJjZGVm\r\n--example--\r\nEnd"
+        let stored = try XCTUnwrap(MailSourceEvidence(message(type: type, body: payload)))
+        let evidence = try JSONDecoder().decode(MailSourceEvidence.self, from: JSONEncoder().encode(stored))
+        let wrapped = payload.replacingOccurrences(of: "YWJjZGVm", with: "YWJj\r\nZGVm")
+        XCTAssertTrue(evidence.matches(message(type: type, body: wrapped)))
+        for (old, new) in [("Preamble", "Other"), ("End", "Other"), ("hello", "world"),
+                           ("ZGVm", "ZGVo"), ("octet-stream", "pdf")] {
+            XCTAssertFalse(evidence.matches(message(type: type, body: wrapped.replacingOccurrences(of: old, with: new))))
+        }
+    }
+
     func testEquivalentChineseSubjectEncodingsMatch() throws {
         let subjects = ["你好", "=?utf-8?B?5L2g5aW9?=", "=?UTF-8?b?5L2g5aW9?=",
                         "=?UTF-8?Q?=E4=BD=A0=E5=A5=BD?=", "=?utf-8?B?5L2g?=\r\n =?utf-8?B?5aW9?="]

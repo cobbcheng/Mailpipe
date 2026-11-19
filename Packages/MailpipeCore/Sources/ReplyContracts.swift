@@ -31,15 +31,15 @@ public struct ReplyDecision: Codable, Equatable, Sendable {
         do {
             var value = try JSONDecoder().decode(Self.self, from: data)
             guard value.schemaVersion == 1, value.requestID == request.requestID,
-                  value.messageRef == request.message.messageRef else { throw MailpipeError.invalidOutput }
+                  value.messageRef == request.message.messageRef else { throw MailpipeError.outputReference }
             var row = object
             for key in ["schema_version", "request_id", "should_reply"] { row.removeValue(forKey: key) }
             let legacy = try JSONSerialization.data(withJSONObject: ["schema_version": 1, "request_id": request.requestID, "results": [row]])
-            _ = try ClassificationResponse.validated(legacy, for: ClassificationRequest(requestID: request.requestID, messages: [request.message]))
+            _ = try ClassificationResponse.validateFields(legacy, for: ClassificationRequest(requestID: request.requestID, messages: [request.message]))
             value.validatedMessage = request.message
             return value
         } catch let error as MailpipeError { throw error }
-        catch { throw MailpipeError.invalidOutput }
+        catch { throw MailpipeError.outputFields }
     }
 }
 public struct ReplyTriageRequest: Encodable, Sendable {
@@ -61,6 +61,20 @@ public struct ReplyDraftRequest: Encodable, Sendable {
     public let requestID: String
     public let triageRequestID: String
     public let message: MailInput
+    // Host-only grant. Never decoded from model output or email.
+    public var approvedPullRequest: String?
+    public static func linkedPullRequest(in body: String) -> String? {
+        let pattern = #"https://github[.]com/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*(?![A-Za-z0-9_/-])"#
+        guard let range = body.range(of: pattern, options: .regularExpression) else { return nil }
+        return String(body[range])
+    }
+    public init(message: MailInput) throws {
+        requestID = message.messageRef + "-draft"
+        // Schema v1 retains this correlation field for stored drafts and adapters.
+        triageRequestID = message.messageRef + "-triage"
+        self.message = message
+        try validate()
+    }
     public init(requestID: String, triage: ReplyTriageRequest, decision: ReplyDecision, level: ServiceLevel = .default) throws {
         try triage.validate()
         guard level.disposition(for: decision) == .generateDraft,
@@ -111,8 +125,8 @@ public struct ReplyDraft: Codable, Equatable, Sendable {
 
 private func closedObject(_ data: Data, keys: Set<String>) throws -> [String: Any] {
     guard data.count <= 262_144 else { throw MailpipeError.outputLimit }
-    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          Set(object.keys) == keys else { throw MailpipeError.invalidOutput }
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw MailpipeError.outputJSON }
+    guard Set(object.keys) == keys else { throw MailpipeError.outputFields }
     return object
 }
 

@@ -28,7 +28,7 @@ struct ManualSuggestionView: View {
                 TextEditor(text: $bodyText).frame(minHeight: 180).accessibilityLabel("邮件正文")
             }
             Text("目标：\(model.toolName)。邮件会到达该工具配置的模型。")
-            Text("最多 \(model.settings.level == .l2 ? 2 : 1) 次调用，消耗所选工具额度。不自动重试。")
+            Text("一次调用，消耗所选工具额度。不自动重试。")
             if reviewing && reviewedRevision != model.settings.revision { Text("设置已变更，请返回重新预览和确认。") }
             if let issue = model.issue { Text(issue).foregroundStyle(.secondary) }
             HStack {

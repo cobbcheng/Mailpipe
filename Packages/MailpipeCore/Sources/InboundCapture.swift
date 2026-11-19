@@ -29,7 +29,15 @@ public struct CapturePermission: Codable, Equatable, Sendable {
     public let id: UUID
     public let grantedAt: Date
     public let exactSubject: String?
-    public init(exactSubject: String? = nil) { id = UUID(); grantedAt = Date(); self.exactSubject = exactSubject }
+    public let delivery: Delivery?
+    public enum Delivery: String, Codable, Sendable { case mailKit }
+    public init(exactSubject: String? = nil, delivery: Delivery? = nil) {
+        id = UUID(); grantedAt = Date(); self.exactSubject = exactSubject; self.delivery = delivery
+    }
+    /// Explicitly renewed consent applies to future callbacks. Retain the grant ID for existing drafts.
+    public init(renewing permission: CapturePermission) {
+        id = permission.id; grantedAt = Date(); exactSubject = permission.exactSubject; delivery = .mailKit
+    }
     public func accepts(_ subject: String) -> Bool { exactSubject == nil || exactSubject == subject }
 }
 public struct InboundCapture: Codable, Sendable {
@@ -91,6 +99,16 @@ public struct CaptureInbox: Sendable {
         if fd < 0 { if errno == EEXIST { return false }; throw PipelineError.storage }
         close(fd)
         return true
+    }
+    /// A failed publication must not consume the only body callback request.
+    public func publishBodyRequest(permission: CapturePermission, subject: String, messageID: String?, publish: () throws -> Void) throws -> Bool {
+        guard try claimBody(permission: permission, subject: subject, messageID: messageID), let messageID else { return false }
+        do { try publish(); return true }
+        catch {
+            let digest = contentDigest(Data((permission.id.uuidString + messageID + subject).utf8))
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(digest + ".claim"))
+            throw error
+        }
     }
     public func recordIssue(_ code: String) throws {
         try JSONEncoder().encode(String(code.prefix(64))).write(to: directory.appendingPathComponent("issue.json"), options: .atomic)

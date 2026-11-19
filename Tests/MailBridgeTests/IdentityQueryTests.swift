@@ -13,6 +13,13 @@ final class IdentityQueryTests: XCTestCase {
         XCTAssertEqual(query.messageID, "synthetic@example.com")
         XCTAssertEqual(query.accountName, "test\" & do shell script")
     }
+    @MainActor func testMembershipGateNeverReadsBodyAndRejectsJunk() {
+        XCTAssertTrue(AppleMailReplyIdentity.membershipScript.contains("every mailbox of inbox"))
+        XCTAssertTrue(AppleMailReplyIdentity.membershipScript.contains("junk mail status of hit"))
+        XCTAssertFalse(AppleMailReplyIdentity.membershipScript.contains("source of hit"))
+        XCTAssertFalse(AppleMailReplyIdentity.membershipScript.contains("content of hit"))
+        XCTAssertTrue(AppleMailReplyIdentity.scriptSource.contains("junk mail status of hit"))
+    }
     @MainActor func testSourceCeilingMatchesBodyLimit() {
         XCTAssertTrue(AppleMailReplyIdentity.scriptSource.contains(String(MailBodyLimits.rawCeiling)))
         XCTAssertFalse(AppleMailReplyIdentity.scriptSource.contains("65536"))
@@ -46,7 +53,7 @@ final class IdentityQueryTests: XCTestCase {
     }
 
     @MainActor func testFixedReadOnlyScriptCompilesWithoutExecuting() {
-        for source in [AppleMailReplyIdentity.catalogScript, AppleMailReplyIdentity.scriptSource] {
+        for source in [AppleMailReplyIdentity.catalogScript, AppleMailReplyIdentity.scriptSource, AppleMailReplyIdentity.membershipScript] {
             let script = NSAppleScript(source: source)!
             var error: NSDictionary?
             XCTAssertTrue(script.compileAndReturnError(&error), "\(String(describing: error))")
