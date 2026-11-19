@@ -641,17 +641,19 @@ private struct DraftDetail: View {
         let truncated = fullBodyHeight > previewHeight + 0.5
         let expanded = truncated && originalExpanded
         return VStack(alignment: .leading, spacing: 6) {
+            if !truncated { Text("来信正文") }
+            if !truncated || expanded { originalText.textSelection(.enabled) }
             if truncated {
                 Button {
                     originalExpanded.toggle()
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
+                        if !expanded { originalText.lineLimit(3) }
                         HStack {
                             Text("来信正文")
-                            Image(systemName: expanded ? "chevron.down" : "chevron.forward")
+                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        if !expanded { originalText.lineLimit(3) }
                     }
                     .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                     .padding(.vertical, 4)
@@ -659,10 +661,7 @@ private struct DraftDetail: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(expanded ? "收起来信正文" : "展开来信正文")
-            } else {
-                Text("来信正文")
             }
-            if !truncated || expanded { originalText.textSelection(.enabled) }
             if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
                 Text("完整原文尚未取得，以下为已保存的正文。")
                     .font(.caption).foregroundStyle(.secondary)
