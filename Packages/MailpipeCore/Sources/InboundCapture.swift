@@ -62,6 +62,8 @@ public struct InboundCapture: Codable, Sendable {
 
 /// Cross-process immutable handoff. Database commits precede deletion of these files.
 public struct CaptureInbox: Sendable {
+    public enum MailKitDecision { case finished, requestBody }
+
     public let directory: URL
     public init(directory: URL) throws {
         self.directory = directory
@@ -77,6 +79,37 @@ public struct CaptureInbox: Sendable {
         if let value { try JSONEncoder().encode(value).write(to: path, options: .atomic) }
         else if FileManager.default.fileExists(atPath: path.path) { try FileManager.default.removeItem(at: path) }
     }
+
+    /// Production MailKit entry point. Read only the authorized headers until a message is admitted.
+    public func receiveMailKitMessage(subject: String, sender: @autoclosure () -> String?,
+                                      headers: @autoclosure () -> [String: [String]],
+                                      rawData: @autoclosure () -> Data?) throws -> MailKitDecision {
+        guard let permission = try permission(), permission.accepts(subject) else { return .finished }
+        let fields = headers()
+        let ids = fields.filter { $0.key.lowercased() == "message-id" }.flatMap(\.value)
+        let messageID = ids.count == 1 ? ids[0].trimmingCharacters(in: CharacterSet(charactersIn: "<> ")) : nil
+
+        if InboundMailFilter.shouldSkip(subject: subject, sender: sender(), headers: fields) {
+            // Mail can provide more headers on re-entry. Finish an already admitted capture.
+            guard let messageID, !messageID.isEmpty,
+                  FileManager.default.fileExists(atPath: bodyClaimURL(permission, messageID, subject).path) else { return .finished }
+        }
+        if let raw = rawData() {
+            let oversized = raw.count > MailBodyLimits.rawCeiling
+            try publish(InboundCapture(permissionID: permission.id, subject: subject, messageID: messageID,
+                raw: oversized ? nil : raw, issue: oversized ? MailBodyRejection.messageTooLarge.rawValue : nil))
+            return .finished
+        }
+        let published = try publishBodyRequest(permission: permission, subject: subject, messageID: messageID) {
+            try publish(InboundCapture(permissionID: permission.id, subject: subject, messageID: messageID, raw: nil))
+        }
+        if published || permission.delivery == .mailKit { return .requestBody }
+        if messageID == nil {
+            try publish(InboundCapture(permissionID: permission.id, subject: subject, messageID: nil, raw: nil, issue: "missingMessageID"))
+        }
+        return .finished
+    }
+
     public func publish(_ capture: InboundCapture) throws {
         try capture.validate()
         guard let permission = try permission(), permission.id == capture.permissionID,
@@ -93,8 +126,7 @@ public struct CaptureInbox: Sendable {
         guard try self.permission() == permission, permission.accepts(subject) else { throw PipelineError.revoked }
         let entries = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         guard entries.filter({ $0.pathExtension == "claim" }).count < 500, try files().count < 500 else { throw PipelineError.quota }
-        let digest = contentDigest(Data((permission.id.uuidString + messageID + subject).utf8))
-        let path = directory.appendingPathComponent(digest + ".claim")
+        let path = bodyClaimURL(permission, messageID, subject)
         let fd = open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
         if fd < 0 { if errno == EEXIST { return false }; throw PipelineError.storage }
         close(fd)
@@ -105,10 +137,13 @@ public struct CaptureInbox: Sendable {
         guard try claimBody(permission: permission, subject: subject, messageID: messageID), let messageID else { return false }
         do { try publish(); return true }
         catch {
-            let digest = contentDigest(Data((permission.id.uuidString + messageID + subject).utf8))
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(digest + ".claim"))
+            try? FileManager.default.removeItem(at: bodyClaimURL(permission, messageID, subject))
             throw error
         }
+    }
+    private func bodyClaimURL(_ permission: CapturePermission, _ messageID: String, _ subject: String) -> URL {
+        let digest = contentDigest(Data((permission.id.uuidString + messageID + subject).utf8))
+        return directory.appendingPathComponent(digest + ".claim")
     }
     public func recordIssue(_ code: String) throws {
         try JSONEncoder().encode(String(code.prefix(64))).write(to: directory.appendingPathComponent("issue.json"), options: .atomic)
