@@ -19,7 +19,7 @@ function homepage() {
 <link rel="icon" href="/icon.png">
 <link rel="preload" href="/fonts/InterDisplay-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/Inter-Medium.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/site.css?v=${release.build}">
+<link rel="stylesheet" href="/site.css?v=${release.build}-footer2">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:title" content="${title}">
@@ -113,9 +113,17 @@ function homepage() {
 </main>
 <footer class="site-footer">
   <div class="rails">
-    <a class="brand" href="/">Mailpipe</a>
-    <span>Apple Mail 回复助手</span>
-    <a class="support" href="mailto:support@mailpipeai.com">support@mailpipeai.com</a>
+    <div class="footer-identity">
+      <img src="/icon.png" width="40" height="40" alt="">
+      <div>
+        <a class="brand" href="/">Mailpipe</a>
+        <p>Apple Mail 回复助手</p>
+      </div>
+    </div>
+    <div class="footer-contact">
+      <p>联系支持</p>
+      <a class="support" href="mailto:support@mailpipeai.com">support@mailpipeai.com</a>
+    </div>
   </div>
 </footer>
 </body>
