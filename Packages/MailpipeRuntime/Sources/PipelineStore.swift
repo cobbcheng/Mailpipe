@@ -37,7 +37,7 @@ public struct PipelineSettings: Codable, Sendable {
     public var authorizedScopes: [AccountScope] { scopes ?? scope.map { [$0] } ?? [] }
     public var executable: String?
     public var level: ServiceLevel = .default
-    public var suggestionsOnly: Bool?
+    var suggestionsOnly: Bool? // Decode the old manual-only policy without granting capture.
     public var paused = false
     public init() {}
 }
@@ -103,7 +103,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var draftData: Data?
     public var runs: [PipelineRun] = []
     public var mailKitBody: Bool?
-    public var manualExecutable: String? // Host-only, single-message confirmation; never imported from the spool.
+    public internal(set) var manualExecutable: String? // Identifies archived manually entered messages.
     public var syntheticAuthorized = false
     public var excludedFromAuthorizedInbox: Bool?
     public var editedSubject: String?
@@ -126,10 +126,9 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var displayedBody: String { editedBody ?? draft?.body ?? "" }
     /// UI preflight only; dispatch still rechecks the authoritative policy.
     public func canRequestRegeneration(settings: PipelineSettings, now: Date = Date()) -> Bool {
-        guard excludedFromAuthorizedInbox != true, state != .awaitingBody, !settings.paused, !isPreparing, discardedAt == nil,
+        guard manualExecutable == nil, excludedFromAuthorizedInbox != true, state != .awaitingBody, !settings.paused, !isPreparing, discardedAt == nil,
               !runs.contains(where: { $0.finishedAt == nil }), (regenerationCount ?? 0) < 3,
-              capturedAt > now.addingTimeInterval(-7 * 86_400), let executable = settings.executable else { return false }
-        if let tool = manualExecutable { return settings.suggestionsOnly == true && tool == executable }
+              capturedAt > now.addingTimeInterval(-7 * 86_400), settings.executable != nil else { return false }
         if mailKitBody == true { return settings.permission?.id == permissionID && settings.permission?.delivery == .mailKit && !input.body.isEmpty }
         if syntheticAuthorized { return true }
         return settings.permission?.id == permissionID && settings.authorizedScopes.contains {
@@ -143,7 +142,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
             draft != nil || !input.body.isEmpty || !(editedBody ?? "").isEmpty
     }
     public var canRecheckIdentity: Bool {
-        state == .needsReview && runs.isEmpty && (!input.body.isEmpty ||
+        manualExecutable == nil && state == .needsReview && runs.isEmpty && (!input.body.isEmpty ||
             (sourceEvidence != nil && ["identitySourceMismatch", "identityUnresolved", "identityUnavailable", "identityAmbiguous"].contains(error ?? "")))
     }
     public var triageRequest: ReplyTriageRequest { ReplyTriageRequest(requestID: id + "-triage", message: input) }
@@ -179,15 +178,17 @@ public final class PipelineStore {
         try execute("CREATE TABLE IF NOT EXISTS ingests (id TEXT PRIMARY KEY, record_id TEXT NOT NULL)")
         try execute("CREATE TABLE IF NOT EXISTS metadata (id TEXT PRIMARY KEY, payload BLOB NOT NULL)")
         try execute("PRAGMA user_version=1")
-        // Finish pending choices from versions that kept regenerated drafts as candidates.
-        for var item in try records() where item.hasDraftCandidate {
-            item.editedBody = nil
-            item.reviewedDraftVersion = item.draftVersion
-            try save(item)
-        }
-        for var item in try records() where item.state == .triaging || item.state == .drafting {
-            item.state = .needsReview; item.error = "interrupted"
-            if !item.runs.isEmpty { item.runs[item.runs.count - 1].error = "interrupted" }
+        for var item in try records() {
+            if item.state == .triaging || item.state == .drafting {
+                item.state = .needsReview; item.error = "interrupted"
+                if !item.runs.isEmpty { item.runs[item.runs.count - 1].error = "interrupted" }
+            } else if item.manualExecutable != nil && item.isPreparing {
+                item.state = .cancelled; item.error = "cancelled"
+            } else if item.manualExecutable == nil && item.hasDraftCandidate {
+                // Finish pending choices from versions that kept regenerated drafts as candidates.
+                item.editedBody = nil
+                item.reviewedDraftVersion = item.draftVersion
+            } else { continue }
             try save(item)
         }
     }
@@ -229,7 +230,14 @@ public final class PipelineStore {
             result.append(try JSONDecoder().decode(T.self, from: Data(bytes: bytes, count: Int(sqlite3_column_bytes(stmt, 0)))))
         }
     }
-    public func settings() throws -> PipelineSettings { try values(PipelineSettings.self, table: "metadata", id: "settings").first ?? PipelineSettings() }
+    public func settings() throws -> PipelineSettings {
+        var settings = try values(PipelineSettings.self, table: "metadata", id: "settings").first ?? PipelineSettings()
+        if settings.suggestionsOnly == true {
+            settings.permission = nil; settings.scope = nil; settings.scopes = nil
+        }
+        settings.suggestionsOnly = nil
+        return settings
+    }
     public func hasCurrentMailReadAuthorization(_ expected: PipelineSettings) throws -> Bool {
         let current = try settings()
         return current.revision == expected.revision && current.paused == expected.paused &&
@@ -237,24 +245,30 @@ public final class PipelineStore {
     }
     public func saveSettings(_ value: PipelineSettings) throws { try put(value, id: "settings", table: "metadata") }
     public func onboarding() throws -> OnboardingDraft {
-        try values(OnboardingDraft.self, table: "metadata", id: "onboarding").first ?? OnboardingDraft()
+        var draft = try values(OnboardingDraft.self, table: "metadata", id: "onboarding").first ?? OnboardingDraft()
+        if draft.suggestionsOnly == true {
+            draft.extensionAcknowledged = false
+            if !draft.completed { draft.step = min(draft.step, 3) }
+        }
+        draft.suggestionsOnly = nil
+        return draft
     }
     public func saveOnboarding(_ draft: OnboardingDraft) throws { try put(draft, id: "onboarding", table: "metadata") }
     public func activateOnboarding(_ draft: OnboardingDraft) throws {
+        guard draft.suggestionsOnly != true, draft.extensionAcknowledged else { throw MailpipeError.invalidInput }
         try execute("BEGIN IMMEDIATE")
         do {
             var settings = try settings()
             var completed = draft; completed.completed = true
             let subject = draft.exactSubject.isEmpty ? nil : draft.exactSubject
-            if !draft.isSuggestionsOnly, let previous = settings.permission,
+            if let previous = settings.permission,
                previous.exactSubject == subject, settings.executable == draft.executable {
                 settings.permission = CapturePermission(renewing: previous)
             } else {
                 settings.scope = nil; settings.scopes = nil
-                settings.permission = draft.isSuggestionsOnly ? nil : CapturePermission(exactSubject: subject, delivery: .mailKit)
+                settings.permission = CapturePermission(exactSubject: subject, delivery: .mailKit)
             }
             settings.executable = draft.executable; settings.level = draft.level
-            settings.suggestionsOnly = draft.isSuggestionsOnly
             settings.revision = UUID() // Preserve existing pause; never resume implicitly.
             try saveSettings(settings); try saveOnboarding(completed)
             try execute("COMMIT")
@@ -330,7 +344,7 @@ public final class PipelineStore {
     }
 
     private func importMailKitBody(_ capture: InboundCapture, settings: PipelineSettings) throws -> String {
-        guard !settings.paused, settings.suggestionsOnly != true else { throw PipelineError.revoked }
+        guard !settings.paused else { throw PipelineError.revoked }
         let rows = try records()
         let matching = rows.filter {
             capture.messageID?.isEmpty == false && $0.messageID == capture.messageID &&

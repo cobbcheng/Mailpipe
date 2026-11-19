@@ -11,9 +11,8 @@ public struct OnboardingDraft: Codable, Equatable, Sendable {
     public var executable = ""
     public var level: ServiceLevel = .default
     public var automationDenied: Bool?
-    public var suggestionsOnly: Bool?
+    var suggestionsOnly: Bool? // Decode progress saved by the retired manual intake mode.
     public var testedLevel: ServiceLevel?
-    public var isSuggestionsOnly: Bool { suggestionsOnly == true }
     public var extensionAcknowledged = false
     public var completed = false
     public var testID: String?
@@ -82,7 +81,6 @@ public final class OnboardingSession {
         guard draft.testedExecutable == draft.executable,
               draft.evidenceVersion == Self.evidenceVersion,
               Self.testPassed(try testResult(), level: draft.level) else { throw MailpipeError.invalidInput }
-        guard draft.isSuggestionsOnly || draft.extensionAcknowledged else { throw MailpipeError.invalidInput }
         try store.activateOnboarding(draft)
     }
 }

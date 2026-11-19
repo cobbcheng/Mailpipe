@@ -70,7 +70,7 @@ Mail 数值 ID 只作当前 locator 缓存。
 | 未找到 | 等待或用户有界重新定位，不自动扫描全部 |
 | 多个候选 | 人工确认，禁止自动动作 |
 | Message-ID 缺失 | 不仅凭主题自动合并或执行 |
-| 账户未知 | 不进入自动模型路由；逐封许可只允许建议 |
+| 账户未知 | 按账户授权的任务须先核验身份 |
 | 内容变化 | 原 Decision 作废，重新预览 |
 
 去重键须绑定账户、规则版本和目标状态。
@@ -84,7 +84,7 @@ stateDiagram-v2
   [*] --> captured
   captured --> awaiting_context: 正文或账户缺失
   captured --> queued: 上下文与授权完整
-  awaiting_context --> queued: 用户确认或身份核验
+  awaiting_context --> queued: 上下文与授权核验完成
   queued --> analyzing: 预算可用
   analyzing --> proposed: JSON 合法且结果可用
   analyzing --> failed: 明确失败
@@ -102,8 +102,8 @@ stateDiagram-v2
   analyzing --> cancelled: 用户取消且结果不再采用
 ```
 
-`awaiting_context` 可由逐封路由许可解除。
-该许可绑定内容摘要和单一 Harness，不能生成 Mail 动作。
+按账户授权的任务在来源身份核验后继续。
+MailKit 回调须匹配已确认的来信范围与目标 Harness。
 
 `completed` 必须带 `completion_kind`。
 取值 `advice_only`、`draft_ready` 或 `mail_verified`。

@@ -24,7 +24,7 @@ final class PendingModel: ObservableObject {
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
     private(set) var hasSharedInbox = false
-    var needsPermissionRecovery: Bool { onboarding.completed && settings.suggestionsOnly != true && settings.permission?.delivery != .mailKit }
+    var needsPermissionRecovery: Bool { onboarding.completed && settings.permission?.delivery != .mailKit }
     var pending: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench && ($0.state.isPending || $0.isPreparing || $0.state == .needsReview || $0.state == .awaitingBody) } }
     var workbenchRecords: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench } }
     var unreadCount: Int { workbenchRecords.lazy.filter { self.isUnread($0) }.count }
@@ -44,11 +44,6 @@ final class PendingModel: ObservableObject {
     @Published var notice: String?
     @Published var undoDiscardID: String?
     private var noticeTask: Task<Void, Never>?
-    var toolName: String {
-        installations.first { $0.executable.path == settings.executable }?.kind.displayName
-            ?? settings.executable.map { ($0 as NSString).abbreviatingWithTildeInPath }
-            ?? "Agent"
-    }
     func notify(_ text: String) { notice = text }
     @Published private(set) var editorBuffers: [String: DraftEditBuffer] = [:]
     private var editTasks: [String: Task<Void, Never>] = [:]
@@ -257,9 +252,11 @@ final class PendingModel: ObservableObject {
         saveConfiguration(updating: false)
     }
     private func saveConfiguration(updating: Bool) {
-        guard !onboardingBusy, (onboarding.isSuggestionsOnly || hasSharedInbox), let session = onboardingSession, let pipeline else {
-            onboardingIssue = "无法访问 Mail 扩展的共享目录。可以保存设置进度，或改用手动粘贴。"; return
+        guard !onboardingBusy, let session = onboardingSession, let pipeline else { return }
+        guard hasSharedInbox else {
+            onboardingIssue = "无法访问 Mail 扩展的共享目录。请检查 Mailpipe 的安装。"; return
         }
+        guard onboarding.extensionAcknowledged else { return }
         guard saveOnboarding() else { return }
         onboardingIssue = nil; onboardingBusy = true
         let snapshot = onboarding
@@ -277,7 +274,7 @@ final class PendingModel: ObservableObject {
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding()
                 refresh()
-                onboardingIssue = active.suggestionsOnly == true ? "已设为手动粘贴。每封来信由你确认后交给 Agent。" : active.paused ? "配置已保存，来信处理仍处于暂停状态。" : "已授权 Agent 为新来信起草回复，等待首封符合条件的来信。"
+                onboardingIssue = active.paused ? "配置已保存，来信处理仍处于暂停状态。" : "已授权 Agent 为新来信起草回复，等待首封符合条件的来信。"
             } catch is CancellationError {
                 return
             } catch { onboardingIssue = "授权未完成，原设置保留或等待同步：\(Self.code(error))" }
@@ -285,13 +282,6 @@ final class PendingModel: ObservableObject {
     }
 
     var onboardingTestPassed: Bool { OnboardingSession.testPassed(onboardingResult, level: onboarding.level) }
-    func confirmManual(id: UUID, subject: String, body: String, executable: String) -> Bool {
-        do {
-            guard let pipeline else { return false }
-            selectedID = try pipeline.enqueueManual(id: id, subject: subject, body: body, executable: executable)
-            refresh(); return true
-        } catch { issue = "提交这封来信失败（\(Self.code(error))）。"; return false }
-    }
     func openExtensionSettings() {
         guard let url = URL(string: "mail-pref-pane://extensionspref") else { return }
         if !NSWorkspace.shared.open(url) {
@@ -357,7 +347,7 @@ final class PendingModel: ObservableObject {
         catch { issue = Self.code(error) }
     }
     func revoke() {
-        do { try change { $0.permission = nil; $0.scope = nil; $0.scopes = nil; $0.suggestionsOnly = false } }
+        do { try change { $0.permission = nil; $0.scope = nil; $0.scopes = nil } }
         catch { issue = Self.code(error) }
     }
     func recheck(_ id: String) {
@@ -408,9 +398,18 @@ struct SettingsButton: View {
     }
 }
 
+// Keep banners and the scrollable message on the same reading column.
+private struct WorkbenchColumn: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: 720, alignment: .leading)
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity)
+    }
+}
+
 struct PendingWorkbench: View {
     @ObservedObject var model: PendingModel
-    @State private var showManual = false
     private var visible: [StoredReply] { model.workbenchRecords.reversed() }
     var body: some View {
         NavigationSplitView {
@@ -422,7 +421,7 @@ struct PendingWorkbench: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 380)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 244, max: 380)
             .overlay {
                 if visible.isEmpty { Text("暂时没有草稿").foregroundStyle(.secondary).padding() }
             }
@@ -432,20 +431,21 @@ struct PendingWorkbench: View {
                     HStack {
                         Label("请在设置中确认来信范围和 Agent。已有草稿仍保存在本机。", systemImage: "exclamationmark.shield")
                         Spacer(); SettingsButton()
-                    }.padding().background(Color(nsColor: .controlBackgroundColor))
-                } else if model.settings.suggestionsOnly == true {
-                    HStack {
-                        Text("手动粘贴的来信，由你逐封确认。").foregroundStyle(.secondary)
-                        Spacer()
-                        Button("添加来信…") { showManual = true }.disabled(model.settings.paused)
-                    }.padding()
+                    }
+                    .modifier(WorkbenchColumn())
+                    .padding(.vertical, 10)
+                    .background(Color(nsColor: .controlBackgroundColor))
                 }
                 if let issue = model.issue {
                     HStack {
                         Label(issue, systemImage: "exclamationmark.triangle")
                         Spacer(); SettingsButton()
                         Button { model.issue = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭提示")
-                    }.font(.callout).padding().background(Color(nsColor: .controlBackgroundColor))
+                    }
+                    .font(.callout)
+                    .modifier(WorkbenchColumn())
+                    .padding(.vertical, 10)
+                    .background(Color(nsColor: .controlBackgroundColor))
                 }
                 if let item = visible.first(where: { $0.id == model.selectedID }) {
                     DraftDetail(model: model, item: item).id(item.id)
@@ -454,7 +454,10 @@ struct PendingWorkbench: View {
                         Image(systemName: "text.bubble").font(.system(size: 36)).foregroundStyle(.secondary)
                         Text(visible.isEmpty ? "暂时没有草稿" : "选择一封来信").font(.title2)
                         Text("在这里审阅 Agent 起草的回复，再到 Apple Mail 发送。").foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .multilineTextAlignment(.center)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if let notice = model.notice {
                     HStack {
@@ -462,12 +465,17 @@ struct PendingWorkbench: View {
                         if model.undoDiscardID != nil { Button("撤销", action: model.undoDiscard) }
                         Spacer()
                         Button { model.notice = nil } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭反馈")
-                    }.padding().background(Color(nsColor: .controlBackgroundColor)).accessibilityElement(children: .contain)
+                    }
+                    .modifier(WorkbenchColumn())
+                    .padding(.vertical, 10)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .accessibilityElement(children: .contain)
                 }
-            }.frame(minWidth: 440).background(Color(nsColor: .textBackgroundColor))
+            }
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
         }
         .navigationTitle("Mailpipe")
-        .sheet(isPresented: $showManual) { ManualSuggestionView(model: model) }
     }
 }
 
@@ -483,29 +491,29 @@ private struct WorkbenchMessageRow: View {
         let subject = item.input.subject
         let sender = item.correspondents?.sender ?? "发件地址未采集"
         let date = item.capturedAt
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                .padding(.leading, 14)
+                .overlay(alignment: .leading) {
+                    if unread {
+                        Circle().fill(Color(nsColor: .systemBlue))
+                            .frame(width: 8, height: 8)
+                            .accessibilityHidden(true)
+                    }
+                }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(sender).font(.subheadline).lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(date, format: Calendar.autoupdatingCurrent.isDateInToday(date)
                      ? .dateTime.hour().minute()
                      : .dateTime.month(.twoDigits).day(.twoDigits))
                     .font(.caption2).monospacedDigit().fixedSize()
             }
+            .padding(.leading, 14)
             .foregroundStyle(.secondary)
         }
-        .padding(.leading, 14)
-        .overlay(alignment: .topLeading) {
-            if unread {
-                Circle().fill(Color(nsColor: .systemBlue))
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 4)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 6)
         .accessibilityElement(children: .combine)
         .accessibilityValue(unread ? "未读" : "")
     }
@@ -529,9 +537,11 @@ struct WorkbenchActionStyle: ViewModifier {
 private struct DraftDetail: View {
     @ObservedObject var model: PendingModel
     let item: StoredReply
+    @State private var originalExpanded = false
+    @State private var fullBodyHeight: CGFloat = 0
+    @State private var previewHeight: CGFloat = 0
     @State private var showExplanation = false
     @State private var confirmRegeneration = false
-    @State private var editorHeight: CGFloat = 96
     private var bodyText: String { model.editorBody(item) }
     private var incoming: String { item.displayBody ?? item.input.body }
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
@@ -545,22 +555,25 @@ private struct DraftDetail: View {
     }
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text(item.input.subject.isEmpty ? "（无主题）" : item.input.subject)
-                            .font(.title2.weight(.semibold)).textSelection(.enabled).lineLimit(3)
+                            .font(.title.weight(.semibold)).textSelection(.enabled).lineLimit(3)
                         Spacer(minLength: 0)
-                        Button("打开原邮件", action: openOriginalMessage)
-                            .modifier(WorkbenchActionStyle())
+                        Button(action: openOriginalMessage) {
+                            actionIcon("打开原邮件", "envelope.open")
+                        }
+                            .help("在 Apple Mail 中打开原邮件")
+                            .modifier(WorkbenchActionStyle(circular: true))
                             .fixedSize()
                             .disabled(originalMessageURL == nil)
                     }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("发件人：\(item.correspondents?.sender ?? "发件地址未采集")")
-                        Text("收件人（To）：\(recipientAddresses)")
+                    Grid(alignment: .leading, horizontalSpacing: 4, verticalSpacing: 4) {
+                        addressRow("发件人：", item.correspondents?.sender ?? "发件地址未采集")
+                        addressRow("收件人（To）：", recipientAddresses)
                         if let cc = item.correspondents?.cc, !cc.isEmpty {
-                            Text("抄送（Cc）：\(cc.joined(separator: "、"))")
+                            addressRow("抄送（Cc）：", cc.joined(separator: "、"))
                         }
                     }
                     .font(.caption).foregroundStyle(.secondary)
@@ -573,10 +586,9 @@ private struct DraftDetail: View {
                 originalCard
                 draftCard
             }
-            .frame(maxWidth: 720, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity, alignment: .center)
+            .modifier(WorkbenchColumn())
+            .padding(.top, 7)
+            .padding(.bottom, 24)
         }
         .onAppear { model.openEditor(item) }
         .task(id: item.draftVersion) {
@@ -592,6 +604,12 @@ private struct DraftDetail: View {
             } else {
                 Text("Agent 会再次调用模型，消耗你的额度。新草稿生成后会替换当前回复。")
             }
+        }
+    }
+    private func addressRow(_ label: String, _ addresses: String) -> some View {
+        GridRow(alignment: .firstTextBaseline) {
+            Text(label).fixedSize()
+            Text(addresses)
         }
     }
     private var originalMessageURL: URL? {
@@ -612,22 +630,55 @@ private struct DraftDetail: View {
             if error != nil { Task { @MainActor in model.notify("Apple Mail 未能打开原邮件。") } }
         }
     }
+    private var originalText: some View {
+        Text(verbatim: incoming.isEmpty ? (item.state == .awaitingBody ? "正在等待 Apple Mail 提供正文。收到后才能交给 Agent 起草回复。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
+            .font(.callout).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var originalCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let truncated = fullBodyHeight > previewHeight + 0.5
+        let expanded = truncated && originalExpanded
+        return VStack(alignment: .leading, spacing: 6) {
+            if !truncated || expanded { originalText.textSelection(.enabled) }
+            if truncated {
+                Button {
+                    originalExpanded.toggle()
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if !expanded { originalText.lineLimit(3) }
+                        HStack {
+                            Text("来信正文")
+                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "收起来信正文" : "展开来信正文")
+            }
             if item.displayBody == nil, !incoming.isEmpty, item.manualExecutable == nil {
                 Text("完整原文尚未取得，以下为已保存的正文。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Text(incoming.isEmpty ? (item.state == .awaitingBody ? "正在等待 Apple Mail 提供正文。收到后才能交给 Agent 起草回复。" : "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。") : incoming)
-                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
+                originalText.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { fullBodyHeight = $0 }
+                originalText.lineLimit(3).onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { previewHeight = $0 }
+            }
+            .hidden().accessibilityHidden(true).allowsHitTesting(false)
         }
     }
     private var draftCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let error = item.error, let description = errorDescription(error) {
-                    Text(description).font(.caption).foregroundStyle(.secondary).padding(.top, 4)
+                    Text(description).font(.caption).foregroundStyle(.secondary)
                 }
                 if item.isPreparing {
                     HStack {
@@ -635,27 +686,26 @@ private struct DraftDetail: View {
                         Text("正在生成…").font(.callout)
                         Spacer()
                         Button("取消", action: { model.cancel(item.id) })
-                    }.padding(.top, 8)
+                    }
                 }
                 Image(systemName: "square.and.pencil")
                     .foregroundStyle(.secondary)
                     .help("回复草稿")
                     .accessibilityLabel("回复草稿")
-                replyEditor.padding(.top, 8)
+                replyEditor
                 if model.saveState(item) == .failed {
                     Button("未能保存，点此重试") { model.flushEditor(item.id) }
                         .font(.caption).buttonStyle(.link)
                 }
-            }.padding(.vertical, 16)
-            actions.padding(.vertical, 16)
+            }
+            actions
         }
     }
     private var replyEditor: some View {
         ZStack(alignment: .topLeading) {
             ReplyTextView(
                 text: Binding(get: { bodyText }, set: { model.editBody(item, body: $0) }),
-                enabled: !item.isPreparing,
-                measuredHeight: $editorHeight)
+                enabled: !item.isPreparing)
             if bodyText.isEmpty {
                 Text(item.isPreparing ? "正在准备回复，现有编辑会保留。" : "点击此处输入回复正文…")
                     .font(.system(size: ReplyTextView.bodyFont.pointSize)).foregroundStyle(.secondary)
@@ -663,33 +713,42 @@ private struct DraftDetail: View {
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: max(160, editorHeight), maxHeight: max(160, editorHeight), alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
+    private func actionIcon(_ title: LocalizedStringKey, _ symbol: String) -> some View {
+        Label(title, systemImage: symbol)
+            .labelStyle(.iconOnly)
+            .frame(minWidth: 20, minHeight: 20)
+    }
+
     private var actions: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Button {
                 Task {
                     if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
-            } label: { Label("去发送", systemImage: "envelope") }
-                .disabled(model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Button {
-                copyReply()
-            } label: { Label("复制回复", systemImage: "doc.on.doc") }
+            } label: { actionIcon("在 Apple Mail 中撰写回复", "arrowshape.turn.up.left") }
+            .help("在 Apple Mail 中撰写回复")
+            .disabled(item.manualExecutable != nil || model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button(action: copyReply) { actionIcon("复制回复", "doc.on.doc") }
+                .help("复制回复")
                 .disabled(bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut("c", modifiers: [.command, .shift])
-            Button("重新生成") { confirmRegeneration = true }.disabled(!canRegenerate)
+            Button { confirmRegeneration = true } label: { actionIcon("重新生成", "arrow.clockwise") }
+                .help("重新生成")
+                .disabled(!canRegenerate)
             Menu {
                 Button("查看数据去向") { showExplanation = true }
                 Divider()
                 Button("丢弃草稿", role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
-            } label: { Label("更多草稿操作", systemImage: "ellipsis").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
-                .modifier(WorkbenchActionStyle(circular: true)).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
+            } label: { actionIcon("更多草稿操作", "ellipsis") }
+                .help("更多草稿操作").menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel("更多草稿操作")
             Spacer(minLength: 0)
-            Button { showExplanation = true } label: { Label("查看数据去向", systemImage: "info").labelStyle(.iconOnly).frame(minWidth: 20, minHeight: 20) }
-                .modifier(WorkbenchActionStyle(circular: true)).accessibilityLabel("查看数据去向")
+            Button { showExplanation = true } label: { actionIcon("查看数据去向", "info") }
+                .help("查看数据去向").accessibilityLabel("查看数据去向")
                 .popover(isPresented: $showExplanation) { explanation }
-        }.modifier(WorkbenchActionStyle())
+        }
+        .modifier(WorkbenchActionStyle(circular: true))
     }
     private var explanation: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -700,7 +759,7 @@ private struct DraftDetail: View {
                     Text("模型服务：\(vendor) · \(model)")
                 } else { Text("本次记录未确认具体模型。") }
             } else { Text("这封来信尚无 Agent 调用记录。") }
-            Text("来信和草稿由 Mailpipe 保存在这台 Mac 上。点「去发送」可在 Apple Mail 打开撰写窗口，由你检查并发送。")
+            Text("来信和草稿由 Mailpipe 保存在这台 Mac 上。点回复箭头可在 Apple Mail 打开撰写窗口，由你检查并发送。")
             if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }
             if let readDiff = item.runs.last?.readPullRequestDiff {
                 Text(readDiff ? "核查工具已读取 PR 代码差异。" : "核查工具未取得可读的 PR 代码差异。")
@@ -717,7 +776,7 @@ private struct DraftDetail: View {
     private func errorDescription(_ code: String) -> String? {
         if let rejection = MailBodyRejection(rawValue: code) { return rejection.reviewLabel }
         switch code {
-        case "contentExpired": return "来信已超过处理有效期。如需回复，请使用手动粘贴，重新确认这封来信。"
+        case "contentExpired": return "来信已超过处理有效期。"
         case "policyChanged", "revoked": return "处理授权已变更，请在设置中核对。"
         case "identitySourceMismatch": return "已找到原邮件，但采集内容与 Mail 原文不一致。请打开原邮件核对。"
         case "identityUnresolved", "identityUnavailable", "identityAmbiguous": return nil
@@ -734,6 +793,16 @@ private struct DraftDetail: View {
 }
 
 private final class DraftTextView: NSTextView {
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard let container = textContainer, let layoutManager else { return }
+        let width = bounds.width - 2 * textContainerInset.width
+        guard width > 0, container.containerSize.width != width else { return }
+        container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        layoutManager.ensureLayout(for: container)
+        needsDisplay = true
+    }
+
     override func resetCursorRects() {
         super.resetCursorRects()
         addCursorRect(visibleRect, cursor: .iBeam)
@@ -747,10 +816,9 @@ private struct ReplyTextView: NSViewRepresentable {
 
     @Binding var text: String
     var enabled: Bool
-    @Binding var measuredHeight: CGFloat
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, measuredHeight: $measuredHeight)
+        Coordinator(text: $text)
     }
 
     func makeNSView(context: Context) -> NSTextView {
@@ -771,12 +839,13 @@ private struct ReplyTextView: NSViewRepresentable {
         view.alignment = .left
         view.textContainerInset = NSSize(width: 0, height: 2)
         view.textContainer?.lineFragmentPadding = 0
-        view.textContainer?.widthTracksTextView = true
         view.isHorizontallyResizable = false
-        view.isVerticallyResizable = true
+        view.isVerticallyResizable = false
+        view.textContainer?.widthTracksTextView = false
         view.autoresizingMask = [.width]
         view.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         view.delegate = context.coordinator
+        view.textStorage?.addLayoutManager(context.coordinator.measuringLayout)
         view.string = text
         applyTypingStyle(view)
         view.setAccessibilityLabel("回复草稿，可编辑")
@@ -785,7 +854,6 @@ private struct ReplyTextView: NSViewRepresentable {
 
     func updateNSView(_ view: NSTextView, context: Context) {
         context.coordinator.text = $text
-        context.coordinator.measuredHeight = $measuredHeight
         view.isEditable = enabled
         if view.string != text {
             let selection = view.selectedRange()
@@ -796,7 +864,6 @@ private struct ReplyTextView: NSViewRepresentable {
                 view.setSelectedRange(NSRange(location: selection.location, length: min(selection.length, limit - selection.location)))
             }
         }
-        publishHeight(of: view)
     }
 
     private func applyTypingStyle(_ view: NSTextView) {
@@ -806,26 +873,29 @@ private struct ReplyTextView: NSViewRepresentable {
         view.typingAttributes = [.font: font, .foregroundColor: NSColor.labelColor]
     }
 
-    private func publishHeight(of view: NSTextView) {
-        guard let container = view.textContainer, let layout = view.layoutManager else { return }
-        let width = max(view.bounds.width, 240)
-        container.containerSize = NSSize(width: max(40, width - view.textContainerInset.width * 2), height: CGFloat.greatestFiniteMagnitude)
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView view: NSTextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0,
+              let container = context.coordinator.measuringLayout.textContainers.first else { return nil }
+        let layout = context.coordinator.measuringLayout
+        let insets = view.textContainerInset
+        container.containerSize = NSSize(width: max(1, width - 2 * insets.width), height: CGFloat.greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
-        let used = layout.usedRect(for: container)
-        let height = max(88, ceil(used.height + view.textContainerInset.height * 2 + 12))
-        let binding = $measuredHeight
-        guard abs(height - binding.wrappedValue) > 1 else { return }
-        DispatchQueue.main.async {
-            if abs(height - binding.wrappedValue) > 1 { binding.wrappedValue = height }
-        }
+        let textHeight = max(layout.usedRect(for: container).maxY, layout.extraLineFragmentRect.maxY)
+        let minimumHeight = 3 * layout.defaultLineHeight(for: Self.bodyFont)
+        return CGSize(width: width, height: ceil(max(minimumHeight, textHeight) + 2 * insets.height))
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
-        var measuredHeight: Binding<CGFloat>
-        init(text: Binding<String>, measuredHeight: Binding<CGFloat>) {
+        // SwiftUI probes several widths. Measure the same text without reflowing the editor onscreen.
+        let measuringLayout = NSLayoutManager()
+
+        init(text: Binding<String>) {
             self.text = text
-            self.measuredHeight = measuredHeight
+            super.init()
+            let container = NSTextContainer(size: .zero)
+            container.lineFragmentPadding = 0
+            measuringLayout.addTextContainer(container)
         }
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? NSTextView else { return }

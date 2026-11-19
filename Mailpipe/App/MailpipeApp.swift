@@ -100,8 +100,8 @@ struct MailpipeApp: App {
             }
         }
         .windowResizability(.contentSize)
-        .defaultSize(width: pending.onboarding.completed ? 700 : 480,
-                     height: pending.onboarding.completed ? 420 : 440)
+        .defaultSize(width: pending.onboarding.completed ? 900 : 480,
+                     height: pending.onboarding.completed ? 580 : 440)
         .commands {
             CommandGroup(after: .newItem) {
                 WorkbenchCommand(model: pending)
@@ -142,7 +142,7 @@ private struct InitialSetupSettings: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("先连接你的 Agent，再选择要交给它起草回复的来信。")
-            if model.settings.permission != nil || model.settings.suggestionsOnly == true {
+            if model.settings.permission != nil {
                 // Older versions could leave an active grant alongside an unfinished setup draft.
                 if !model.settings.paused { Button("暂停处理", action: model.togglePause) }
                 Button("撤销已有来信处理授权", role: .destructive, action: model.revoke)
@@ -167,22 +167,16 @@ struct MailpipeSettings: View {
                     Text("草稿保存在这台 Mac 上。从菜单栏打开工作台，改好回复后由你在 Apple Mail 发送。")
                         .foregroundStyle(.secondary)
                 }
-                configurationFooter
+                configurationFooter()
             }.formStyle(.grouped).tabItem { Label("通用", systemImage: "gearshape") }
             Form {
                 Section("来信处理") {
-                    Picker("来信来源", selection: Binding(get: { model.onboarding.isSuggestionsOnly }, set: { model.onboarding.suggestionsOnly = $0; model.saveOnboarding() })) {
-                        Text("自动接收新邮件").tag(false)
-                        Text("手动粘贴").tag(true)
-                    }
-                    if !model.onboarding.isSuggestionsOnly {
-                        Text("Apple Mail 所有账户的新来信都在范围内。填写主题后，只把主题完全匹配的来信交给 Agent 起草。").foregroundStyle(.secondary)
-                        TextField("限定邮件主题（可选）", text: $model.onboarding.exactSubject)
-                        Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings)
-                        Toggle("我已在 Mail 中启用扩展", isOn: $model.onboarding.extensionAcknowledged)
-                    } else { Text("在工作台粘贴一封来信，核对内容和 Agent 后提交。手动粘贴无需读取 Apple Mail。") }
+                    Text("授权后，\(selectedToolName) 会用 Apple Mail 所有账户的新来信主题和正文起草回复。填写主题后，仅处理主题完全匹配的新来信。").foregroundStyle(.secondary)
+                    TextField("限定邮件主题（可选）", text: $model.onboarding.exactSubject)
+                    Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings)
+                    Toggle("我已在 Mail 中启用扩展", isOn: $model.onboarding.extensionAcknowledged)
                 }
-                configurationFooter
+                configurationFooter(confirmsScope: true)
             }.formStyle(.grouped).tabItem { Label("来信处理", systemImage: "envelope") }
             Form {
                 Section("起草回复的 Agent") {
@@ -203,7 +197,7 @@ struct MailpipeSettings: View {
                         Button("确认并测试连接") { model.resetOnboardingTest(); model.testOnboarding() }.disabled(model.onboarding.executable.isEmpty)
                     }
                 }
-                configurationFooter
+                configurationFooter()
                 Section {
                     DisclosureGroup("高级诊断") {
                         Button("重新查找 Agent", action: model.rediscoverTools)
@@ -235,11 +229,13 @@ struct MailpipeSettings: View {
             .onChange(of: model.onboarding) { _ in model.saveOnboarding() }
     }
     private var selectedToolName: String { model.installations.first { $0.executable.path == model.onboarding.executable }?.kind.displayName ?? "所选 Agent" }
-    private var configurationFooter: some View {
+    private func configurationFooter(confirmsScope: Bool = false) -> some View {
         Section {
             if let issue = model.onboardingIssue { Text(issue).foregroundStyle(.secondary) }
-            Button("保存配置", action: model.applyConfiguration)
-                .disabled(model.onboardingBusy || !model.onboardingTestPassed || (!model.onboarding.isSuggestionsOnly && (!model.onboarding.extensionAcknowledged || !model.hasSharedInbox)))
+            if confirmsScope || !model.needsPermissionRecovery {
+                Button(model.needsPermissionRecovery ? "授权 Agent 处理新来信" : "保存配置", action: model.applyConfiguration)
+                    .disabled(model.onboardingBusy || !model.onboardingTestPassed || !model.onboarding.extensionAcknowledged || !model.hasSharedInbox)
+            }
         }
     }
 }
