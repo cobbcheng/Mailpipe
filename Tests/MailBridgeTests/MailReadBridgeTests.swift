@@ -10,7 +10,61 @@ private struct FixedReadResult: ProcessRunning {
     func run(_ invocation: ProcessInvocation) async throws -> ProcessOutput { output }
 }
 
+private actor HeldReadResult: ProcessRunning {
+    private(set) var starts = 0
+    let started = XCTestExpectation(description: "First fake process started")
+    private var release: CheckedContinuation<Void, Never>?
+
+    func run(_ invocation: ProcessInvocation) async throws -> ProcessOutput {
+        starts += 1
+        if starts == 1 {
+            await withCheckedContinuation { continuation in
+                release = continuation
+                started.fulfill()
+            }
+        }
+        return ProcessOutput(stdout: try PropertyListEncoder().encode(MailReadResponse.inboxes([])))
+    }
+
+    func finishFirstRead() { release?.resume(); release = nil }
+}
+
 final class MailReadBridgeTests: XCTestCase {
+    @MainActor func testRevokingWhileQueuedPreventsSourceAndMembershipProcessStarts() async throws {
+        let runner = HeldReadResult()
+        let bridge = MailReadBridge(executable: URL(fileURLWithPath: "/unused-test-helper"), runner: runner)
+        let inProgress = Task { try await bridge.inboxes() }
+        let status = await XCTWaiter.fulfillment(of: [runner.started], timeout: 3)
+        XCTAssertEqual(status, .completed)
+        @MainActor final class TestGrant { var authorized = true }
+        let grant = TestGrant()
+        let check: @MainActor @Sendable () throws -> Void = {
+            guard grant.authorized else { throw MailpipeError.routeNotAllowed }
+        }
+        let source = Task { try await bridge.resolve(accountID: "sample", mailboxName: "INBOX",
+            messageID: "sample@example.com", subject: "Synthetic", preflight: check) }
+        let membership = Task { try await bridge.isInAuthorizedInbox(accountID: "sample", mailboxName: "INBOX",
+            messageID: "sample@example.com", subject: "Synthetic", preflight: check) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while await bridge.queuedReadCount != 2 {
+            guard ContinuousClock.now < deadline else {
+                await runner.finishFirstRead()
+                XCTFail("Both reads must be waiting when authorization is revoked")
+                return
+            }
+            await Task.yield()
+        }
+        grant.authorized = false
+        await runner.finishFirstRead()
+        _ = try await inProgress.value
+        do { _ = try await source.value; XCTFail("Revoked source read was accepted") }
+        catch MailpipeError.routeNotAllowed {}
+        do { _ = try await membership.value; XCTFail("Revoked membership read was accepted") }
+        catch MailpipeError.routeNotAllowed {}
+        let starts = await runner.starts
+        XCTAssertEqual(starts, 1)
+    }
+
     func testHelperPreservesUnknownMembershipAndTypedFailures() async throws {
         let fake = URL(fileURLWithPath: "/unused-test-helper")
         func bridge(_ result: MailReadResponse) throws -> MailReadBridge {
@@ -18,7 +72,7 @@ final class MailReadBridgeTests: XCTestCase {
                 stdout: try PropertyListEncoder().encode(result))))
         }
         let unknown = try await bridge(.membership(nil)).isInAuthorizedInbox(
-            accountID: "sample", mailboxName: "INBOX", messageID: "sample@example.com", subject: "Synthetic")
+            accountID: "sample", mailboxName: "INBOX", messageID: "sample@example.com", subject: "Synthetic", preflight: {})
         XCTAssertNil(unknown)
         do {
             _ = try await bridge(.error(.automation(-1743))).inboxes()
@@ -26,7 +80,7 @@ final class MailReadBridgeTests: XCTestCase {
         } catch IdentityQueryError.automation(-1743) {}
         do {
             _ = try await bridge(.messageTooLarge).resolve(accountID: "sample", mailboxName: "INBOX",
-                messageID: "sample@example.com", subject: "Synthetic")
+                messageID: "sample@example.com", subject: "Synthetic", preflight: {})
             XCTFail("An oversized source was accepted")
         } catch MailBodyRejection.messageTooLarge {}
         let malformed = MailReadBridge(executable: fake, runner: FixedReadResult(output: ProcessOutput(
@@ -70,7 +124,7 @@ final class MailReadBridgeTests: XCTestCase {
         let bridge = MailReadBridge(executable: helper)
         func lookup(_ subject: String) async throws -> String? {
             try await bridge.resolve(accountID: "sample", mailboxName: "INBOX", messageID: "sample@example.com",
-                                     subject: subject, mailboxPath: ["INBOX"])?.source
+                                     subject: subject, mailboxPath: ["INBOX"], preflight: {})?.source
         }
         let first = Task { try await lookup("synthetic one") }
         let clock = ContinuousClock()

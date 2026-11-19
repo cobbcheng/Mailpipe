@@ -45,19 +45,23 @@ public actor MailReadBridge {
         self.runner = runner
     }
 
+    var queuedReadCount: Int { waiters.count }
+
     public func resolve(accountID: String, mailboxName: String, messageID: String, subject: String,
-                        mailboxPath: [String]? = nil) async throws -> AppleMailReplyIdentity.Match? {
+                        mailboxPath: [String]? = nil,
+                        preflight: @escaping @MainActor @Sendable () throws -> Void) async throws -> AppleMailReplyIdentity.Match? {
         let query = MailReadQuery(accountID: accountID, mailboxName: mailboxName, messageID: messageID,
                                   subject: subject, mailboxPath: mailboxPath)
-        guard case let .match(match) = try await call(.resolve(query)) else { throw IdentityQueryError.invalidResult }
+        guard case let .match(match) = try await call(.resolve(query), preflight: preflight) else { throw IdentityQueryError.invalidResult }
         return match
     }
 
     public func isInAuthorizedInbox(accountID: String, mailboxName: String, messageID: String, subject: String,
-                                    mailboxPath: [String]? = nil) async throws -> Bool? {
+                                    mailboxPath: [String]? = nil,
+                                    preflight: @escaping @MainActor @Sendable () throws -> Void) async throws -> Bool? {
         let query = MailReadQuery(accountID: accountID, mailboxName: mailboxName, messageID: messageID,
                                   subject: subject, mailboxPath: mailboxPath)
-        guard case let .membership(included) = try await call(.membership(query)) else { throw IdentityQueryError.invalidResult }
+        guard case let .membership(included) = try await call(.membership(query), preflight: preflight) else { throw IdentityQueryError.invalidResult }
         return included
     }
 
@@ -89,7 +93,8 @@ public actor MailReadBridge {
         else { waiters.removeFirst().continuation.resume() }
     }
 
-    private func call(_ request: MailReadRequest) async throws -> MailReadResponse {
+    private func call(_ request: MailReadRequest,
+                      preflight: (@MainActor @Sendable () throws -> Void)? = nil) async throws -> MailReadResponse {
         try await acquire()
         defer { release() }
         try Task.checkCancellation()
@@ -100,6 +105,9 @@ public actor MailReadBridge {
                                            workingDirectory: URL(fileURLWithPath: "/", isDirectory: true),
                                            environment: ProbeEnvironment.minimal(), timeout: 35,
                                            outputLimit: Self.responseLimit)
+        // A read could wait behind another helper while the user changes account permissions.
+        if let preflight { try await preflight() }
+        try Task.checkCancellation()
         let output: ProcessOutput
         do { output = try await runner.run(invocation) }
         catch {

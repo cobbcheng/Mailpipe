@@ -220,6 +220,11 @@ public final class PipelineStore {
         }
     }
     public func settings() throws -> PipelineSettings { try values(PipelineSettings.self, table: "metadata", id: "settings").first ?? PipelineSettings() }
+    public func hasCurrentMailReadAuthorization(_ expected: PipelineSettings) throws -> Bool {
+        let current = try settings()
+        return current.revision == expected.revision && current.paused == expected.paused &&
+            current.permission == expected.permission && current.authorizedScopes == expected.authorizedScopes
+    }
     public func saveSettings(_ value: PipelineSettings) throws { try put(value, id: "settings", table: "metadata") }
     public func onboarding() throws -> OnboardingDraft {
         try values(OnboardingDraft.self, table: "metadata", id: "onboarding").first ?? OnboardingDraft()

@@ -32,9 +32,7 @@ public final class ReplyPipeline {
     }
     private func mailReadStillAuthorized(_ settings: PipelineSettings) throws -> Bool {
         try Task.checkCancellation()
-        let current = try store.settings()
-        return current.revision == settings.revision && current.paused == settings.paused &&
-            current.permission == settings.permission && current.authorizedScopes == settings.authorizedScopes
+        return try store.hasCurrentMailReadAuthorization(settings)
     }
 
     /// Read-only enrichment for older rows, using the same source/account proof as dispatch.

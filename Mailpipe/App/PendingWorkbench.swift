@@ -24,6 +24,7 @@ final class PendingModel: ObservableObject {
     var offeredOnboarding = false
     private var onboardingSession: OnboardingSession?
     private var onboardingTask: Task<Void, Never>?
+    private var configurationSave: Task<Void, Never>?
     private var pipeline: ReplyPipeline?
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
@@ -174,9 +175,14 @@ final class PendingModel: ObservableObject {
             }
             let store = try PipelineStore(directory: root)
             pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: inboxURL), resolve: { item, scope in
-                guard let messageID = item.messageID,
-                      let match = try await MailReadBridge.shared.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                          messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath) else { return nil }
+                let expected = try store.settings()
+                guard let messageID = item.messageID, expected.permission?.id == item.permissionID,
+                      expected.authorizedScopes.contains(scope) else { return nil }
+                let match = try await MailReadBridge.shared.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
+                    messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath) {
+                    guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
+                }
+                guard let match else { return nil }
                 let source = Data(match.source.utf8)
                 if let evidence = item.sourceEvidence {
                     guard evidence.matches(source) else { return nil }
@@ -185,11 +191,16 @@ final class PendingModel: ObservableObject {
                 }
                 return VerifiedMail(accountID: match.accountID, localID: match.localID, source: source)
             }, inAuthorizedInbox: { messageID, subject, scopes in
+                let expected = try store.settings()
+                guard expected.permission != nil, !expected.paused, expected.authorizedScopes == scopes else { throw PipelineError.revoked }
                 var results: [Bool?] = []
                 for scope in scopes {
                     try Task.checkCancellation()
-                    results.append(try await MailReadBridge.shared.isInAuthorizedInbox(accountID: scope.accountID, mailboxName: scope.mailboxName,
-                        messageID: messageID, subject: subject, mailboxPath: scope.mailboxPath))
+                    let included = try await MailReadBridge.shared.isInAuthorizedInbox(accountID: scope.accountID, mailboxName: scope.mailboxName,
+                        messageID: messageID, subject: subject, mailboxPath: scope.mailboxPath) {
+                        guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
+                    }
+                    results.append(included)
                 }
                 return InboxMembershipDecision.combine(results)
             })
@@ -300,10 +311,11 @@ final class PendingModel: ObservableObject {
         guard !onboarding.completed else { return }
         onboardingIssue = nil; onboardingBusy = true
         let snapshot = onboarding
-        Task {
-            defer { onboardingBusy = false }
+        configurationSave = Task {
+            defer { onboardingBusy = false; configurationSave = nil }
             do {
                 let report = try await DeepSeekHarnessAdapter(executable: URL(fileURLWithPath: snapshot.executable), dialect: DeepSeekHarnessDialect()).inspect()
+                try Task.checkCancellation()
                 guard report.supportsHeadlessRun, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
                 if !snapshot.isSuggestionsOnly {
                     let current = try await discoverMailboxChoices()
@@ -311,6 +323,7 @@ final class PendingModel: ObservableObject {
                     mailboxChoices = current
                     guard !snapshot.selections.isEmpty, snapshot.selections.allSatisfy({ current.contains($0) }) else { throw IdentityQueryError.invalidScope }
                 }
+                try Task.checkCancellation()
                 worker?.cancel()
                 defer { start() }
                 try session.activate(scopes: snapshot.isSuggestionsOnly ? [] : snapshot.selections)
@@ -318,6 +331,8 @@ final class PendingModel: ObservableObject {
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
                 onboarding = try session.store.onboarding(); refresh()
                 onboardingIssue = active.suggestionsOnly == true ? "逐封建议已就绪；每封提交前需确认内容和工具。" : active.paused ? "配置已保存；仍保持暂停。" : "已授权，等待新邮件验证。"
+            } catch is CancellationError {
+                return
             } catch let error as IdentityQueryError {
                 switch error {
                 case .automation(-1743):
@@ -401,6 +416,7 @@ final class PendingModel: ObservableObject {
     }
     private func change(_ edit: (inout PipelineSettings) -> Void) throws {
         guard let pipeline else { throw PipelineError.storage }
+        configurationSave?.cancel()
         worker?.cancel()
         defer { start(); refresh() }
         try pipeline.updateSettings(edit)
