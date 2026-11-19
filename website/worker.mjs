@@ -15,13 +15,13 @@ function homepage() {
 <link rel="icon" href="/icon.png">
 <link rel="preload" href="/fonts/InterDisplay-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/Inter-Medium.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/site.css">
+<link rel="stylesheet" href="/site.css?v=26">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:title" content="${title}">
 <meta property="og:description" content="${description}">
 <meta property="og:url" content="${origin}/">
-<meta property="og:image" content="${origin}/detail.jpg">
+<meta property="og:image" content="${origin}/detail.jpg?v=26">
 <meta name="twitter:card" content="summary_large_image">
 </head>
 <body>
@@ -47,7 +47,7 @@ function homepage() {
       </div>
       <figure class="showcase">
         <div class="app-window">
-          <img src="/detail.jpg" width="2120" height="1480" alt="示例来信邀请周四下午评审书封，下方的回复草稿写道会先确认日程，再回复具体时间。" fetchpriority="high">
+          <img src="/detail.jpg?v=26" width="2120" height="1480" alt="示例来信邀请周四下午评审书封，下方的回复草稿写道会先确认日程，再回复具体时间。" fetchpriority="high">
         </div>
       </figure>
     </div>
@@ -61,7 +61,7 @@ function homepage() {
           <p>从菜单栏打开一封来信，就能对照原文修改回复。补上只有你知道的细节，改成自己平常会说的话。</p>
         </div>
         <figure>
-          <img loading="lazy" src="/workbench.jpg" width="2120" height="1480" alt="工作台里的三封示例来信，分别讨论设计评审、展览手册和校对稿。">
+          <img loading="lazy" src="/workbench.jpg?v=26" width="2120" height="1480" alt="工作台里的三封示例来信，分别讨论设计评审、展览手册和校对稿。">
         </figure>
       </div>
     </div>
