@@ -43,7 +43,7 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
 <link rel="icon" href="/icon.png">
 <link rel="preload" href="/fonts/InterDisplay-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/Inter-Medium.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/site.css?v=${release.build}-agents">
+<link rel="stylesheet" href="/site.css?v=${release.build}-picker">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="${({en:"en_US",es:"es_ES","zh-CN":"zh_CN"})[language]}">
 <meta property="og:site_name" content="Mailpipe">

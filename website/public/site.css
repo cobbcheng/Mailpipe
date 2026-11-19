@@ -547,11 +547,12 @@ nav a:hover { color: var(--muted); }
 }
 
 .site-header select {
+  appearance: none;
   color: inherit;
-  background: white;
+  background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23202328' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 12px center;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px;
+  padding: 6px 32px 6px 6px;
   font: inherit;
 }
 @media (max-width: 600px) {
