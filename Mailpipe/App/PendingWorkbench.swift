@@ -603,7 +603,7 @@ private struct WorkbenchMessageRow: View {
                 Text(sender).font(.callout).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
                 Text(date, format: Calendar.autoupdatingCurrent.isDateInToday(date)
-                     ? .dateTime.hour().minute().second()
+                     ? .dateTime.hour().minute()
                      : .dateTime.month(.twoDigits).day(.twoDigits))
                     .font(.caption).monospacedDigit().fixedSize()
             }
