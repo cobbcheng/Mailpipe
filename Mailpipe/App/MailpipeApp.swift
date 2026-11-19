@@ -42,14 +42,56 @@ enum MailpipeEntryPoint {
     }
 }
 
+@MainActor
+private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate {
+    private enum Request { case launch, reopen }
+    private var present: ((Request) -> Void)?
+    private var pending: Request?
+
+    func connect(_ action: OpenWindowAction, model: PendingModel) {
+        present = { request in
+            if request == .reopen || model.onboarding.completed || ProcessInfo.processInfo.arguments.contains("--open-workbench") {
+                action(id: "workbench")
+            } else if !model.offeredOnboarding {
+                model.offeredOnboarding = true
+                action(id: "onboarding")
+            }
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        if let pending {
+            self.pending = nil
+            present?(pending)
+        }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        guard event?.paramDescriptor(forKeyword: keyAELaunchedAsLogInItem) == nil,
+              event?.paramDescriptor(forKeyword: keyAELaunchedAsServiceItem) == nil else { return }
+        if pending == nil { handle(.launch) }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        handle(.reopen)
+        return false
+    }
+
+    private func handle(_ request: Request) {
+        // AppKit can deliver the event before the menu bar label supplies SwiftUI's window action.
+        if let present { present(request) }
+        else { pending = request }
+    }
+}
+
 struct MailpipeApp: App {
+    @NSApplicationDelegateAdaptor(MailpipeAppDelegate.self) private var appDelegate
     @StateObject private var model = WorkbenchModel()
     @StateObject private var pending = PendingModel()
     var body: some Scene {
         MenuBarExtra {
             PendingMenu(model: pending)
         } label: {
-            LaunchStatusIcon(model: pending)
+            LaunchStatusIcon(model: pending, appDelegate: appDelegate)
         }.menuBarExtraStyle(.window)
         Window("Mailpipe", id: "workbench") {
             PendingWorkbench(model: pending).frame(minWidth: 660, minHeight: 380)
@@ -68,17 +110,11 @@ struct MailpipeApp: App {
 
 private struct LaunchStatusIcon: View {
     @ObservedObject var model: PendingModel
+    let appDelegate: MailpipeAppDelegate
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Image("MenuBarIcon").accessibilityLabel("Mailpipe")
-            .task {
-                let args = ProcessInfo.processInfo.arguments
-                if args.contains("--open-workbench") {
-                    openWindow(id: "workbench")
-                } else if !model.onboarding.completed && !model.offeredOnboarding {
-                    model.offeredOnboarding = true; openWindow(id: "onboarding")
-                }
-            }
+            .onAppear { appDelegate.connect(openWindow, model: model) }
     }
 }
 
