@@ -534,8 +534,6 @@ private struct DraftDetail: View {
     @State private var showExplanation = false
     @State private var confirmRegeneration = false
     @State private var confirmCopy = false
-    @State private var showCompose = false
-    @State private var composeRequest: MailComposeRequest?
     @State private var editorHeight: CGFloat = 96
     @State private var locateRequest = 0
     @State private var focusRequest = 0
@@ -605,9 +603,6 @@ private struct DraftDetail: View {
             Button("重新生成") { model.regenerate(item.id) }
         } message: {
             Text("新稿生成成功后会覆盖当前回复。最多两次模型调用，会消耗工具额度。")
-        }
-        .sheet(isPresented: $showCompose) {
-            if let request = composeRequest { composePreview(request) }
         }
     }
     private var originalMessageURL: URL? {
@@ -720,39 +715,13 @@ private struct DraftDetail: View {
                 .allowsHitTesting(false)
         }
     }
-    private func composePreview(_ request: MailComposeRequest) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("在 Mail 中打开撰写窗口").font(.title2.weight(.semibold))
-            Text("发件账户：\(request.accountName)")
-            Text("发件人：\(request.sender)")
-            Text("收件人：\(request.recipients.joined(separator: "、"))")
-                .textSelection(.enabled)
-            Text("主题：\(request.subject)").textSelection(.enabled)
-            ScrollView { Text(request.body).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
-                .frame(minHeight: 140, maxHeight: 260).padding(12)
-                .overlay { RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)) }
-            if DraftContentWarnings(body: request.body).requiresCopyConfirmation {
-                Text("草稿含待补充或待核实内容，请在发送前检查。").font(.callout).foregroundStyle(.orange)
-            }
-            Text("只新建撰写窗口，不会发送。使用原邮件 Reply-To（如有）或 From；不会自动添加其他收件人。请在 Mail 中最终核对并自行发送。")
-                .font(.callout).foregroundStyle(.secondary)
-            HStack {
-                Button("取消") { showCompose = false }.disabled(model.composeBusy)
-                Spacer()
-                if model.composeBusy { ProgressView().controlSize(.small) }
-                Button("打开撰写窗口") {
-                    Task { _ = await model.openCompose(request); showCompose = false }
-                }.buttonStyle(.borderedProminent).disabled(model.composeBusy)
-            }
-        }.padding(24).frame(width: 560).interactiveDismissDisabled(model.composeBusy)
-    }
     private var actions: some View {
         HStack(spacing: 12) {
             Button {
                 Task {
-                    if let request = await model.prepareCompose(item) { composeRequest = request; showCompose = true }
+                    if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
                 }
-            } label: { Label(model.composeBusy ? "正在核对…" : (item.composeHandoff == nil ? "在 Mail 中打开" : "已尝试交给 Mail"), systemImage: "envelope") }
+            } label: { Label(model.composeBusy ? "正在核对…" : (item.composeHandoff == nil ? "去发送" : "已尝试交给 Mail"), systemImage: "envelope") }
                 .buttonStyle(.borderedProminent)
                 .disabled(model.composeBusy || item.composeHandoff != nil || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button {
@@ -781,7 +750,7 @@ private struct DraftDetail: View {
             if let run = item.runs.last {
                 Text("本次经 \(run.destination.harness.displayName) 处理。邮件会到达该工具配置的模型。Mailpipe 不设服务器。")
             } else { Text("尚未调用 AI 工具。") }
-            Text("在 Mail 中打开会先核对原邮件及收件地址，再由你确认创建撰写窗口；不会发送。复制回复仅复制当前正文。")
+            Text("点击“去发送”会打开 Apple Mail 撰写窗口，由你检查并发送。复制回复仅复制当前正文。")
             if (item.regenerationCount ?? 0) >= 3 { Text("已达到本封重新生成次数上限，当前回复仍可编辑。") }
             Text("状态提示按占位符和少量待核实表述识别，不代表事实核验。")
                 .font(.caption).foregroundStyle(.secondary)
