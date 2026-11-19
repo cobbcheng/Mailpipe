@@ -524,18 +524,20 @@ private struct WorkbenchMessageRow: View {
     let sender: String
     let date: Date
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(subject.isEmpty ? "（无主题）" : subject).lineLimit(1).truncationMode(.tail)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(sender).font(.callout).lineLimit(1).truncationMode(.middle)
+                Text(sender).font(.subheadline).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
                 Text(date, format: Calendar.autoupdatingCurrent.isDateInToday(date)
                      ? .dateTime.hour().minute()
                      : .dateTime.month(.twoDigits).day(.twoDigits))
-                    .font(.caption).monospacedDigit().fixedSize()
+                    .font(.caption2).monospacedDigit().fixedSize()
             }
             .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
         .accessibilityElement(children: .combine)
     }
 }
