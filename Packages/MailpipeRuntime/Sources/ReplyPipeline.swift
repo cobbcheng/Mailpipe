@@ -18,6 +18,7 @@ public func makeReplyModel(for installation: HarnessInstallation) throws -> any 
     switch installation.kind {
     case .deepseek: return DeepSeekHarnessAdapter(executable: installation.executable, dialect: DeepSeekHarnessDialect())
     case .claude: return ClaudeCodeHarnessAdapter(executable: installation.executable, dialect: ClaudeCodeDialect())
+    case .opencode: return OpenCodeHarnessAdapter(executable: installation.executable, dialect: OpenCodeDialect(model: installation.openCodeModel))
     case .codex: throw MailpipeError.unsafeCapability
     }
 }
@@ -155,7 +156,8 @@ public final class ReplyPipeline {
     public func updateSettings(_ change: (inout PipelineSettings) -> Void) throws {
         let previous = try store.settings()
         var settings = previous; change(&settings)
-        let changedTool = settings.harnessKind != previous.harnessKind || settings.executable != previous.executable
+        let changedTool = settings.harnessKind != previous.harnessKind || settings.executable != previous.executable ||
+            settings.openCodeModel != previous.openCodeModel
         if changedTool, previous.executable != nil, let oldGrant = previous.permission, oldGrant.id == settings.permission?.id {
             throw PipelineError.revoked
         }
@@ -421,7 +423,13 @@ public final class ReplyPipeline {
         }
         var request = try ReplyDraftRequest(message: item.input)
         request.approvedPullRequest = item.approvedPullRequest
-        let installation = HarnessInstallation(kind: settings.harnessKind, executable: URL(fileURLWithPath: executable))
+        if settings.harnessKind == .opencode && !item.syntheticAuthorized {
+            guard let model = settings.openCodeModel, OpenCodeDialect.validModelReference(model) else {
+                item.state = .needsReview; item.error = MailpipeError.routeNotAllowed.rawValue; try store.save(item); return
+            }
+        }
+        let installation = HarnessInstallation(kind: settings.harnessKind, executable: URL(fileURLWithPath: executable),
+                                               openCodeModel: settings.openCodeModel)
         try await generateDraft(id: id, request: request, installation: installation)
     }
     private func authorize(_ id: String, revision: UUID) throws {
@@ -446,6 +454,12 @@ public final class ReplyPipeline {
             }
             guard var current = try store.record(id) else { throw PipelineError.storage }
             let last = current.runs.count - 1
+            if installation.kind == .opencode {
+                guard let actual = output.actualModel, OpenCodeDialect.validModelReference(actual),
+                      installation.openCodeModel == nil || installation.openCodeModel == actual else {
+                    throw MailpipeError.invalidOutput
+                }
+            }
             let fixedRoute = installation.kind == .deepseek
             if fixedRoute || output.actualModel != nil {
                 current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft,

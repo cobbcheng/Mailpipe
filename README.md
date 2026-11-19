@@ -4,7 +4,7 @@
 
 继续用 Apple Mail 收信。你授权的 Agent 起草回复，你在 Mac 上改稿，再去 Apple Mail 发送。
 
-Mailpipe 把来信和草稿保存在你的 Mac 上。只有你授权的来信内容才会交给所选 Agent 起草，邮件不经 Mailpipe 服务器。本分支支持 DeepSeek Harness 与 Claude Code。Claude Code 使用你在本机 CLI 配置的模型服务。
+Mailpipe 把来信和草稿保存在你的 Mac 上。只有你授权的来信内容才会交给所选 Agent 起草，邮件不经 Mailpipe 服务器。本分支支持 DeepSeek Harness、Claude Code 和 OpenCode。Claude Code 使用本机 CLI 的默认模型。OpenCode 使用你在连接测试后确认的模型。
 
 **[下载 Mac 版](https://mailpipeai.com/)**
 
@@ -15,7 +15,7 @@ Mailpipe 把来信和草稿保存在你的 Mac 上。只有你授权的来信内
 | 用户 | 使用 Apple Mail，且已安装并登录 Harness 的 Mac 用户 |
 | 定位 | 用你已安装的 Agent 为 Apple Mail 来信起草回复，由你审阅和发送 |
 | P0 | L0、L1、L2、单封数据去向标签、要不要回复的分拣 |
-| 模型接入 | DeepSeek Harness 与 Claude Code 可起草回复。Codex CLI 仅做工具检测 |
+| 模型接入 | DeepSeek Harness、Claude Code 和 OpenCode 可起草回复。Codex CLI 仅做工具检测 |
 | 交互 | 菜单栏待处理、独立工作台、系统通知；不自动打开撰写窗口 |
 | 整理 | MailKit 采集；Apple Events 定位、执行与核验 |
 | 数据去向 | 每封标明 Harness 与模型厂商；未知显示未知 |
@@ -30,12 +30,12 @@ Mail 草稿邮箱要等实机验证，未通过前不写入。
 发送只打开草稿，不调用 send。
 P1 历史搜索是单独授权的只读能力，方案尚未实机验证。
 P1 的增删改只产生意图，由 Mailpipe 经 Apple Events 执行。
-入站的 Agent 生成回复草稿。DeepSeek Harness 可只读核对 GitHub PR 变更。Claude Code 仅依据来信起草。
+入站的 Agent 生成回复草稿。DeepSeek Harness 可只读核对 GitHub PR 变更。Claude Code 和 OpenCode 仅依据来信起草。
 用户主动的查找不在这条限制里，也不能由来信触发。
 
 ## 当前使用入口
 
-首次设置时，选择本机已配置的 Claude Code 或 DeepSeek Harness。
+首次设置时，选择本机已配置的 DeepSeek Harness、Claude Code 或 OpenCode。
 连接测试会用一封示例邮件调用一次模型。
 中途关闭后，再次打开可继续原步骤。
 

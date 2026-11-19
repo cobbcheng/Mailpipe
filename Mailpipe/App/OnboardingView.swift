@@ -6,7 +6,7 @@ extension HarnessKind {
     var modelServiceDescription: String {
         switch self {
         case .deepseek: "DeepSeek 云端模型"
-        case .claude: "Claude Code 配置的模型服务"
+        case .claude, .opencode: "\(displayName) 配置的模型服务"
         case .codex: "Codex CLI 配置的模型服务"
         }
     }
@@ -27,6 +27,21 @@ struct ReplyToolPicker: View {
             }
         }
         .disabled(model.onboardingBusy)
+    }
+}
+
+struct OpenCodeModelField: View {
+    @ObservedObject var model: PendingModel
+
+    var body: some View {
+        if model.onboarding.harnessKind == .opencode {
+            TextField("供应方/模型（可选）", text: Binding(get: { model.onboarding.openCodeModel ?? "" },
+                                                    set: { model.onboarding.openCodeModel = $0 }))
+                .textFieldStyle(.roundedBorder)
+                .disabled(model.onboardingBusy)
+            Text("可从 opencode models 选择。留空时，示例邮件使用隔离环境的默认模型。授权后，新来信固定使用试写成功的模型。")
+                .font(.callout).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -131,6 +146,7 @@ struct OnboardingView: View {
         if model.installations.count > 1 || (tool == nil && !model.installations.isEmpty) {
             ReplyToolPicker(model: model)
         }
+        OpenCodeModelField(model: model)
         if model.onboardingBusy {
             ProgressView("正在用示例邮件测试连接…").controlSize(.small)
             Button("取消测试", action: model.cancelOnboardingTest)
@@ -143,7 +159,7 @@ struct OnboardingView: View {
             .modifier(WorkbenchActionStyle())
             .help(tool.executable.path)
         } else if model.installations.isEmpty {
-            Text("未找到可用的 Agent。请先安装并配置 Claude Code 或 DeepSeek Harness。")
+            Text("未找到可用的 Agent。请先安装并配置 OpenCode、Claude Code 或 DeepSeek Harness。")
             Button("重新查找 Agent", action: model.rediscoverTools)
                 .modifier(WorkbenchActionStyle())
         }

@@ -26,7 +26,8 @@ final class PendingModel: ObservableObject {
     private(set) var hasSharedInbox = false
     var needsPermissionRecovery: Bool { onboarding.completed && settings.permission?.delivery != .mailKit }
     var requiresToolConsent: Bool {
-        onboarding.completed && (onboarding.harnessKind != settings.harnessKind || onboarding.executable != settings.executable)
+        onboarding.completed && (onboarding.harnessKind != settings.harnessKind || onboarding.executable != settings.executable ||
+            (onboarding.harnessKind == .opencode && (onboardingResult?.runs.last?.destination.model ?? onboarding.requestedModel) != settings.openCodeModel))
     }
     var selectedTool: HarnessInstallation? {
         installations.first { $0.kind == onboarding.harnessKind && $0.executable.path == onboarding.executable }
@@ -303,6 +304,7 @@ final class PendingModel: ObservableObject {
 
     var onboardingTestPassed: Bool {
         selectedTool != nil && onboarding.testedExecutable == onboarding.executable &&
+            onboarding.testedOpenCodeModel == onboarding.requestedModel &&
             onboardingResult?.runs.last?.destination.harness == onboarding.harnessKind &&
             OnboardingSession.testPassed(onboardingResult, level: onboarding.level)
     }
@@ -630,8 +632,8 @@ private struct DraftDetail: View {
         } message: {
             if model.settings.harnessKind == .deepseek, let link = ReplyDraftRequest.linkedPullRequest(in: item.input.body) {
                 Text("继续即允许 Mailpipe 使用你的 GitHub 账户读取 \(link) 的变更，交给 DeepSeek Harness 核对并起草。新草稿会替换当前回复。")
-            } else if model.settings.harnessKind == .claude, ReplyDraftRequest.linkedPullRequest(in: item.input.body) != nil {
-                Text("Claude Code 会仅依据邮件内容重新起草，无法核对 PR 的代码变更。新草稿会替换当前回复。")
+            } else if ReplyDraftRequest.linkedPullRequest(in: item.input.body) != nil {
+                Text("\(model.settings.harnessKind.displayName) 会仅依据邮件内容重新起草，无法核对 PR 的代码变更。新草稿会替换当前回复。")
             } else {
                 Text("Agent 会再次调用模型，消耗你的额度。新草稿生成后会替换当前回复。")
             }

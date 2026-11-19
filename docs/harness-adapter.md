@@ -1,7 +1,8 @@
 # Harness Adapter 契约
 
-普通草稿支持 Claude Code 与 DeepSeek Harness。
+普通草稿支持 Claude Code、DeepSeek Harness 和 OpenCode。
 Codex CLI 仅提供安装与能力检查。
+OpenCode 的版本与实机范围见[菜单栏草稿验收](validation/2026-11-19-opencode-drafts.md)。
 Claude Code 的实测范围见[合成草稿验收](validation/2026-11-19-claude-code-drafts.md)。
 证据见 [DeepSeek 实测](validation/2026-11-16-deepseek-harness.md)。
 Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
@@ -29,7 +30,7 @@ DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
 
 Codex 目前只做发现、版本和参数检查。
 真实邮件调用尚未接入，也没有可用入口。
-DeepSeek 和 Claude 共用宿主的授权与持久化队列。
+三种回复工具共用宿主的授权与持久化队列。
 切换工具须试写并重新授权。旧授权不能转投新工具。
 
 Runner 使用独立进程组、非阻塞管道和单个工作线程。
@@ -49,7 +50,7 @@ stdout 与 stderr 总上限为 1 MiB。
 证据必须来自输入的 subject 或 body。
 错误展示只返回错误码，不展示原始输出。
 参数齐全只用于启动前检查，不构成安全认证。
-Claude 普通起草全程使用空工具集。
+Claude Code 和 OpenCode 普通起草均使用空工具集。
 下文第 8 节是已确认、尚未实现的工具边界。
 
 ## 1. 问题与接入选择
@@ -60,11 +61,17 @@ Claude 普通起草全程使用空工具集。
 | 本地 HTTP / Gateway | 可复用连接 | 鉴权、服务发现、权限隔离 | P1 验证 |
 | 直连模型 API | 可自建简单调用 | 引入凭据与计费管理 | 不采用 |
 
-回复入口为 `dsh` 和 `claude --print`。
+回复入口为 `dsh`、`claude --print` 和 `opencode run --standalone`。
 Claude 仅支持已验收的 CLI 2.1.296。
-模型与认证由 CLI 从用户配置加载。
+Claude 的模型与认证由 CLI 从用户配置加载。
 App 从成功回执记录模型名和 token。
 代理的模型名不足以确定供应方或实付费用。
+
+OpenCode 接受已验收的 CLI 2.3.0。
+连接时可填写 `opencode models` 列出的 `provider/model`。
+留空时，示例邮件使用隔离环境的默认模型。
+保存授权后，普通起草固定使用试写确认的模型。
+切换模型须重新试写并确认来信范围。
 
 ## 2. 能力探测与生命周期
 

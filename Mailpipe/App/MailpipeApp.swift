@@ -168,6 +168,9 @@ struct MailpipeSettings: View {
             Form {
                 Section("来信处理") {
                     Text("授权后，Mailpipe 会将 Apple Mail 所有账户的新来信主题和正文交给 \(model.onboarding.harnessKind.displayName)，由它发送至\(model.onboarding.harnessKind.modelServiceDescription)。填写主题后，仅处理主题完全匹配的新来信。").foregroundStyle(.secondary)
+                    if model.onboarding.harnessKind == .opencode, let modelID = model.onboardingResult?.runs.last?.destination.model {
+                        LabeledContent("授权的模型", value: modelID)
+                    }
                     TextField("限定邮件主题（可选）", text: $model.onboarding.exactSubject)
                     Button("打开 Mail 扩展设置", action: model.openMailAndExtensionSettings)
                     Toggle("我已在 Mail 中启用扩展", isOn: $model.onboarding.extensionAcknowledged)
@@ -177,6 +180,7 @@ struct MailpipeSettings: View {
             Form {
                 Section("起草回复的 Agent") {
                     ReplyToolPicker(model: model)
+                    OpenCodeModelField(model: model)
                     Text("连接测试会将一封示例邮件交给\(model.onboarding.harnessKind.modelServiceDescription)试写回复，会消耗额度。").foregroundStyle(.secondary)
                     if model.onboardingBusy {
                         ProgressView("正在连接…")

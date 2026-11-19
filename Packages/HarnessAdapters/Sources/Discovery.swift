@@ -4,8 +4,11 @@ import MailpipeCore
 public struct HarnessInstallation: Identifiable, Sendable, Equatable {
     public let kind: HarnessKind
     public let executable: URL
+    public let openCodeModel: String?
     public var id: String { "\(kind.rawValue):\(executable.path)" }
-    public init(kind: HarnessKind, executable: URL) { self.kind = kind; self.executable = executable }
+    public init(kind: HarnessKind, executable: URL, openCodeModel: String? = nil) {
+        self.kind = kind; self.executable = executable; self.openCodeModel = openCodeModel
+    }
 
     public func inspect() async throws -> CapabilityReport {
         switch kind {
@@ -13,6 +16,8 @@ public struct HarnessInstallation: Identifiable, Sendable, Equatable {
             try await DeepSeekHarnessAdapter(executable: executable, dialect: DeepSeekHarnessDialect()).inspect()
         case .claude:
             try await ClaudeCodeHarnessAdapter(executable: executable, dialect: ClaudeCodeDialect()).inspect()
+        case .opencode:
+            try await OpenCodeHarnessAdapter(executable: executable, dialect: OpenCodeDialect()).inspect()
         case .codex:
             try await CodexCLIAdapter(executable: executable, dialect: CodexCLIDialect()).inspect()
         }
@@ -28,8 +33,8 @@ public enum HarnessDiscovery {
     /// Retain the launcher the user chose across GUI PATH changes and CLI upgrades.
     public static func replyLaunchers(in installations: [HarnessInstallation], keeping executable: String?,
                                       kind: HarnessKind = .deepseek) -> [HarnessInstallation] {
-        let candidates = installations.filter { $0.kind == .deepseek || $0.kind == .claude }
-        guard kind != .codex, let executable, executable.hasPrefix("/") else { return candidates }
+        let candidates = installations.filter { $0.kind.supportsReplyDrafts }
+        guard kind.supportsReplyDrafts, let executable, executable.hasPrefix("/") else { return candidates }
         let saved = URL(fileURLWithPath: executable)
         let resolved = saved.resolvingSymlinksInPath()
         guard isExecutable(saved), saved.lastPathComponent == kind.rawValue ||
@@ -52,7 +57,8 @@ public enum HarnessDiscovery {
         ] + nodeBins
         var found: [HarnessInstallation] = [], seen: Set<String> = []
         for kind in HarnessKind.allCases {
-            for directory in directories {
+            let searchDirectories = kind == .opencode ? directories + [home.appendingPathComponent(".opencode/bin").path] : directories
+            for directory in searchDirectories {
                 let launchPath = URL(fileURLWithPath: directory).appendingPathComponent(kind.rawValue)
                 let resolved = launchPath.resolvingSymlinksInPath()
                 let file = kind == .codex ? resolved : launchPath

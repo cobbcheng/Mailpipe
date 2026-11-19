@@ -77,7 +77,7 @@ final class ClaudeCodeTests: XCTestCase {
             [initEvent, result.merging(["permission_denials": ["Read"]]) { $1 }],
             [initEvent, result.merging(["stop_reason": "max_tokens"]) { $1 }]
         ] {
-            XCTAssertThrowsError(try dialect.replyOutput(stream(events), task: step, inputCharacters: 0))
+            XCTAssertThrowsError(try dialect.replyOutput(stream(events), task: step, inputCharacters: 0, directory: FileManager.default.temporaryDirectory))
         }
         XCTAssertFalse(dialect.acceptsVersion("2.1.297 (Claude Code)"))
     }

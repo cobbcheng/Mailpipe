@@ -75,7 +75,7 @@ public protocol ReplyModelRunning: Sendable {
 public protocol ReplyHarnessDialect: HarnessDialect {
     func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                          executable: URL, environment: [String: String]) throws -> ProcessInvocation
-    func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int) throws -> ReplyModelOutput
+    func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int, directory: URL) throws -> ReplyModelOutput
 }
 
 extension CLIAdapter: ReplyModelRunning where Dialect: ReplyHarnessDialect {
@@ -105,7 +105,7 @@ extension CLIAdapter: ReplyModelRunning where Dialect: ReplyHarnessDialect {
             let result = try await runner.run(invocation)
             try Task.checkCancellation()
             guard result.exitCode == 0 else { throw classifyFailure(result.stderr + result.stdout) }
-            return try dialect.replyOutput(result.stdout, task: task, inputCharacters: String(decoding: invocation.stdin, as: UTF8.self).count)
+            return try dialect.replyOutput(result.stdout, task: task, inputCharacters: String(decoding: invocation.stdin, as: UTF8.self).count, directory: directory)
         }
     }
 }

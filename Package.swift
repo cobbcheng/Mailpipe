@@ -12,12 +12,12 @@ var packageTargets: [Target] = [
         .target(name: "MailpipeCharset", path: "Packages/MailpipeCharset", sources: ["src/mailpipe_iconv.c"], publicHeadersPath: "include",
                 linkerSettings: [.linkedLibrary("iconv", .when(platforms: [.macOS]))]),
         .target(name: "MailpipeCore", dependencies: ["MailpipeCharset"], path: "Packages/MailpipeCore/Sources"),
-        .target(name: "HarnessAdapters", dependencies: ["MailpipeCore"], path: "Packages/HarnessAdapters/Sources", resources: [.copy("Resources")]),
+        .target(name: "HarnessAdapters", dependencies: ["MailpipeCore"] + linuxSQLite, path: "Packages/HarnessAdapters/Sources", resources: [.copy("Resources")]),
         .target(name: "MailBridge", dependencies: ["MailpipeCore", "HarnessAdapters"], path: "Packages/MailBridge/Sources"),
         .target(name: "MailpipeRuntime", dependencies: ["MailpipeCore", "HarnessAdapters"] + linuxSQLite, path: "Packages/MailpipeRuntime/Sources"),
         .executableTarget(name: "MailpipeM0", dependencies: ["HarnessAdapters", "MailpipeRuntime", "MailBridge"], path: "Tools/MailpipeM0"),
         .testTarget(name: "MailpipeCoreTests", dependencies: ["MailpipeCore"], resources: [.copy("Fixtures")]),
-        .testTarget(name: "HarnessAdaptersTests", dependencies: ["HarnessAdapters", "MailpipeCore"]),
+        .testTarget(name: "HarnessAdaptersTests", dependencies: ["HarnessAdapters", "MailpipeCore"] + linuxSQLite),
         .testTarget(name: "MailpipeRuntimeTests", dependencies: ["MailpipeRuntime", "HarnessAdapters", "MailpipeCore"]),
         .testTarget(name: "MailBridgeTests", dependencies: ["MailBridge", "MailpipeCore", "HarnessAdapters"])
 ]

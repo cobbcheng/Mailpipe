@@ -189,6 +189,20 @@ final class AdapterTests: XCTestCase {
         XCTAssertEqual(choices.filter { $0.executable == launcher }.count, 1)
     }
 
+    func testOpenCodeDiscoveryWithoutShellPATHKeepsSelectedLauncher() throws {
+        let root = try TemporaryDirectory()
+        let bin = root.url.appendingPathComponent(".opencode/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let binary = try root.script("exit 1", name: "opencode-test")
+        let launcher = bin.appendingPathComponent("opencode")
+        try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: binary)
+        let found = HarnessDiscovery.find(path: "", home: root.url)
+        let candidates = HarnessDiscovery.replyLaunchers(in: found, keeping: launcher.path, kind: .opencode)
+        XCTAssertTrue(found.contains(HarnessInstallation(kind: .opencode, executable: launcher)))
+        XCTAssertEqual(candidates.first?.executable, launcher)
+        XCTAssertEqual(candidates.filter { $0.executable == launcher }.count, 1)
+    }
+
     func testDeepSeekSetupLauncherRespectsPATHAndRestoresSavedAlias() throws {
         let root = try TemporaryDirectory()
         let versions = root.url.appendingPathComponent(".nvm/versions/node")

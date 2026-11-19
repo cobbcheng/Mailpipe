@@ -166,7 +166,7 @@ extension DeepSeekHarnessDialect: ReplyHarnessDialect {
             stdin: stdin, workingDirectory: directory, environment: environment, timeout: 120)
     }
 
-    public func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int) throws -> ReplyModelOutput {
+    public func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int, directory: URL) throws -> ReplyModelOutput {
         let review: Bool
         switch task {
         case .draft(let request): review = ReplyDraftRequest.linkedPullRequest(in: request.message.body) != nil

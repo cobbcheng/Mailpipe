@@ -12,6 +12,7 @@ import Glibc
 import Musl
 #endif
 import MailpipeCore
+import HarnessAdapters
 
 public struct AccountScope: Codable, Hashable, Sendable, Identifiable {
     public let accountID: String
@@ -41,6 +42,7 @@ public struct PipelineSettings: Codable, Sendable {
         set { selectedHarness = newValue }
     }
     public var executable: String?
+    public var openCodeModel: String?
     public var level: ServiceLevel = .default
     var suggestionsOnly: Bool? // Decode the old manual-only policy without granting capture.
     public var paused = false
@@ -261,18 +263,24 @@ public final class PipelineStore {
     public func saveOnboarding(_ draft: OnboardingDraft) throws { try put(draft, id: "onboarding", table: "metadata") }
     public func activateOnboarding(_ draft: OnboardingDraft) throws {
         guard draft.suggestionsOnly != true, draft.extensionAcknowledged else { throw MailpipeError.invalidInput }
+        if draft.harnessKind == .opencode {
+            guard let model = draft.requestedModel, OpenCodeDialect.validModelReference(model),
+                  draft.testedOpenCodeModel == model else { throw MailpipeError.invalidInput }
+        }
         try execute("BEGIN IMMEDIATE")
         do {
             var settings = try settings()
             var completed = draft; completed.completed = true
             let subject = draft.exactSubject.isEmpty ? nil : draft.exactSubject
             if let previous = settings.permission,
-               previous.exactSubject == subject, settings.harnessKind == draft.harnessKind, settings.executable == draft.executable {
+               previous.exactSubject == subject, settings.harnessKind == draft.harnessKind, settings.executable == draft.executable,
+               settings.openCodeModel == draft.requestedModel {
                 settings.permission = CapturePermission(renewing: previous)
             } else {
                 settings.scope = nil; settings.scopes = nil
                 settings.permission = CapturePermission(exactSubject: subject, delivery: .mailKit)
             }
+            settings.openCodeModel = draft.requestedModel
             settings.harnessKind = draft.harnessKind; settings.executable = draft.executable; settings.level = draft.level
             settings.revision = UUID() // Preserve existing pause; never resume implicitly.
             try saveSettings(settings); try saveOnboarding(completed)

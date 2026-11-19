@@ -22,6 +22,7 @@ struct MailpipeM0 {
                 let store = try PipelineStore(directory: root)
                 let session = try OnboardingSession(store: store)
                 var draft = OnboardingDraft(); draft.step = 2; draft.executable = tool.executable.path; draft.harnessKind = tool.kind
+                draft.openCodeModel = tool.openCodeModel
                 try session.save(draft)
                 _ = try session.beginTest(); try await session.testPipeline.pump()
                 guard let result = try session.testResult(), result.state == .draftReady,
@@ -34,7 +35,7 @@ struct MailpipeM0 {
                 let (tool, root) = try syntheticTarget(args)
                 let store = try PipelineStore(directory: root)
                 let pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")), resolve: { _, _ in nil })
-                try pipeline.updateSettings { $0.executable = tool.executable.path; $0.harnessKind = tool.kind }
+                try pipeline.updateSettings { $0.executable = tool.executable.path; $0.harnessKind = tool.kind; $0.openCodeModel = tool.openCodeModel }
                 _ = try pipeline.enqueueSynthetic()
                 print("PASS: synthetic input persisted; no model or Mail call; open the App with --pipeline-directory pointing to this directory to resume")
             case "inspect":
@@ -47,7 +48,7 @@ struct MailpipeM0 {
                 print("Headless flags: \(report.supportsHeadlessRun ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
                 print(report.realMailStatus)
             case nil, "--help", "-h":
-                print("mailpipe-m0 discover | inspect <dsh|claude|codex> </absolute/path>\nonboarding-probe [dsh|claude] </absolute/tool> </new/private/directory> tests one synthetic draft.\npipeline-seed [dsh|claude] </absolute/tool> </new/private/directory> persists one fixed synthetic input.")
+                print("mailpipe-m0 discover | inspect <dsh|claude|opencode|codex> </absolute/path>\nonboarding-probe [dsh|claude|opencode] </absolute/tool> </new/private/directory> [provider/model] tests one synthetic draft.\npipeline-seed [dsh|claude|opencode] </absolute/tool> </new/private/directory> [provider/model] persists one fixed synthetic input.")
             default: throw MailpipeError.invalidInput
             }
         } catch {
@@ -60,11 +61,19 @@ struct MailpipeM0 {
 
     /// Omit the harness argument to use the original DSH probe syntax.
     private static func syntheticTarget(_ args: [String]) throws -> (HarnessInstallation, URL) {
-        guard (3...4).contains(args.count),
-              let kind = HarnessKind(rawValue: args.count == 4 ? args[1] : "dsh"), kind != .codex,
-              args[args.count - 2].hasPrefix("/"), let directory = args.last, directory.hasPrefix("/"),
+        guard (3...5).contains(args.count),
+              let kind = HarnessKind(rawValue: args.count == 3 ? "dsh" : args[1]), kind.supportsReplyDrafts else {
+            throw MailpipeError.invalidInput
+        }
+        let openCodeModel = args.count == 5 ? args[4] : nil
+        if let openCodeModel, kind != .opencode || !OpenCodeDialect.validModelReference(openCodeModel) {
+            throw MailpipeError.invalidInput
+        }
+        let index = args.count == 3 ? 1 : 2
+        let path = args[index], directory = args[index + 1]
+        guard path.hasPrefix("/"), directory.hasPrefix("/"),
               !FileManager.default.fileExists(atPath: directory) else { throw MailpipeError.invalidInput }
-        let executable = URL(fileURLWithPath: args[args.count - 2])
-        return (HarnessInstallation(kind: kind, executable: executable), URL(fileURLWithPath: directory, isDirectory: true))
+        let tool = HarnessInstallation(kind: kind, executable: URL(fileURLWithPath: path), openCodeModel: openCodeModel)
+        return (tool, URL(fileURLWithPath: directory, isDirectory: true))
     }
 }

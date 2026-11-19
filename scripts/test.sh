@@ -5,7 +5,7 @@ MAILPIPE_GUARD_DIR="$(mktemp -d)"
 trap 'rm -rf "$MAILPIPE_GUARD_DIR"' EXIT
 export MAILPIPE_UNEXPECTED_CALLS="$MAILPIPE_GUARD_DIR/unexpected-calls"
 mkdir "$MAILPIPE_GUARD_DIR/bin"
-for tool in claude codex dsh; do
+for tool in claude codex dsh opencode; do
   cat > "$MAILPIPE_GUARD_DIR/bin/$tool" <<'GUARD'
 #!/bin/sh
 printf '%s\n' "$0" >> "$MAILPIPE_UNEXPECTED_CALLS"

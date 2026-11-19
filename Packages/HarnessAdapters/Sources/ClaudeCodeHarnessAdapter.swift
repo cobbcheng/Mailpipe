@@ -39,7 +39,7 @@ public struct ClaudeCodeDialect: ReplyHarnessDialect {
                                  environment: environment, timeout: 120)
     }
 
-    public func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int) throws -> ReplyModelOutput {
+    public func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int, directory: URL) throws -> ReplyModelOutput {
         var session: String?
         var output: ReplyModelOutput?
         for line in stdout.split(separator: 10) {

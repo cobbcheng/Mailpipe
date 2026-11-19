@@ -14,6 +14,13 @@ public struct OnboardingDraft: Codable, Equatable, Sendable {
         set { selectedHarness = newValue }
     }
     public var executable = ""
+    public var openCodeModel: String?
+    public var testedOpenCodeModel: String?
+    public var requestedModel: String? {
+        guard harnessKind == .opencode,
+              let model = openCodeModel?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty else { return nil }
+        return model
+    }
     public var level: ServiceLevel = .default
     public var automationDenied: Bool?
     var suggestionsOnly: Bool? // Decode progress saved by the retired manual intake mode.
@@ -33,6 +40,7 @@ public final class OnboardingSession {
         switch kind {
         case .deepseek: "dsh-0.2.2-rc.1/restricted-v1/reply-fixture-v1"
         case .claude: "claude-2.1.296/restricted-v1/reply-fixture-v1"
+        case .opencode: "opencode-2.3.0/restricted-v1/model-pin-v1/reply-fixture-v1"
         case .codex: nil
         }
     }
@@ -49,8 +57,8 @@ public final class OnboardingSession {
         // Progress edits cannot complete initial setup or clear a prior consent receipt.
         draft.completed = try store.onboarding().completed
         draft.step = min(5, max(1, draft.step))
-        if draft.testedExecutable != draft.executable || draft.evidenceVersion != Self.evidenceVersion(for: draft.harnessKind) || (draft.testedLevel ?? .l2) != draft.level {
-            draft.testID = nil; draft.testedExecutable = nil; draft.evidenceVersion = nil
+        if draft.testedExecutable != draft.executable || draft.testedOpenCodeModel != draft.requestedModel || draft.evidenceVersion != Self.evidenceVersion(for: draft.harnessKind) || (draft.testedLevel ?? .l2) != draft.level {
+            draft.testID = nil; draft.testedExecutable = nil; draft.testedOpenCodeModel = nil; draft.evidenceVersion = nil
         }
         try store.saveOnboarding(draft)
     }
@@ -63,14 +71,17 @@ public final class OnboardingSession {
         var draft = try store.onboarding()
         guard draft.executable.hasPrefix("/"), let evidence = Self.evidenceVersion(for: draft.harnessKind),
               draft.testID == nil else { throw MailpipeError.invalidInput }
+        if let model = draft.requestedModel, !OpenCodeDialect.validModelReference(model) { throw MailpipeError.invalidInput }
         // Abandoned tests never join a later explicitly authorized test.
         for item in try testPipeline.store.records() where [.awaitingAccount, .queued, .draftQueued].contains(item.state) {
             try testPipeline.cancel(item.id)
         }
         try testPipeline.updateSettings {
             $0.harnessKind = draft.harnessKind; $0.executable = draft.executable; $0.level = draft.level
+            $0.openCodeModel = draft.requestedModel
         }
         let id = try testPipeline.enqueueSynthetic()
+        draft.testedOpenCodeModel = draft.requestedModel
         draft.testedLevel = draft.level
         draft.testID = id; draft.testedExecutable = draft.executable; draft.evidenceVersion = evidence
         try save(draft)
@@ -87,13 +98,21 @@ public final class OnboardingSession {
         return run.destination.taskKind == .draft && run.finishedAt != nil && run.error == nil
     }
     public func activate(updatingConfiguration: Bool = false) throws {
-        let draft = try store.onboarding()
+        var draft = try store.onboarding()
         if draft.completed && !updatingConfiguration { return }
         if updatingConfiguration && !draft.completed { throw MailpipeError.invalidInput }
         guard draft.testedExecutable == draft.executable,
               let evidence = Self.evidenceVersion(for: draft.harnessKind), draft.evidenceVersion == evidence,
               let test = try testResult(), test.runs.last?.destination.harness == draft.harnessKind,
               Self.testPassed(test, level: draft.level) else { throw MailpipeError.invalidInput }
+        if draft.harnessKind == .opencode {
+            guard draft.requestedModel == draft.testedOpenCodeModel,
+                  let model = test.runs.last?.destination.model, OpenCodeDialect.validModelReference(model),
+                  draft.requestedModel == nil || draft.requestedModel == model else { throw MailpipeError.invalidOutput }
+            // A blank input authorizes only the sample. Bind future mail to its verified model.
+            draft.openCodeModel = model
+            draft.testedOpenCodeModel = model
+        }
         try store.activateOnboarding(draft)
     }
 }
