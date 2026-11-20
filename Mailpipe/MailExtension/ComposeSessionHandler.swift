@@ -90,13 +90,14 @@ private func panelText(_ key: String, _ argument: String? = nil) -> String {
 @MainActor
 private final class ComposeSuggestionModel: ObservableObject {
     enum Screen { case loading, editing, message(String) }
-    enum Operation { case lookup, copy, shorten }
+    enum Operation { case lookup, copy, regenerate }
 
     @Published private(set) var screen = Screen.loading
     @Published private(set) var busy: Operation?
     @Published var body = ""
     @Published private(set) var feedback: String?
     @Published private(set) var suggestion: ComposePanelSuggestion?
+    var canCopy: Bool { !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private let sessionID: UUID
     private var currentPresentation: UUID?
     private var identity: ComposeMessageIdentity?
@@ -141,7 +142,7 @@ private final class ComposeSuggestionModel: ObservableObject {
         guard let exchange else { reset(panelText("Open Mailpipe, then reopen this panel.")); return }
         let previous = suggestion
         let submitted = body
-        guard operation == .lookup || (previous != nil && !submitted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) else { return }
+        guard operation == .lookup || previous != nil, operation != .copy || canCopy else { return }
         busy = operation
         feedback = nil
         task = Task {
@@ -150,9 +151,9 @@ private final class ComposeSuggestionModel: ObservableObject {
             }
             do {
                 let response: ComposePanelResponse
-                if operation == .shorten, let previous {
+                if operation == .regenerate, let previous {
                     response = try await exchange.send(sessionID: sessionID, identity: identity,
-                                                       action: .shorten(version: previous.version, body: submitted))
+                                                       action: .regenerate(version: previous.version))
                 } else {
                     response = try await exchange.send(sessionID: sessionID, identity: identity, action: .lookup)
                 }
@@ -168,7 +169,7 @@ private final class ComposeSuggestionModel: ObservableObject {
                     } else if operation == .copy {
                         feedback = panelText("The suggestion changed. Review it before copying.")
                     }
-                    if previous?.version != latest.version || operation == .shorten { body = latest.body }
+                    if previous?.version != latest.version || operation == .regenerate { body = latest.body }
                     suggestion = latest
                     screen = .editing
                 case .noDraft:
@@ -177,6 +178,8 @@ private final class ComposeSuggestionModel: ObservableObject {
                     reset(panelText("Check that Mailpipe is running and mail processing is authorized."))
                 case .changed:
                     reset(panelText("The draft changed. Reopen this panel to review it."))
+                case .regenerationLimitReached:
+                    feedback = panelText("Each message allows three regenerations.")
                 case .failed:
                     showFailure(for: operation)
                 }
@@ -187,8 +190,8 @@ private final class ComposeSuggestionModel: ObservableObject {
     }
 
     private func showFailure(for operation: Operation) {
-        if operation == .shorten, suggestion != nil {
-            feedback = panelText("Could not shorten the suggestion. Your text is still here.")
+        if operation == .regenerate, suggestion != nil {
+            feedback = panelText("Could not regenerate the suggestion. Your text is still here.")
         } else {
             // Retain unsubmitted edits for a successful recheck when the panel reopens.
             screen = .message(panelText("Open Mailpipe, then reopen this panel."))
@@ -227,11 +230,14 @@ private struct ComposeSuggestionView: View {
                 }
                 HStack {
                     if let suggestion = model.suggestion {
+                        let hint = Text(verbatim: panelText("Use %@ to draft a new reply to the original message.", suggestion.agentName))
                         Button {
-                            model.perform(.shorten)
+                            model.perform(.regenerate)
                         } label: {
-                            Text(verbatim: panelText("Shorten with %@", suggestion.agentName))
+                            Text(verbatim: panelText("Regenerate"))
                         }
+                        .help(hint)
+                        .accessibilityHint(hint)
                     }
                     Spacer()
                     if model.busy != nil { ProgressView().controlSize(.small) }
@@ -239,8 +245,9 @@ private struct ComposeSuggestionView: View {
                         Text(verbatim: panelText("Copy reply"))
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!model.canCopy)
                 }
-                .disabled(model.busy != nil || model.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(model.busy != nil)
             }
         }
         .padding(14)

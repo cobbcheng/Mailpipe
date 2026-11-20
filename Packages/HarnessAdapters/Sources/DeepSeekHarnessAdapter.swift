@@ -158,7 +158,8 @@ extension DeepSeekHarnessDialect: ReplyHarnessDialect {
         let schemaFile = directory.appendingPathComponent("response-schema.json")
         try Data(schema.utf8).write(to: schemaFile, options: .atomic)
         var environment = environment
-        if case .draft(let request) = task, let target = ReplyDraftRequest.linkedPullRequest(in: request.message.body) {
+        environment.removeValue(forKey: "MAILPIPE_PR_REVIEW")
+        if case .draft(let request) = task, let target = request.pullRequestReviewTarget {
             try configurePullRequest(target, confirmed: request.approvedPullRequest == target, directory: directory)
             environment["MAILPIPE_PR_REVIEW"] = "1"
         }
@@ -169,7 +170,7 @@ extension DeepSeekHarnessDialect: ReplyHarnessDialect {
     public func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int, directory: URL) throws -> ReplyModelOutput {
         let review: Bool
         switch task {
-        case .draft(let request): review = ReplyDraftRequest.linkedPullRequest(in: request.message.body) != nil
+        case .draft(let request): review = request.pullRequestReviewTarget != nil
         case .triage: review = false
         }
         let envelope = try decodeEnvelope(stdout, review: review)

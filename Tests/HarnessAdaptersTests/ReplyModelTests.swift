@@ -73,6 +73,19 @@ final class ReplyModelTests: XCTestCase {
             }
         }
     }
+    func testRegenerationWithALinkedPullRequestKeepsTheReaderDisabled() throws {
+        let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
+        let message = MailInput(messageRef: "example", subject: "Review", body: "https://github.com/example/sample/pull/42")
+        let draft = try ReplyDraftRequest(message: message, allowsPullRequestReview: false)
+        let invocation = try dialect.replyInvocation(task: .draft(draft), schema: ReplySchemas.draft, stdin: Data(),
+            directory: root.url, executable: root.url.appendingPathComponent("fake"), environment: ["MAILPIPE_PR_REVIEW": "1"])
+        XCTAssertNil(invocation.environment["MAILPIPE_PR_REVIEW"])
+        let output = try dialect.replyOutput(deepseekEvents(Data("{}".utf8)), task: .draft(draft),
+                                             inputCharacters: 0, directory: root.url)
+        XCTAssertNil(output.readPullRequestDiff)
+        XCTAssertEqual(try ReplyDraftRequest(message: message).pullRequestReviewTarget, message.body)
+    }
+
     func testTypedReplyChecksLiveAuthorizationBeforeLaunchingModel() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let runner = RecordingRunner(inspectionOutputs(dialect))

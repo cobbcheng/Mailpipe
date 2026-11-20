@@ -93,25 +93,48 @@
         }
       }
     },
-    "Could not shorten the suggestion. Your text is still here.": {
+    "Could not regenerate the suggestion. Your text is still here.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Could not shorten the suggestion. Your text is still here."
+            "value": "Could not regenerate the suggestion. Your text is still here."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "未能改写，已保留当前文字。"
+            "value": "未能重新生成回复，已保留当前文字。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "No se pudo acortar la sugerencia. Se ha conservado tu texto."
+            "value": "No se pudo regenerar la respuesta. Se ha conservado tu texto."
+          }
+        }
+      }
+    },
+    "Each message allows three regenerations.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Each message allows three regenerations."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每封邮件最多可重新生成三次。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Puedes regenerar la respuesta a cada mensaje hasta tres veces."
           }
         }
       }
@@ -231,6 +254,29 @@
         }
       }
     },
+    "Regenerate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Regenerate"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新生成"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Regenerar"
+          }
+        }
+      }
+    },
     "Reply suggestion": {
       "extractionState": "manual",
       "localizations": {
@@ -250,29 +296,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sugerencia de respuesta"
-          }
-        }
-      }
-    },
-    "Shorten with %@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Shorten with %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "用 %@ 改短"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Acortar con %@"
           }
         }
       }
@@ -319,6 +342,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "La sugerencia ha cambiado. Revísala antes de copiarla."
+          }
+        }
+      }
+    },
+    "Use %@ to draft a new reply to the original message.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use %@ to draft a new reply to the original message."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 根据原邮件重新起草回复。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa %@ para redactar una nueva respuesta al mensaje original."
           }
         }
       }

@@ -134,9 +134,11 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var decisionData: Data?
     public var draftData: Data?
     public var runs: [PipelineRun] = []
-    /// Each confirmed popup rewrite has its own receipt. It never publishes a workbench draft.
+    /// Build 43 shortened panel text. Keep its receipts separate from regeneration attempts.
     public internal(set) var composeShortenRuns: [PipelineRun]?
-    var isShortening: Bool { composeShortenRuns?.last.map { $0.finishedAt == nil } ?? false }
+    public internal(set) var composeRegenerationRuns: [PipelineRun]?
+    var isRegeneratingInCompose: Bool { composeRegenerationRuns?.last.map { $0.finishedAt == nil } ?? false }
+    public var regenerationLimitReached: Bool { (regenerationCount ?? 0) + (composeRegenerationRuns?.count ?? 0) >= 3 }
     public var mailKitBody: Bool?
     public internal(set) var manualExecutable: String? // Identifies archived manually entered messages.
     public var syntheticAuthorized = false
@@ -181,7 +183,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     /// UI preflight only; dispatch still rechecks the authoritative policy.
     public func canRequestRegeneration(settings: PipelineSettings, now: Date = Date()) -> Bool {
         guard manualExecutable == nil, excludedFromAuthorizedInbox != true, state != .awaitingBody, !settings.paused, !isPreparing, discardedAt == nil,
-              !isShortening, !runs.contains(where: { $0.finishedAt == nil }), (regenerationCount ?? 0) < 3,
+              !isRegeneratingInCompose, !runs.contains(where: { $0.finishedAt == nil }), !regenerationLimitReached,
               capturedAt > now.addingTimeInterval(-7 * 86_400), settings.executable != nil else { return false }
         if mailKitBody == true { return settings.permission?.id == permissionID && settings.permission?.delivery == .mailKit && !input.body.isEmpty }
         if syntheticAuthorized { return true }
@@ -234,12 +236,9 @@ public final class PipelineStore {
         try execute("CREATE TABLE IF NOT EXISTS metadata (id TEXT PRIMARY KEY, payload BLOB NOT NULL)")
         try execute("PRAGMA user_version=1")
         for var item in try records() {
-            if var runs = item.composeShortenRuns, item.isShortening {
-                runs[runs.count - 1].error = "interrupted"
-                runs[runs.count - 1].finishedAt = Date()
-                item.composeShortenRuns = runs
-                try save(item)
-            }
+            let shortened = Self.closeInterruptedRun(&item.composeShortenRuns)
+            let regenerated = Self.closeInterruptedRun(&item.composeRegenerationRuns)
+            if shortened || regenerated { try save(item) }
             if item.state == .triaging || item.state == .drafting {
                 item.state = .needsReview; item.error = "interrupted"
                 if !item.runs.isEmpty { item.runs[item.runs.count - 1].error = "interrupted" }
@@ -252,6 +251,12 @@ public final class PipelineStore {
             } else { continue }
             try save(item)
         }
+    }
+    private static func closeInterruptedRun(_ runs: inout [PipelineRun]?) -> Bool {
+        guard let last = runs?.indices.last, runs?[last].finishedAt == nil else { return false }
+        runs?[last].error = "interrupted"
+        runs?[last].finishedAt = Date()
+        return true
     }
     deinit { sqlite3_close(db); if lockFD >= 0 { flock(lockFD, LOCK_UN); close(lockFD) } }
     private func execute(_ sql: String) throws {

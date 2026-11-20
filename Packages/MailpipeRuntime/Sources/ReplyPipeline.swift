@@ -80,16 +80,7 @@ public final class ReplyPipeline {
         if includeBody, current.displayBody == nil { current.displayBody = try? PlainMailBody.displayText(source) }
         try store.save(current)
     }
-    public func prepareMailCompose(id: String, subject: String, body: String,
-        senderAddress: @MainActor (String, [String]) throws -> String) async throws -> MailComposeRequest {
-        guard let item = try store.record(id), item.excludedFromAuthorizedInbox != true,
-              item.manualExecutable == nil, !item.syntheticAuthorized, item.discardedAt == nil,
-              !item.isPreparing, item.state != .cancelled, !item.input.body.isEmpty,
-              item.displayedSubject == subject, item.displayedBody == body,
-              item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
-              let messageID = item.messageID else { throw MailComposeError.unavailable }
-        let settings = try store.settings()
-        guard !settings.paused, settings.permission?.id == item.permissionID else { throw MailComposeError.unavailable }
+    func resolveComposeOriginal(_ item: StoredReply, settings: PipelineSettings) async throws -> (AccountScope, VerifiedMail, Data) {
         let scopes = item.mailKitBody == true ? try await composeInboxes() : settings.authorizedScopes.filter {
             item.accountID == nil || $0.accountID == item.accountID
         }
@@ -111,6 +102,20 @@ public final class ReplyPipeline {
         }
         guard matches.count == 1, let (scope, match) = matches.first, let source = match.source,
               try store.settings().revision == settings.revision else { throw MailComposeError.unavailable }
+        return (scope, match, source)
+    }
+
+    public func prepareMailCompose(id: String, subject: String, body: String,
+        senderAddress: @MainActor (String, [String]) throws -> String) async throws -> MailComposeRequest {
+        guard let item = try store.record(id), item.excludedFromAuthorizedInbox != true,
+              item.manualExecutable == nil, !item.syntheticAuthorized, item.discardedAt == nil,
+              !item.isPreparing, item.state != .cancelled, !item.input.body.isEmpty,
+              item.displayedSubject == subject, item.displayedBody == body,
+              item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
+              let messageID = item.messageID else { throw MailComposeError.unavailable }
+        let settings = try store.settings()
+        guard !settings.paused, settings.permission?.id == item.permissionID else { throw MailComposeError.unavailable }
+        let (scope, match, source) = try await resolveComposeOriginal(item, settings: settings)
         let latestSettings = try store.settings()
         guard !latestSettings.paused, latestSettings.permission?.id == item.permissionID,
               let latest = try store.record(id), latest.discardedAt == nil, !latest.isPreparing, latest.state != .cancelled,
@@ -259,8 +264,8 @@ public final class ReplyPipeline {
     public func regenerate(_ id: String, approvedPullRequest: String? = nil) throws {
         let settings = try store.settings()
         guard var item = try store.record(id), !settings.paused, !item.isPreparing,
-              item.discardedAt == nil, !item.isShortening, !item.runs.contains(where: { $0.finishedAt == nil }),
-              (item.regenerationCount ?? 0) < 3,
+              item.discardedAt == nil, !item.isRegeneratingInCompose, !item.runs.contains(where: { $0.finishedAt == nil }),
+              !item.regenerationLimitReached,
               item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
               settings.executable != nil else { throw MailpipeError.invalidInput }
         guard item.manualExecutable == nil else { throw PipelineError.revoked }

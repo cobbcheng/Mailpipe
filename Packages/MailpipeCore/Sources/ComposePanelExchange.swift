@@ -48,7 +48,7 @@ public struct ComposeMessageIdentity: Codable, Equatable, Sendable {
 
 public enum ComposePanelAction: Codable, Equatable, Sendable {
     case lookup
-    case shorten(version: String, body: String)
+    case regenerate(version: String)
 }
 
 public struct ComposePanelRequest: Codable, Equatable, Sendable {
@@ -70,7 +70,7 @@ public struct ComposePanelRequest: Codable, Equatable, Sendable {
         switch action {
         case .lookup: 15
         // A single authorized adapter run can take 120 s, plus process startup/teardown.
-        case .shorten: 180
+        case .regenerate: 180
         }
     }
 
@@ -78,8 +78,8 @@ public struct ComposePanelRequest: Codable, Equatable, Sendable {
         guard identity.valid, createdAt <= now.addingTimeInterval(1), createdAt.addingTimeInterval(lifetime) > now else { return false }
         switch action {
         case .lookup: return true
-        case let .shorten(version, body):
-            return !version.isEmpty && version.utf8.count <= 512 && ComposePanelSuggestion.validBody(body)
+        case let .regenerate(version):
+            return !version.isEmpty && version.utf8.count <= 512
         }
     }
 }
@@ -102,7 +102,7 @@ public struct ComposePanelSuggestion: Codable, Equatable, Sendable {
 
 public enum ComposePanelResponse: Codable, Equatable, Sendable {
     case ready(ComposePanelSuggestion)
-    case noDraft, unavailable, changed, failed
+    case noDraft, unavailable, changed, regenerationLimitReached, failed
 }
 
 public enum ComposePanelTransportError: Error, Sendable {

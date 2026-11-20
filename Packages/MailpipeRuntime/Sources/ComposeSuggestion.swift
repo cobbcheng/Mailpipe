@@ -5,6 +5,7 @@ import HarnessAdapters
 extension ReplyPipeline {
     private struct ComposeContext {
         let item: StoredReply
+        let settings: PipelineSettings
         let installation: HarnessInstallation
         let suggestion: ComposePanelSuggestion
     }
@@ -16,14 +17,14 @@ extension ReplyPipeline {
         do {
             guard !Task.isCancelled, isActive() else { return .unavailable }
             guard let context = try composeContext(for: request, prepareRecord: prepareRecord) else {
-                if case .shorten = request.action { return .changed }
+                if case .regenerate = request.action { return .changed }
                 return .noDraft
             }
             switch request.action {
             case .lookup: return .ready(context.suggestion)
-            case let .shorten(version, body):
+            case let .regenerate(version):
                 guard version == context.suggestion.version else { return .changed }
-                return try await shorten(body, for: request, context: context) { [self] in
+                return try await regenerateSuggestion(for: request, context: context) { [self] in
                     guard !Task.isCancelled, isActive(),
                           let current = try composeContext(for: request, prepareRecord: prepareRecord),
                           current.suggestion.version == version else { throw PipelineError.revoked }
@@ -70,34 +71,39 @@ extension ReplyPipeline {
         }
         let suggestion = ComposePanelSuggestion(body: item.displayedBody, version: version,
             agentName: installation.kind.displayName + " · " + target)
-        return ComposeContext(item: item, installation: installation, suggestion: suggestion)
+        return ComposeContext(item: item, settings: settings, installation: installation, suggestion: suggestion)
     }
 
-    private func shorten(_ body: String, for panel: ComposePanelRequest, context: ComposeContext,
-                         authorize: @escaping @MainActor @Sendable () throws -> Void) async throws -> ComposePanelResponse {
+    private func regenerateSuggestion(for panel: ComposePanelRequest, context: ComposeContext,
+                                      authorize: @escaping @MainActor @Sendable () throws -> Void) async throws -> ComposePanelResponse {
         var item = context.item
         let runID = panel.id.uuidString
-        guard !item.isShortening, !item.runs.contains(where: { $0.finishedAt == nil }),
-              item.composeShortenRuns?.contains(where: { $0.destination.runID == runID }) != true else { return .changed }
-        let task = try ReplyDraftRequest(shortening: body, operationID: panel.id)
+        guard !item.isRegeneratingInCompose, !item.runs.contains(where: { $0.finishedAt == nil }),
+              item.composeRegenerationRuns?.contains(where: { $0.destination.runID == runID }) != true else { return .changed }
+        guard !item.regenerationLimitReached else { return .regenerationLimitReached }
+        let task = try ReplyDraftRequest(message: item.input, replyInstructions: context.settings.replyInstructions,
+                                         allowsPullRequestReview: false)
         let kind = context.installation.kind
         let destination = try DataDestination(messageRef: item.id, runID: runID, taskKind: .draft, harness: kind)
         var receipt = PipelineRun(destination: destination, startedAt: Date())
-        var runs = item.composeShortenRuns ?? []
+        var runs = item.composeRegenerationRuns ?? []
         runs.append(receipt)
-        item.composeShortenRuns = runs
+        item.composeRegenerationRuns = runs
         try store.save(item)
         let response: ComposePanelResponse
         do {
             let route = item.mailKitBody == true
                 ? AccountRoute(mailKitPermission: item.permissionID, allowedHarnesses: [kind])
                 : AccountRoute(accountID: item.accountID, allowedHarnesses: [kind])
+            if item.mailKitBody != true {
+                // Scope-based captures require fresh proof that the original is still in the authorized inbox.
+                _ = try await resolveComposeOriginal(item, settings: context.settings)
+                try authorize()
+            }
             let output = try await model(context.installation).run(.draft(task), route: route) { try await authorize() }
             try receipt.record(output, installation: context.installation)
             try authorize()
             let result = try ReplyDraft.validated(output.content, for: task)
-            guard result.body.trimmingCharacters(in: .whitespacesAndNewlines).count <
-                    body.trimmingCharacters(in: .whitespacesAndNewlines).count else { throw MailpipeError.invalidOutput }
             response = .ready(ComposePanelSuggestion(body: result.body, version: context.suggestion.version,
                                                       agentName: context.suggestion.agentName))
         } catch {
@@ -107,10 +113,10 @@ extension ReplyPipeline {
         }
         receipt.finishedAt = Date()
         // The user may have edited or discarded the workbench draft while the agent ran.
-        guard var current = try store.record(item.id), var currentRuns = current.composeShortenRuns,
+        guard var current = try store.record(item.id), var currentRuns = current.composeRegenerationRuns,
               let index = currentRuns.firstIndex(where: { $0.destination.runID == runID }) else { return .changed }
         currentRuns[index] = receipt
-        current.composeShortenRuns = currentRuns
+        current.composeRegenerationRuns = currentRuns
         try store.save(current)
         return response
     }

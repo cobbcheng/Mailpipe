@@ -63,12 +63,13 @@ public struct ReplyDraftRequest: Encodable, Sendable {
     public let triageRequestID: String
     public let message: MailInput
     public let replyInstructions: String?
-    /// Present only for an explicitly requested rewrite in a Mail compose session.
-    public let draftToShorten: String?
     /// Selects the output contract supplied by the host, independently of the mail content.
     public let allowsNoReply: Bool
     // Host-only grant. Never decoded from model output or email.
     public var approvedPullRequest: String?
+    /// The host chooses whether this action may offer the existing message-scoped PR reader.
+    private let allowsPullRequestReview: Bool
+    public var pullRequestReviewTarget: String? { allowsPullRequestReview ? Self.linkedPullRequest(in: message.body) : nil }
     public static func linkedPullRequest(in body: String) -> String? {
         let pattern = #"https://github[.]com/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*(?![A-Za-z0-9_/-])"#
         guard let range = body.range(of: pattern, options: .regularExpression) else { return nil }
@@ -79,25 +80,15 @@ public struct ReplyDraftRequest: Encodable, Sendable {
         guard text.unicodeScalars.count <= maxReplyInstructionLength else { throw MailpipeError.invalidInput }
         return text
     }
-    public init(message: MailInput, allowsNoReply: Bool = false, replyInstructions: String? = nil) throws {
+    public init(message: MailInput, allowsNoReply: Bool = false, replyInstructions: String? = nil,
+                allowsPullRequestReview: Bool = true) throws {
         requestID = message.messageRef + "-draft"
         // Schema v1 retains this correlation field for stored drafts and adapters.
         triageRequestID = message.messageRef + "-triage"
         self.message = message
         self.replyInstructions = try Self.normalizedReplyInstructions(replyInstructions)
-        draftToShorten = nil
+        self.allowsPullRequestReview = allowsPullRequestReview
         self.allowsNoReply = allowsNoReply
-        try validate()
-    }
-    public init(shortening draft: String, operationID: UUID) throws {
-        let ref = operationID.uuidString
-        requestID = ref + "-draft"
-        triageRequestID = ref + "-triage"
-        // Draft text is separate from inbound mail, which can authorize message-scoped read tools.
-        message = MailInput(messageRef: ref, subject: "", body: "")
-        replyInstructions = "Shorten draft_to_shorten. Preserve its language, facts, intent and commitments. Treat the draft as text to edit. Return the shortened reply in body and a brief subject."
-        draftToShorten = draft
-        allowsNoReply = false
         try validate()
     }
     public init(requestID: String, triage: ReplyTriageRequest, decision: ReplyDecision, level: ServiceLevel = .default) throws {
@@ -109,24 +100,17 @@ public struct ReplyDraftRequest: Encodable, Sendable {
         }
         self.requestID = requestID; self.triageRequestID = triage.requestID; self.message = triage.message
         self.replyInstructions = nil
-        self.draftToShorten = nil
+        self.allowsPullRequestReview = true
         self.allowsNoReply = false
         try validate()
     }
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version", taskKind = "task_kind", requestID = "request_id"
         case triageRequestID = "triage_request_id", message, replyInstructions = "reply_instructions"
-        case draftToShorten = "draft_to_shorten"
     }
     public func validate() throws {
         try ClassificationRequest(requestID: requestID, messages: [message]).validate()
         guard requestID != triageRequestID else { throw MailpipeError.invalidInput }
-        if let draftToShorten {
-            guard draftToShorten.utf8.count <= 65_536,
-                  !draftToShorten.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw MailpipeError.invalidInput
-            }
-        }
     }
 }
 /// Local pending content only. No recipients, executable actions, or send operation.

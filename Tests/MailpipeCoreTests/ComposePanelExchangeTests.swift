@@ -58,15 +58,20 @@ final class ComposePanelExchangeTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
     }
 
-    func testClosingPanelCancelsClaimAndCrashNeverReplaysShorten() async throws {
+    func testClosingPanelCancelsClaimAndCrashNeverReplaysRegeneration() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let exchange = try ComposePanelExchange(directory: root)
         let original = try identity()
-        let task = Task { try await exchange.send(sessionID: UUID(), identity: original, action: .shorten(version: "v1", body: "edited")) }
+        let task = Task { try await exchange.send(sessionID: UUID(), identity: original, action: .regenerate(version: "v1")) }
         let claimed = try await claim(1, from: exchange)
         let request = try XCTUnwrap(claimed.first)
-        XCTAssertEqual(request.action, .shorten(version: "v1", body: "edited"))
+        XCTAssertEqual(request.action, .regenerate(version: "v1"))
+        let encoded = try JSONEncoder().encode(request.action)
+        XCTAssertEqual(try JSONDecoder().decode([String: [String: String]].self, from: encoded),
+                       ["regenerate": ["version": "v1"]])
+        let previousShorten = Data(#"{"shorten":{"version":"v1","body":"edited"}}"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode(ComposePanelAction.self, from: previousShorten))
         let restarted = try ComposePanelExchange(directory: root)
         XCTAssertTrue(try restarted.claimRequests().isEmpty)
         XCTAssertTrue(restarted.isActive(request))
@@ -83,7 +88,7 @@ final class ComposePanelExchangeTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let host = try ComposePanelExchange(directory: root)
         let original = try identity()
-        for (action, date) in [(ComposePanelAction.shorten(version: "", body: "body"), Date()),
+        for (action, date) in [(ComposePanelAction.regenerate(version: ""), Date()),
                                (.lookup, Date().addingTimeInterval(-20)),
                                (.lookup, Date().addingTimeInterval(20))] {
             let request = ComposePanelRequest(sessionID: UUID(), identity: original, action: action, createdAt: date)

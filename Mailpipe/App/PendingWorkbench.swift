@@ -874,7 +874,7 @@ private struct DraftDetail: View {
                 else { Text(L("The specific model was not confirmed for this run.")) }
             } else { Text(L("No agent runs recorded for this message.")) }
             Text(L("Mailpipe saves messages and drafts on this Mac. Use the reply arrow to review and send in Apple Mail."))
-            if (item.regenerationCount ?? 0) >= 3 { Text(L("Regeneration limit reached. You can still edit the reply.")) }
+            if item.regenerationLimitReached { Text(L("Regeneration limit reached. You can still edit the reply.")) }
             if let readDiff = item.runs.last?.readPullRequestDiff {
                 Text(readDiff ? L("The review tool read the PR diff.") : L("The review tool could not read the PR diff."))
                     .font(.caption).foregroundStyle(.secondary)
