@@ -91,3 +91,15 @@ test('download route reads only ZIPs in the public release prefix', async () => 
   assert.equal((await fetch('/downloads/old.zip', 'PUT')).status, 405);
   assert.deepEqual(keys, ['downloads/old.zip', 'downloads/old.zip', 'downloads/missing.zip']);
 });
+
+test('the original notarized DMG keeps its published download address', async () => {
+  const { default: downloads } = await import('./downloads.mjs');
+  const filename = 'Mailpipe-0.0.1-build18-77be446.dmg';
+  const env = { RELEASES: { head: async key => {
+    assert.equal(key, 'downloads/' + filename);
+    return { size: 100, httpEtag: '"test"' };
+  } } };
+  const response = await downloads.fetch(new Request('https://example.com/downloads/' + filename, { method: 'HEAD' }), env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Content-Type'), 'application/x-apple-diskimage');
+});
