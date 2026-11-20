@@ -162,6 +162,29 @@
         }
       }
     },
+    "Find Draft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Find Draft"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查找草稿"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar borrador"
+          }
+        }
+      }
+    },
     "Generate Draft": {
       "extractionState": "manual",
       "localizations": {
@@ -181,29 +204,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Generar borrador"
-          }
-        }
-      }
-    },
-    "Generate a reply with %@ using the message below.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Generate a reply with %@ using the message below."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "使用 %@ 根据以下邮件生成回复。"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Usa %@ para redactar una respuesta al mensaje que se muestra a continuación."
           }
         }
       }
@@ -319,6 +319,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mailpipe ya está preparando un borrador para este mensaje."
+          }
+        }
+      }
+    },
+    "No draft yet": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No draft yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无草稿"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aún no hay borrador"
           }
         }
       }

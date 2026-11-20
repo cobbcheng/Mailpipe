@@ -3,6 +3,11 @@ import MailpipeCore
 import HarnessAdapters
 
 extension ReplyPipeline {
+    private enum ComposeLookup {
+        case context(ComposeContext)
+        case verifyOriginal
+    }
+
     private struct ComposeContext {
         let item: StoredReply?
         let settings: PipelineSettings
@@ -11,13 +16,13 @@ extension ReplyPipeline {
         let version: String
 
         var response: ComposePanelResponse {
-            guard let item else { return .canGenerate(.init(version: version, agentName: agentName)) }
+            guard let item else { return .canGenerate(.init(version: version, agentName: agentName, requiresOriginal: true)) }
             if item.isReadyForComposeSuggestion(settings: settings, now: Date()) {
                 return .ready(.init(body: item.displayedBody, version: version, agentName: agentName))
             }
             if item.isPreparing { return .preparing }
             if item.canGenerateFirstComposeDraft {
-                return .canGenerate(.init(version: version, agentName: agentName, subject: item.input.subject, body: item.input.body))
+                return .canGenerate(.init(version: version, agentName: agentName, requiresOriginal: false))
             }
             return .noDraft
         }
@@ -29,10 +34,22 @@ extension ReplyPipeline {
         isActive: @escaping @MainActor @Sendable () -> Bool) async -> ComposePanelResponse {
         do {
             guard !Task.isCancelled, isActive() else { return .unavailable }
-            let current: @MainActor @Sendable () throws -> ComposeContext? = { [self] in try composeContext(for: request, prepareRecord: prepareRecord) }
-            guard let context = try current() else { return request.action == .lookup ? .noDraft : .changed }
+            let lookup: @MainActor @Sendable () throws -> ComposeLookup? = { [self] in
+                try composeLookup(for: request, prepareRecord: prepareRecord)
+            }
+            guard let result = try lookup() else {
+                switch request.action {
+                case .lookup, .verifiedLookup: return .noDraft
+                case .generate, .regenerate: return .changed
+                }
+            }
+            guard case let .context(context) = result else { return .verifyOriginal }
+            let current: @MainActor @Sendable () throws -> ComposeContext? = {
+                guard case let .context(latest) = try lookup() else { return nil }
+                return latest
+            }
             switch request.action {
-            case .lookup: return context.response
+            case .lookup, .verifiedLookup: return context.response
             case let .generate(version, original):
                 guard case .canGenerate = context.response, context.version == version else { return .changed }
                 return try await generateFirstSuggestion(for: request, original: original, context: context,
@@ -48,44 +65,45 @@ extension ReplyPipeline {
         catch { return .failed }
     }
 
-    private func composeContext(for request: ComposePanelRequest, prepareRecord: (String) -> Bool) throws -> ComposeContext? {
+    private func composeLookup(for request: ComposePanelRequest, prepareRecord: (String) -> Bool) throws -> ComposeLookup? {
         let settings = try store.settings()
         guard !settings.paused, let executable = settings.executable, executable.hasPrefix("/"),
               let permission = settings.permission else { return nil }
+        if settings.harnessKind == .opencode {
+            guard let target = settings.openCodeModel, OpenCodeDialect.validModelReference(target) else { return nil }
+        }
         let candidates = try store.composeCandidates(messageIDDigest: request.identity.messageIDDigest)
         // Resolve identity before eligibility. Discarded or revoked duplicates cannot break a tie.
-        var matched: String?
+        var matches: [StoredReply] = []
         for item in candidates {
             guard let id = item.messageID, let addresses = item.correspondents, let sender = addresses.sender,
                   let identity = ComposeMessageIdentity(messageID: id, subject: item.input.subject, sender: sender,
-                      to: addresses.recipients, cc: addresses.cc, displayBody: item.displayBody ?? item.input.body)
+                      to: addresses.recipients, cc: addresses.cc,
+                      displayBody: request.identity.displayBodyDigest == nil ? nil : (item.displayBody ?? item.input.body))
             else { return nil }
-            if request.identity.matches(identity) {
-                guard matched == nil else { return nil }
-                matched = item.id
-            }
+            if request.identity.matches(identity) { matches.append(item) }
         }
+        if request.action == .lookup, request.identity.displayBodyDigest == nil,
+           matches.contains(where: { $0.isReadyForComposeSuggestion(settings: settings, now: Date()) }) {
+            return .verifyOriginal
+        }
+        guard matches.count <= 1 else { return nil }
         let item: StoredReply?
-        if let matched {
+        if let matched = matches.first?.id {
             guard prepareRecord(matched), let record = try store.record(matched),
                   record.isAuthorizedForCompose(settings: settings, now: Date()) else { return nil }
             item = record
         } else {
             guard candidates.isEmpty, permission.delivery == .mailKit,
-                  request.identity.modelBodyDigest != nil, request.identity.displayBodyDigest != nil,
                   permission.exactSubject.map({ ComposeMessageIdentity.digest(forSubject: $0) == request.identity.subjectDigest }) ?? true,
                   try store.canAddComposeOriginal() else { return nil }
             item = nil
         }
-        if settings.harnessKind == .opencode {
-            guard let target = settings.openCodeModel, OpenCodeDialect.validModelReference(target) else { return nil }
-        }
         let installation = HarnessInstallation(kind: settings.harnessKind, executable: URL(fileURLWithPath: executable),
                                                openCodeModel: settings.openCodeModel)
-        // Include local edits and the chosen destination. An old confirmation cannot dispatch to a new agent.
+        // Opening and confirming use the same message envelope. The full source is checked separately on submission.
         var binding = [request.sessionID.uuidString, permission.id.uuidString, settings.revision.uuidString,
-                       installation.id, installation.openCodeModel ?? "", request.identity.messageIDDigest, request.identity.envelopeDigest,
-                       request.identity.modelBodyDigest ?? "", request.identity.displayBodyDigest ?? ""]
+                       installation.id, installation.openCodeModel ?? "", request.identity.messageIDDigest, request.identity.envelopeDigest]
         if let item {
             binding += [item.id, item.state.rawValue, item.runs.last?.destination.runID ?? "",
                         item.draftVersion ?? "", item.input.subject, item.input.body, item.displayedSubject, item.displayedBody]
@@ -98,8 +116,8 @@ extension ReplyPipeline {
         case .codex: target = "OpenAI"
         case .claude: target = "Claude"
         }
-        return ComposeContext(item: item, settings: settings, installation: installation,
-                              agentName: installation.kind.displayName + " · " + target, version: version)
+        return .context(ComposeContext(item: item, settings: settings, installation: installation,
+                                      agentName: installation.kind.displayName + " · " + target, version: version))
     }
 
     private func generateFirstSuggestion(for panel: ComposePanelRequest, original: ComposePanelOriginal?, context: ComposeContext,

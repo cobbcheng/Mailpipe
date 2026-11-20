@@ -17,7 +17,10 @@ final class ComposeSuggestionTests: XCTestCase {
         }
 
         @MainActor func lookup() async throws -> ComposePanelSuggestion {
-            let result = await pipeline.handleComposePanelRequest(request(.lookup)) { true }
+            var result = await pipeline.handleComposePanelRequest(request(.lookup)) { true }
+            if result == .verifyOriginal {
+                result = await pipeline.handleComposePanelRequest(request(.verifiedLookup)) { true }
+            }
             guard case .ready(let suggestion) = result else { throw MailpipeError.invalidOutput }
             return suggestion
         }
@@ -55,8 +58,6 @@ final class ComposeSuggestionTests: XCTestCase {
         let suggestion = try await f.lookup()
         XCTAssertEqual(suggestion.body, "Workbench edit")
         for other in [
-            ComposeMessageIdentity(messageID: "other@example.com", subject: "Example", sender: "sender@example.com",
-                                   to: ["receiver@example.com"], cc: []),
             ComposeMessageIdentity(messageID: "question@example.com", subject: "Example", sender: "other@example.com",
                                    to: ["receiver@example.com"], cc: []),
             ComposeMessageIdentity(messageID: "question@example.com", subject: "Example", sender: "sender@example.com",
@@ -82,6 +83,37 @@ final class ComposeSuggestionTests: XCTestCase {
         XCTAssertEqual(calls, 0)
     }
 
+    func testOnlyReadyLookupRequestsOriginalVerificationAndRejectsDifferentBody() async throws {
+        let f = try fixture()
+        func lookup(_ action: ComposePanelAction, display: String? = nil) async throws -> ComposePanelResponse {
+            let identity = try XCTUnwrap(ComposeMessageIdentity(messageID: "question@example.com", subject: "Example",
+                sender: "sender@example.com", to: ["receiver@example.com"], cc: [], displayBody: display))
+            return await f.pipeline.handleComposePanelRequest(.init(sessionID: f.session, identity: identity, action: action)) { true }
+        }
+        let initial = try await lookup(.lookup)
+        XCTAssertEqual(initial, .verifyOriginal)
+        let mismatch = try await lookup(.verifiedLookup, display: "Different source with the same envelope")
+        XCTAssertEqual(mismatch, .noDraft)
+        let verified = try await lookup(.verifiedLookup, display: f.item.displayBody)
+        let unavailableBody = try await lookup(.verifiedLookup)
+        guard case let .ready(suggestion) = verified else { return XCTFail("Expected verified draft") }
+        XCTAssertEqual(suggestion.body, f.item.displayedBody)
+        XCTAssertEqual(unavailableBody, verified)
+        var duplicate = StoredReply(id: "other-capture", permissionID: f.item.permissionID, capturedAt: Date(),
+            messageID: f.item.messageID, input: f.item.input, state: .noReply)
+        duplicate.correspondents = f.item.correspondents
+        duplicate.displayBody = "A distinct message reusing the same headers"
+        try f.pipeline.store.save(duplicate)
+        let ambiguous = try await lookup(.verifiedLookup)
+        XCTAssertEqual(ambiguous, .noDraft)
+        let canDisambiguate = try await lookup(.lookup)
+        XCTAssertEqual(canDisambiguate, .verifyOriginal)
+        let actual = try await lookup(.verifiedLookup, display: f.item.displayBody)
+        XCTAssertEqual(actual, verified)
+        let calls = await f.model.calls
+        XCTAssertEqual(calls, 0)
+    }
+
     func testFirstDraftFromStoredNoReplyIsPublishedOnceAndCanBeReopened() async throws {
         let f = try fixture(body: "Please review https://github.com/example/example/pull/7")
         var item = f.item
@@ -89,10 +121,14 @@ final class ComposeSuggestionTests: XCTestCase {
         item.draftData = nil
         item.editedBody = nil
         try f.pipeline.store.save(item)
-        let lookup = await f.pipeline.handleComposePanelRequest(f.request(.lookup)) { true }
+        let metadata = try XCTUnwrap(ComposeMessageIdentity(messageID: "question@example.com", subject: item.input.subject,
+            sender: "sender@example.com", to: ["receiver@example.com"], cc: []))
+        let lookup = await f.pipeline.handleComposePanelRequest(.init(sessionID: f.session, identity: metadata, action: .lookup)) { true }
         guard case .canGenerate(let offer) = lookup else { return XCTFail("Expected generation offer") }
-        XCTAssertEqual(offer.subject, item.input.subject)
-        XCTAssertEqual(offer.body, item.input.body)
+        XCTAssertFalse(offer.requiresOriginal)
+        let wire = try JSONEncoder().encode(offer)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: wire) as? [String: Any])
+        XCTAssertEqual(Set(fields.keys), ["version", "agentName", "requiresOriginal"])
         let callsBefore = await f.model.calls
         XCTAssertEqual(callsBefore, 0)
         let action = ComposePanelAction.generate(version: offer.version, original: nil)
@@ -126,15 +162,15 @@ final class ComposeSuggestionTests: XCTestCase {
     func testUncapturedOriginalRequiresConfirmedPayloadAndCurrentScope() async throws {
         let f = try fixture()
         let subject = "An older question", body = "Could you reply?", display = "Could you reply? (quoted history)"
-        func identity(_ subject: String) throws -> ComposeMessageIdentity {
+        func identity(_ subject: String, withBody: Bool) throws -> ComposeMessageIdentity {
             try XCTUnwrap(ComposeMessageIdentity(messageID: "<old@example.com>", subject: subject, sender: "a@example.com",
-                to: ["b@example.com"], cc: [], displayBody: display, modelBody: body))
+                to: ["b@example.com"], cc: [], displayBody: withBody ? display : nil, modelBody: withBody ? body : nil))
         }
         let original = try XCTUnwrap(ComposePanelOriginal(messageID: "<old@example.com>", subject: subject, sender: "a@example.com",
             to: ["b@example.com"], cc: [], body: body, displayBody: display))
-        let session = UUID(), id = try identity(subject)
+        let session = UUID(), id = try identity(subject, withBody: true), metadata = try identity(subject, withBody: false)
         func request(_ action: ComposePanelAction) -> ComposePanelRequest {
-            ComposePanelRequest(sessionID: session, identity: id, action: action)
+            ComposePanelRequest(sessionID: session, identity: action == .lookup ? metadata : id, action: action)
         }
         try f.pipeline.updateSettings { $0.permission = CapturePermission(exactSubject: "Other", delivery: .mailKit) }
         let outside = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
@@ -142,8 +178,7 @@ final class ComposeSuggestionTests: XCTestCase {
         try f.pipeline.updateSettings { $0.permission = CapturePermission(exactSubject: subject, delivery: .mailKit) }
         let lookup = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
         guard case .canGenerate(let offer) = lookup else { return XCTFail("Expected offer") }
-        XCTAssertNil(offer.subject)
-        XCTAssertNil(offer.body)
+        XCTAssertTrue(offer.requiresOriginal)
         XCTAssertEqual(try f.pipeline.store.records().count, 1)
         let missing = await f.pipeline.handleComposePanelRequest(request(.generate(version: offer.version, original: nil))) { true }
         XCTAssertEqual(missing, .changed)
@@ -171,7 +206,9 @@ final class ComposeSuggestionTests: XCTestCase {
         XCTAssertEqual(stored.displayBody, display)
         let requests = await f.model.draftRequests
         XCTAssertEqual(requests.map(\.message.body), [body])
-        let reopen = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        let readyCheck = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        XCTAssertEqual(readyCheck, .verifyOriginal)
+        let reopen = await f.pipeline.handleComposePanelRequest(request(.verifiedLookup)) { true }
         XCTAssertEqual(result, reopen)
         let replay = await f.pipeline.handleComposePanelRequest(request(action)) { true }
         XCTAssertEqual(replay, .changed)

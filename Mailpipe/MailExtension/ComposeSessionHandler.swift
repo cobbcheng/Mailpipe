@@ -19,46 +19,67 @@ final class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
         self.model = model
         let context = session.composeContext
         let isReply = context.action == .reply || context.action == .replyAll
-        let original = isReply ? context.originalMessage.flatMap(Self.original) : nil
+        let original = isReply ? context.originalMessage.flatMap { OriginalMessage($0, reply: session.mailMessage) } : nil
         return ComposePopoverController(model: model, original: original, isReply: isReply)
-    }
-
-    private static func original(_ message: MEMessage) -> OriginalMessage? {
-        let fields = (message.headers ?? [:]).filter { $0.key.lowercased() == "message-id" }
-        let raw = message.rawData
-        let rawID = raw.flatMap(MailHeaderCodec.messageID(in:))
-        let messageID: String?
-        if fields.isEmpty {
-            messageID = rawID
-        } else {
-            guard fields.count == 1, let values = fields.first?.value, values.count == 1 else { return nil }
-            if let rawID, ComposeMessageIdentity.digest(forMessageID: rawID) != ComposeMessageIdentity.digest(forMessageID: values[0]) {
-                return nil
-            }
-            messageID = values[0]
-        }
-        let to = message.toAddresses.compactMap(\.addressString)
-        let cc = message.ccAddresses.compactMap(\.addressString)
-        guard let messageID, let from = message.fromAddress.addressString,
-              to.count == message.toAddresses.count, cc.count == message.ccAddresses.count else { return nil }
-        let displayBody = raw.flatMap { try? PlainMailBody.displayText($0, fromMailKit: true) }
-        let modelBody = raw.flatMap { try? PlainMailBody.decode($0, fromMailKit: true) }
-        guard let identity = ComposeMessageIdentity(messageID: messageID, subject: message.subject, sender: from,
-            to: to, cc: cc, displayBody: displayBody, modelBody: modelBody) else { return nil }
-        let source: ComposePanelOriginal?
-        if let modelBody, let displayBody {
-            source = ComposePanelOriginal(messageID: messageID, subject: message.subject, sender: from,
-                                          to: to, cc: cc, body: modelBody, displayBody: displayBody)
-        } else {
-            source = nil
-        }
-        return OriginalMessage(identity: identity, source: source)
     }
 }
 
+@MainActor
 private struct OriginalMessage {
-    let identity: ComposeMessageIdentity
-    let source: ComposePanelOriginal?
+    let message: MEMessage
+    let sender: String
+    let to: [String]
+    let cc: [String]
+    private(set) var messageID: String?
+
+    init?(_ message: MEMessage, reply: MEMessage) {
+        // In-Reply-To refers to this reply's parent even when its original has partial headers.
+        let originalID = (message.headers ?? [:]).filter { $0.key.lowercased() == "message-id" }
+        let parentID = (reply.headers ?? [:]).filter { $0.key.lowercased() == "in-reply-to" }
+        var id: String?
+        for fields in [originalID, parentID] where !fields.isEmpty {
+            guard fields.count == 1, let values = fields.first?.value, values.count == 1,
+                  let digest = ComposeMessageIdentity.digest(forMessageID: values[0]) else { return nil }
+            if let id, ComposeMessageIdentity.digest(forMessageID: id) != digest { return nil }
+            id = values[0]
+        }
+        guard let sender = message.fromAddress.addressString else { return nil }
+        let to = message.toAddresses.compactMap(\.addressString)
+        let cc = message.ccAddresses.compactMap(\.addressString)
+        guard to.count == message.toAddresses.count, cc.count == message.ccAddresses.count else { return nil }
+        self.message = message
+        self.messageID = id
+        self.sender = sender
+        self.to = to
+        self.cc = cc
+    }
+
+    func identity(displayBody: String? = nil, modelBody: String? = nil) -> ComposeMessageIdentity? {
+        guard let messageID else { return nil }
+        return ComposeMessageIdentity(messageID: messageID, subject: message.subject, sender: sender,
+                                      to: to, cc: cc, displayBody: displayBody, modelBody: modelBody)
+    }
+
+    mutating func recoverMessageID() {
+        messageID = message.rawData.flatMap(MailHeaderCodec.messageID(in:))
+    }
+
+    // MailKit provides one raw message accessor. Read it only for a requested draft or a ready-draft identity check.
+    func evidence(requiresSource: Bool) throws -> (identity: ComposeMessageIdentity, source: ComposePanelOriginal?) {
+        guard let messageID else { throw ComposePanelTransportError.invalidRequest }
+        let raw = message.rawData
+        if let rawID = raw.flatMap(MailHeaderCodec.messageID(in:)),
+           ComposeMessageIdentity.digest(forMessageID: rawID) != ComposeMessageIdentity.digest(forMessageID: messageID) {
+            throw ComposePanelTransportError.invalidRequest
+        }
+        let displayBody = raw.flatMap { try? PlainMailBody.displayText($0, fromMailKit: true) }
+        let modelBody = requiresSource ? raw.flatMap { try? PlainMailBody.decode($0, fromMailKit: true) } : nil
+        guard let identity = identity(displayBody: displayBody, modelBody: modelBody) else { throw ComposePanelTransportError.invalidRequest }
+        guard requiresSource else { return (identity, nil) }
+        guard let displayBody, let modelBody, let source = ComposePanelOriginal(messageID: messageID, subject: message.subject,
+            sender: sender, to: to, cc: cc, body: modelBody, displayBody: displayBody) else { throw ComposePanelTransportError.invalidRequest }
+        return (identity, source)
+    }
 }
 
 @MainActor
@@ -105,7 +126,8 @@ private func panelText(_ key: String, _ argument: String? = nil) -> String {
 private final class ComposeSuggestionModel: ObservableObject {
     enum Screen {
         case loading, editing, message(String)
-        case firstDraft(ComposePanelOffer, subject: String, sourceBody: String)
+        case firstDraft(ComposePanelOffer)
+        case missingMessageID
         case preparing
     }
     enum Operation { case lookup, copy, generate, regenerate }
@@ -135,7 +157,11 @@ private final class ComposeSuggestionModel: ObservableObject {
         currentPresentation = presentationID
         self.original = original
         guard isReply else { reset(panelText("Open a reply to see its suggestion.")); return }
-        guard original != nil else { reset(panelText("Mail could not identify the original message.")); return }
+        guard let original else { reset(panelText("Mail could not identify the original message.")); return }
+        if original.messageID == nil {
+            screen = .missingMessageID
+            return
+        }
         screen = .loading
         perform(.lookup)
     }
@@ -150,6 +176,15 @@ private final class ComposeSuggestionModel: ObservableObject {
         feedback = nil
     }
 
+    func findDraft() {
+        guard var original, busy == nil else { return }
+        original.recoverMessageID()
+        guard original.messageID != nil else { reset(panelText("Mail could not identify the original message.")); return }
+        self.original = original
+        screen = .loading
+        perform(.lookup)
+    }
+
     func edited(_ text: String) {
         body = text
         feedback = nil
@@ -157,9 +192,11 @@ private final class ComposeSuggestionModel: ObservableObject {
 
     func perform(_ operation: Operation) {
         guard let original, busy == nil else { return }
+        guard let metadata = original.identity() else { reset(panelText("Mail could not identify the original message.")); return }
         guard let exchange else { reset(panelText("Open Mailpipe, then reopen this panel.")); return }
         let previous = suggestion
         let submitted = body
+        var identity = metadata
         let action: ComposePanelAction
         switch operation {
         case .lookup: action = .lookup
@@ -168,10 +205,18 @@ private final class ComposeSuggestionModel: ObservableObject {
             action = .lookup
         case .regenerate:
             guard let previous else { return }
+            guard let evidence = try? original.evidence(requiresSource: false) else {
+                reset(panelText("Mail could not identify the original message.")); return
+            }
+            identity = evidence.identity
             action = .regenerate(version: previous.version)
         case .generate:
-            guard case let .firstDraft(offer, _, _) = screen else { return }
-            action = .generate(version: offer.version, original: offer.body == nil ? original.source : nil)
+            guard case let .firstDraft(offer) = screen else { return }
+            guard let evidence = try? original.evidence(requiresSource: offer.requiresOriginal) else {
+                reset(panelText("Mail could not provide a readable original message.")); return
+            }
+            identity = evidence.identity
+            action = .generate(version: offer.version, original: evidence.source)
         }
         busy = operation
         feedback = nil
@@ -180,8 +225,15 @@ private final class ComposeSuggestionModel: ObservableObject {
                 if !Task.isCancelled { busy = nil; task = nil }
             }
             do {
-                let response = try await exchange.send(sessionID: sessionID, identity: original.identity, action: action)
+                var response = try await exchange.send(sessionID: sessionID, identity: identity, action: action)
                 try Task.checkCancellation()
+                if response == .verifyOriginal, action == .lookup {
+                    guard let evidence = try? original.evidence(requiresSource: false) else {
+                        reset(panelText("Mail could not identify the original message.")); return
+                    }
+                    response = try await exchange.send(sessionID: sessionID, identity: evidence.identity, action: .verifiedLookup)
+                    try Task.checkCancellation()
+                }
                 switch response {
                 case let .ready(latest):
                     if operation == .copy && previous?.version == latest.version {
@@ -199,13 +251,9 @@ private final class ComposeSuggestionModel: ObservableObject {
                 case let .canGenerate(offer):
                     suggestion = nil
                     body = ""
-                    if let subject = offer.subject, let sourceBody = offer.body {
-                        screen = .firstDraft(offer, subject: subject, sourceBody: sourceBody)
-                    } else if let source = original.source {
-                        screen = .firstDraft(offer, subject: source.subject, sourceBody: source.body)
-                    } else {
-                        reset(panelText("Mail could not provide a readable original message."))
-                    }
+                    screen = .firstDraft(offer)
+                case .verifyOriginal:
+                    reset(panelText("Mail could not identify the original message."))
                 case .preparing:
                     suggestion = nil
                     body = ""
@@ -260,17 +308,12 @@ private struct ComposeSuggestionView: View {
             case .message(let message):
                 Text(verbatim: message).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-            case let .firstDraft(offer, subject, sourceBody):
-                Text(verbatim: panelText("Generate a reply with %@ using the message below.", offer.agentName))
-                    .font(.callout)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if !subject.isEmpty { Text(verbatim: subject).bold() }
-                        Text(verbatim: sourceBody)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                }
+            case .missingMessageID:
+                Button { model.findDraft() } label: { Text(verbatim: panelText("Find Draft")) }
+                Spacer(minLength: 0)
+            case let .firstDraft(offer):
+                Text(verbatim: panelText("No draft yet")).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
                 HStack {
                     Spacer()
                     if model.busy == .generate {
@@ -281,6 +324,8 @@ private struct ComposeSuggestionView: View {
                             Text(verbatim: panelText("Generate Draft"))
                         }
                         .buttonStyle(.borderedProminent)
+                        .help(Text(verbatim: panelText("Use %@ to draft a new reply to the original message.", offer.agentName)))
+                        .accessibilityHint(Text(verbatim: panelText("Use %@ to draft a new reply to the original message.", offer.agentName)))
                         .disabled(model.busy != nil)
                     }
                 }

@@ -88,6 +88,8 @@ public struct ComposePanelOriginal: Codable, Equatable, Sendable {
 
 public enum ComposePanelAction: Codable, Equatable, Sendable {
     case lookup
+    /// A stored draft was found. Match any available body evidence before returning it.
+    case verifiedLookup
     case generate(version: String, original: ComposePanelOriginal?)
     case regenerate(version: String)
 }
@@ -109,7 +111,7 @@ public struct ComposePanelRequest: Codable, Equatable, Sendable {
 
     fileprivate var lifetime: TimeInterval {
         switch action {
-        case .lookup: 15
+        case .lookup, .verifiedLookup: 15
         // A single authorized adapter run can take 120 s, plus process startup/teardown.
         case .generate, .regenerate: 180
         }
@@ -118,7 +120,7 @@ public struct ComposePanelRequest: Codable, Equatable, Sendable {
     fileprivate func isValid(at now: Date) -> Bool {
         guard identity.valid, createdAt <= now.addingTimeInterval(1), createdAt.addingTimeInterval(lifetime) > now else { return false }
         switch action {
-        case .lookup: return true
+        case .lookup, .verifiedLookup: return true
         case let .generate(version, original):
             return !version.isEmpty && version.utf8.count <= 512 && (original?.matches(identity) ?? true)
         case let .regenerate(version):
@@ -146,30 +148,24 @@ public struct ComposePanelSuggestion: Codable, Equatable, Sendable {
 public struct ComposePanelOffer: Codable, Equatable, Sendable {
     public let version: String
     public let agentName: String
-    /// A missing preview means that only the extension has the original.
-    public let subject: String?
-    public let body: String?
+    /// Only an uncaptured message needs its source supplied by Mail at generation time.
+    public let requiresOriginal: Bool
 
-    public init(version: String, agentName: String, subject: String? = nil, body: String? = nil) {
+    public init(version: String, agentName: String, requiresOriginal: Bool) {
         self.version = version
         self.agentName = agentName
-        self.subject = subject
-        self.body = body
+        self.requiresOriginal = requiresOriginal
     }
 
     fileprivate var valid: Bool {
-        guard !version.isEmpty, version.utf8.count <= 512, !agentName.isEmpty, agentName.utf8.count <= 512 else { return false }
-        if let subject, let body {
-            return subject.utf8.count <= 2_048 && body.utf8.count <= MailBodyLimits.modelBudget && ComposePanelSuggestion.validBody(body)
-        }
-        return subject == nil && body == nil
+        !version.isEmpty && version.utf8.count <= 512 && !agentName.isEmpty && agentName.utf8.count <= 512
     }
 }
 
 public enum ComposePanelResponse: Codable, Equatable, Sendable {
     case ready(ComposePanelSuggestion)
     case canGenerate(ComposePanelOffer)
-    case preparing, noDraft, unavailable, changed, regenerationLimitReached, failed
+    case verifyOriginal, preparing, noDraft, unavailable, changed, regenerationLimitReached, failed
 }
 
 public enum ComposePanelTransportError: Error, Sendable {

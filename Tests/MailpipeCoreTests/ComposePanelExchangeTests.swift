@@ -35,7 +35,16 @@ final class ComposePanelExchangeTests: XCTestCase {
         }
     }
 
-    func testFirstDraftRequiresTheOriginalThatWasPreviewed() async throws {
+    func testEmptyOfferCarriesNoOriginalMail() throws {
+        for requiresOriginal in [true, false] {
+            let offer = ComposePanelOffer(version: "v1", agentName: "Agent", requiresOriginal: requiresOriginal)
+            let data = try JSONEncoder().encode(offer)
+            let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(Set(fields.keys), ["version", "agentName", "requiresOriginal"])
+        }
+    }
+
+    func testFirstDraftRequiresTheOriginalFromTheConfirmedGenerationRequest() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let exchange = try ComposePanelExchange(directory: root)
