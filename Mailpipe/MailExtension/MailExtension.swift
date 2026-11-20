@@ -9,6 +9,10 @@ nonisolated final class MailExtension: NSObject, MEExtension {
         observeExtension(.initialized)
         logger.notice("probe_v2 extension_initialized")
     }
+    @MainActor func handler(for session: MEComposeSession) -> any MEComposeSessionHandler {
+        ComposeSessionHandler()
+    }
+
     func handlerForMessageActions() -> any MEMessageActionHandler {
         logger.notice("probe_v2 handler_requested")
         observeExtension(.handlerRequested)

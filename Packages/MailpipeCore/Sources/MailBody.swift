@@ -64,6 +64,17 @@ public struct MailBodyExtraction: Equatable, Sendable {
 }
 
 public enum MailHeaderCodec {
+    /// The raw message may carry an ID that Mail omits from its projected header dictionary.
+    public static func messageID(in raw: Data) -> String? {
+        let prefix = raw.prefix(MailBodyLimits.maxHeaderBytes + 4)
+        let boundary = [Data([13, 10, 13, 10]), Data([10, 10])].compactMap { prefix.range(of: $0)?.lowerBound }.min()
+        guard let boundary,
+              let headers = try? MIMEHeaders(prefix[..<boundary], defaultType: "text/plain"),
+              let values = headers.fields["message-id"], values.count == 1,
+              ComposeMessageIdentity.digest(forMessageID: values[0]) != nil else { return nil }
+        return values[0]
+    }
+
     /// RFC 2047 encoded-words. Unknown charset or broken tokens stay literal.
     public static func decodeEncodedWords(_ value: String) -> String {
         EncodedWords.decode(value)

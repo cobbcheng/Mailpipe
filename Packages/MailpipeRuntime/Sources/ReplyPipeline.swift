@@ -31,7 +31,7 @@ public final class ReplyPipeline {
     public let inbox: CaptureInbox
     private let composeInboxes: @MainActor () async throws -> [AccountScope]
     private let resolve: MailIdentityResolver
-    private let model: ReplyModelFactory
+    let model: ReplyModelFactory
     public private(set) var pumping = false
     private let inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) async throws -> Bool?)?
     private var scopeChecked: Set<String> = []
@@ -259,7 +259,7 @@ public final class ReplyPipeline {
     public func regenerate(_ id: String, approvedPullRequest: String? = nil) throws {
         let settings = try store.settings()
         guard var item = try store.record(id), !settings.paused, !item.isPreparing,
-              item.discardedAt == nil, !item.runs.contains(where: { $0.finishedAt == nil }),
+              item.discardedAt == nil, !item.isShortening, !item.runs.contains(where: { $0.finishedAt == nil }),
               (item.regenerationCount ?? 0) < 3,
               item.capturedAt > Date().addingTimeInterval(-7 * 86_400),
               settings.executable != nil else { throw MailpipeError.invalidInput }
@@ -461,27 +461,7 @@ public final class ReplyPipeline {
             }
             guard var current = try store.record(id) else { throw PipelineError.storage }
             let last = current.runs.count - 1
-            if installation.kind == .opencode {
-                guard let actual = output.actualModel, OpenCodeDialect.validModelReference(actual),
-                      installation.openCodeModel == nil || installation.openCodeModel == actual else {
-                    throw MailpipeError.invalidOutput
-                }
-            }
-            if installation.kind == .codex {
-                current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft,
-                    harness: .codex, vendor: "OpenAI", model: "gpt-6.2-sol", evidence: .declared)
-            }
-            let modelName = installation.kind == .deepseek ? "deepseek-flash" : output.actualModel
-            if let modelName {
-                let usesOfficialDeepSeek = [.deepseek, .openclaw, .hermes].contains(installation.kind)
-                current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft,
-                    harness: installation.kind, vendor: usesOfficialDeepSeek ? "deepseek-official" : nil,
-                    model: modelName, evidence: .detected)
-            }
-            current.runs[last].readPullRequestDiff = output.readPullRequestDiff
-            current.runs[last].inputTokens = output.inputTokens; current.runs[last].outputTokens = output.outputTokens
-            current.runs[last].inputCharacters = output.inputCharacters; current.runs[last].outputCharacters = output.outputCharacters
-            current.runs[last].finishedAt = Date()
+            try current.runs[last].record(output, installation: installation)
             try store.save(current)
             try authorize(id, revision: revision)
             switch try ReplyDraftOutcome.validated(output.content, for: request) {

@@ -27,6 +27,8 @@ final class PendingModel: ObservableObject {
     private var pipeline: ReplyPipeline?
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
+    private var panelExchange: ComposePanelExchange?
+    private var panelTasks: [UUID: (request: ComposePanelRequest, task: Task<Void, Never>)] = [:]
     let reminders: ReadyReplyReminders?
     private(set) var hasSharedInbox = false
     var needsPermissionRecovery: Bool { onboarding.completed && settings.permission?.delivery != .mailKit }
@@ -191,6 +193,10 @@ final class PendingModel: ObservableObject {
                 } else { inboxURL = root.appendingPathComponent("inbox") }
             }
             let store = try PipelineStore(directory: root)
+            if diagnosticIndex != nil || hasSharedInbox {
+                let panel = inboxURL.deletingLastPathComponent().appendingPathComponent("compose-panel")
+                panelExchange = try? ComposePanelExchange(directory: panel)
+            }
             pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: inboxURL), resolve: { item, scope in
                 let expected = try store.settings()
                 guard let messageID = item.messageID, expected.permission?.id == item.permissionID,
@@ -221,6 +227,7 @@ final class PendingModel: ObservableObject {
             refresh(); start()
             display = Task { [weak self] in
                 while !Task.isCancelled {
+                    self?.serviceComposePanels()
                     self?.refresh()
                     try? await Task.sleep(for: .seconds(1))
                 }
@@ -381,11 +388,38 @@ final class PendingModel: ObservableObject {
         }
     }
     func terminationBlocker() -> UpdateRestartBlocker? {
-        guard pipeline?.pumping != true, !onboardingBusy, !composeBusy else { return .workInProgress }
+        guard pipeline?.pumping != true, !onboardingBusy, !composeBusy, panelTasks.isEmpty else { return .workInProgress }
         for (id, buffer) in editorBuffers where buffer.state != .saved {
             guard flushEditor(id) else { return .unsavedDraft }
         }
         return nil
+    }
+
+    private func serviceComposePanels() {
+        guard let exchange = panelExchange, let pipeline else { return }
+        for entry in panelTasks.values where !exchange.isActive(entry.request) {
+            entry.task.cancel()
+        }
+        guard let requests = try? exchange.claimRequests() else { return }
+        for request in requests {
+            let task = Task { [weak self] in
+                guard let self else { return }
+                defer { panelTasks[request.id] = nil }
+                guard onboarding.completed else {
+                    try? exchange.respond(.unavailable, to: request)
+                    return
+                }
+                let response = await pipeline.handleComposePanelRequest(request, prepareRecord: { [weak self] id in
+                    guard let self else { return false }
+                    guard let buffer = editorBuffers[id], buffer.state != .saved else { return true }
+                    return flushEditor(id)
+                }) {
+                    !Task.isCancelled && exchange.isActive(request)
+                }
+                try? exchange.respond(response, to: request)
+            }
+            panelTasks[request.id] = (request, task)
+        }
     }
 
     private func start() {

@@ -2,6 +2,7 @@
 
 当前已有工程与签名验证记录，尚无完整功能验收。
 
+- [Apple Mail 回复工具栏](2026-11-20-mailkit-compose.md)
 - [自定义回复提示词](2026-11-20-reply-prompt.md)
 - [自更新与安装前退出保护](2026-11-20-self-update.md)
 - [移除手动添加来信](2026-11-19-remove-manual-intake.md)

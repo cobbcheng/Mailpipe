@@ -170,7 +170,7 @@ MailKit 能在下载邮件时返回动作。
 | 账户、历史邮件 | 不支持枚举 | 授权后的有界查询 | 字典存在，未实测 |
 | 线程 | 无线程对象 | 头字段关联已采集邮件 | 设计推断，不保证完整 |
 | Mail 阅读侧栏 | 不支持 | 独立工作台 | 框架能力边界 |
-| Compose | 可标注收件人、拦截发送 | P1 可选增强 | SDK |
+| 回复窗口的工具栏按钮 | Compose 扩展提供弹出面板 | 查看、编辑、缩短与复制建议 | 见下文 |
 | 草稿正文写入 | 无公开 setter | 宿主交接 | 尚未验证 |
 | 自动发送 | 无主动 send API | P2 独立桥接 | 本轮不实现 |
 
@@ -182,7 +182,8 @@ M0 正文探针仍只检查合成标记。
 
 ## 3. 扩展入口
 
-初版只声明 `MEMessageActionHandler`。
+来信入口使用 `MEMessageActionHandler`。
+回复窗口使用 `MEComposeSessionHandler`。
 入口遵循 `MEExtension`。
 扩展点是 `com.apple.email.extension`。
 Info.plist 以当前 Xcode 模板核对，不手写假定模板。
@@ -279,6 +280,24 @@ Apple Event 返回成功后仍要读回。
 撤销契约见 [数据契约](data-contracts.md)。
 
 ## 7. 草稿落点与交接
+
+### 在 Mail 回复窗口使用建议
+
+在 Mail 点「回复」或「回复所有人」，再点工具栏的 Mailpipe。
+面板查找原邮件在本机已备好的回复。
+用户可以直接修改文字，也可以点「用 … 改短」。
+后者将面板里的文字交给按钮上标明的已授权工具。
+工作台保留原草稿。用户点「复制回复」后，
+在 Mail 正文选择插入位置，按 ⌘V。
+引文、签名、收件人和发送均由 Mail 管理。
+
+查找由宿主校验来源、授权范围与草稿版本。
+单独打开面板或复制建议均不启动模型。
+面板只展示能唯一匹配的建议。
+宿主须在运行，扩展须已在 Mail 设置中启用。
+接口见 [Compose 面板](https://developer.apple.com/documentation/mailkit/mecomposesessionhandler/viewcontroller(for:))。
+
+### 工作台交接
 
 P0 的落点只是菜单栏待处理列表。
 Mail 草稿邮箱要等 M0-16 通过，未通过前不写入。

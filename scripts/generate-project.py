@@ -68,6 +68,10 @@ for label, source_dir, product, product_type in (
         catalog = obj('app-catalog', 'PBXFileReference', lastKnownFileType='text.json.xcstrings', path='Mailpipe/App/Localizable.xcstrings', sourceTree='SOURCE_ROOT')
         info_catalog = obj('info-catalog', 'PBXFileReference', lastKnownFileType='text.json.xcstrings', path='Mailpipe/App/InfoPlist.xcstrings', sourceTree='SOURCE_ROOT')
         source_refs.extend([onboarding_art, catalog, info_catalog])
+    else:
+        compose_catalog = obj('compose-catalog', 'PBXFileReference', lastKnownFileType='text.json.xcstrings',
+                              path=source_dir + '/Localizable.xcstrings', sourceTree='SOURCE_ROOT')
+        source_refs.append(compose_catalog)
     source_groups.append(obj(label + '-files', 'PBXGroup', children=source_refs, name=label, sourceTree='<group>'))
     sources = obj(label + '-sources', 'PBXSourcesBuildPhase', buildActionMask='2147483647', files=builds,
                   runOnlyForDeploymentPostprocessing='0')
@@ -90,6 +94,8 @@ for label, source_dir, product, product_type in (
         resource_files.append(obj('info-catalog-build', 'PBXBuildFile', fileRef=info_catalog))
         resource_files.append(obj('app-catalog-build', 'PBXBuildFile', fileRef=catalog))
         resource_files.append(obj('onboarding-art-build', 'PBXBuildFile', fileRef=onboarding_art))
+    else:
+        resource_files.append(obj('compose-catalog-build', 'PBXBuildFile', fileRef=compose_catalog))
     resources = obj(label + '-resources', 'PBXResourcesBuildPhase', buildActionMask='2147483647',
                     files=resource_files, runOnlyForDeploymentPostprocessing='0')
     phases, dependencies = [sources, frameworks, resources], []

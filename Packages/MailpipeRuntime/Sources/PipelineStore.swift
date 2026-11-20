@@ -80,6 +80,30 @@ public struct PipelineRun: Codable, Sendable {
     public var error: String?
     public var readPullRequestDiff: Bool?
     public var actualCost: Double?
+
+    mutating func record(_ output: ReplyModelOutput, installation: HarnessInstallation) throws {
+        if installation.kind == .opencode {
+            guard let actual = output.actualModel, OpenCodeDialect.validModelReference(actual),
+                  installation.openCodeModel == nil || installation.openCodeModel == actual else {
+                throw MailpipeError.invalidOutput
+            }
+        }
+        if installation.kind == .codex {
+            destination = try DataDestination(messageRef: destination.messageRef, runID: destination.runID, taskKind: .draft,
+                harness: .codex, vendor: "OpenAI", model: "gpt-6.2-sol", evidence: .declared)
+        }
+        let modelName = installation.kind == .deepseek ? "deepseek-flash" : output.actualModel
+        if let modelName {
+            let usesOfficialDeepSeek = [.deepseek, .openclaw, .hermes].contains(installation.kind)
+            destination = try DataDestination(messageRef: destination.messageRef, runID: destination.runID, taskKind: .draft,
+                harness: installation.kind, vendor: usesOfficialDeepSeek ? "deepseek-official" : nil,
+                model: modelName, evidence: .detected)
+        }
+        readPullRequestDiff = output.readPullRequestDiff
+        inputTokens = output.inputTokens; outputTokens = output.outputTokens
+        inputCharacters = output.inputCharacters; outputCharacters = output.outputCharacters
+        finishedAt = Date()
+    }
 }
 public enum InboxMembershipDecision {
     public static func combine(_ results: [Bool?]) -> Bool? {
@@ -110,6 +134,9 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var decisionData: Data?
     public var draftData: Data?
     public var runs: [PipelineRun] = []
+    /// Each confirmed popup rewrite has its own receipt. It never publishes a workbench draft.
+    public internal(set) var composeShortenRuns: [PipelineRun]?
+    var isShortening: Bool { composeShortenRuns?.last.map { $0.finishedAt == nil } ?? false }
     public var mailKitBody: Bool?
     public internal(set) var manualExecutable: String? // Identifies archived manually entered messages.
     public var syntheticAuthorized = false
@@ -133,6 +160,12 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var displayedSubject: String { editedSubject ?? draft?.subject ?? input.subject }
     public var displayedBody: String { editedBody ?? draft?.body ?? "" }
     public func isReadyForReplyReminder(settings: PipelineSettings, now: Date) -> Bool {
+        guard isReadyForComposeSuggestion(settings: settings, now: now) else { return false }
+        // Both confirmed and unresolved handoffs remove that draft from the reminder.
+        guard let handoff = composeHandoff else { return true }
+        return runs.contains { $0.destination.taskKind == .draft && $0.error == nil && ($0.finishedAt ?? .distantPast) > handoff.startedAt }
+    }
+    func isReadyForComposeSuggestion(settings: PipelineSettings, now: Date) -> Bool {
         guard state == .draftReady, error == nil, discardedAt == nil, excludedFromAuthorizedInbox != true,
               !syntheticAuthorized, manualExecutable == nil, messageID?.isEmpty == false, !input.body.isEmpty,
               capturedAt > now.addingTimeInterval(-7 * 86_400),
@@ -140,11 +173,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
         if mailKitBody == true {
             guard permission.delivery == .mailKit else { return false }
         } else {
-            guard settings.authorizedScopes.contains(where: { $0.id == scopeID || (scopeID == nil && $0.accountID == accountID) }) else { return false }
-        }
-        // Both confirmed and unresolved handoffs remove that draft from the reminder.
-        if let handoff = composeHandoff {
-            guard runs.contains(where: { $0.destination.taskKind == .draft && $0.error == nil && ($0.finishedAt ?? .distantPast) > handoff.startedAt }) else { return false }
+            guard settings.authorizedScopes.contains(where: { $0.accountID == accountID && (scopeID == nil || $0.id == scopeID) }) else { return false }
         }
         guard let draft else { return false }
         return !(editedBody ?? draft.body).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -152,7 +181,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     /// UI preflight only; dispatch still rechecks the authoritative policy.
     public func canRequestRegeneration(settings: PipelineSettings, now: Date = Date()) -> Bool {
         guard manualExecutable == nil, excludedFromAuthorizedInbox != true, state != .awaitingBody, !settings.paused, !isPreparing, discardedAt == nil,
-              !runs.contains(where: { $0.finishedAt == nil }), (regenerationCount ?? 0) < 3,
+              !isShortening, !runs.contains(where: { $0.finishedAt == nil }), (regenerationCount ?? 0) < 3,
               capturedAt > now.addingTimeInterval(-7 * 86_400), settings.executable != nil else { return false }
         if mailKitBody == true { return settings.permission?.id == permissionID && settings.permission?.delivery == .mailKit && !input.body.isEmpty }
         if syntheticAuthorized { return true }
@@ -205,6 +234,12 @@ public final class PipelineStore {
         try execute("CREATE TABLE IF NOT EXISTS metadata (id TEXT PRIMARY KEY, payload BLOB NOT NULL)")
         try execute("PRAGMA user_version=1")
         for var item in try records() {
+            if var runs = item.composeShortenRuns, item.isShortening {
+                runs[runs.count - 1].error = "interrupted"
+                runs[runs.count - 1].finishedAt = Date()
+                item.composeShortenRuns = runs
+                try save(item)
+            }
             if item.state == .triaging || item.state == .drafting {
                 item.state = .needsReview; item.error = "interrupted"
                 if !item.runs.isEmpty { item.runs[item.runs.count - 1].error = "interrupted" }
@@ -312,6 +347,22 @@ public final class PipelineStore {
         } catch { try? execute("ROLLBACK"); throw error }
     }
     public func records() throws -> [StoredReply] { try values(StoredReply.self, table: "records").sorted { $0.capturedAt < $1.capturedAt } }
+    /// An open Mail panel only needs complete records for the original Message-ID.
+    func composeCandidates(messageIDDigest: String) throws -> [StoredReply] {
+        let stmt = try statement("SELECT id, json_extract(CAST(payload AS TEXT), '$.messageID') FROM records")
+        defer { sqlite3_finalize(stmt) }
+        var candidates: [StoredReply] = []
+        while true {
+            let status = sqlite3_step(stmt)
+            if status == SQLITE_DONE { return candidates }
+            guard status == SQLITE_ROW, let id = sqlite3_column_text(stmt, 0) else { throw PipelineError.storage }
+            if let messageID = sqlite3_column_text(stmt, 1),
+               ComposeMessageIdentity.digest(forMessageID: String(cString: messageID)) == messageIDDigest,
+               let item = try record(String(cString: id)) {
+                candidates.append(item)
+            }
+        }
+    }
     public func record(_ id: String) throws -> StoredReply? { try values(StoredReply.self, table: "records", id: id).first }
     public func save(_ item: StoredReply) throws { try put(item, id: item.id, table: "records") }
     public func saveEdits(_ id: String, subject: String, body: String) throws {

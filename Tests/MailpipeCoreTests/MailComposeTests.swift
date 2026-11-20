@@ -2,6 +2,15 @@ import XCTest
 @testable import MailpipeCore
 
 final class MailComposeTests: XCTestCase {
+    func testPreexistingComposeReceiptsDecodeAsPrefilledAndNativeWindowReceiptsRoundTrip() throws {
+        let oldRecord = Data(#"{"outgoingID":"42"}"#.utf8)
+        let old = try JSONDecoder().decode(MailComposeReceipt.self, from: oldRecord)
+        XCTAssertEqual(old.kind, .prefilledMessage)
+        XCTAssertEqual(old, MailComposeReceipt(outgoingID: "42"))
+        let native = MailComposeReceipt(outgoingID: "42", kind: .nativeReplyWindow)
+        XCTAssertEqual(try JSONDecoder().decode(MailComposeReceipt.self, from: JSONEncoder().encode(native)), native)
+    }
+
     func testReplyToPrecedenceAndFailClosed() throws {
         func raw(_ extra: String) -> Data { Data(("From: original@example.com\n" + extra + "\n\nbody").utf8) }
         XCTAssertEqual(try MailReplyRecipients.parse(raw("")), ["original@example.com"])

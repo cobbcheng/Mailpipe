@@ -57,6 +57,16 @@
       "path" = "design/icon/AppIcon.icon";
       "sourceTree" = "SOURCE_ROOT";
     };
+    "F335C2A593CDB7D804FD835F" = {
+      "isa" = "PBXFileReference";
+      "path" = "Mailpipe/MailExtension/ComposeSessionHandler.swift";
+      "sourceTree" = "SOURCE_ROOT";
+      "lastKnownFileType" = "sourcecode.swift";
+    };
+    "4F172582D6D09CEE6B7A1E8E" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "F335C2A593CDB7D804FD835F";
+    };
     "B5E04800D30BF586C503FB20" = {
       "isa" = "PBXFileReference";
       "path" = "Mailpipe/MailExtension/Info.plist";
@@ -79,16 +89,22 @@
       "isa" = "PBXBuildFile";
       "fileRef" = "2C9E78C6F820793347A53E46";
     };
+    "376AB4D4B7F3AAF16D8AB809" = {
+      "isa" = "PBXFileReference";
+      "lastKnownFileType" = "text.json.xcstrings";
+      "path" = "Mailpipe/MailExtension/Localizable.xcstrings";
+      "sourceTree" = "SOURCE_ROOT";
+    };
     "182AA5E0764EA153D55CA5BD" = {
       "isa" = "PBXGroup";
-      "children" = ("B5E04800D30BF586C503FB20", "D9E711C91C1B8004ACAF7C30", "2C9E78C6F820793347A53E46");
+      "children" = ("F335C2A593CDB7D804FD835F", "B5E04800D30BF586C503FB20", "D9E711C91C1B8004ACAF7C30", "2C9E78C6F820793347A53E46", "376AB4D4B7F3AAF16D8AB809");
       "name" = "MailpipeMailExtension";
       "sourceTree" = "<group>";
     };
     "B0EB3AAB8E8C3F5D90D04A04" = {
       "isa" = "PBXSourcesBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("8C398892AF4012072E4A6F7E");
+      "files" = ("4F172582D6D09CEE6B7A1E8E", "8C398892AF4012072E4A6F7E");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "674BEEC04144907590A6D996" = {
@@ -114,10 +130,14 @@
       "isa" = "PBXBuildFile";
       "fileRef" = "22A73AE752B058993E5CB944";
     };
+    "FDCF28D924887F33653E6D96" = {
+      "isa" = "PBXBuildFile";
+      "fileRef" = "376AB4D4B7F3AAF16D8AB809";
+    };
     "6B9EAAC652B49331C050EDD7" = {
       "isa" = "PBXResourcesBuildPhase";
       "buildActionMask" = "2147483647";
-      "files" = ("32619883B056CD6587A222B8", "6D95BF80EF50E61020F40B5B");
+      "files" = ("32619883B056CD6587A222B8", "6D95BF80EF50E61020F40B5B", "FDCF28D924887F33653E6D96");
       "runOnlyForDeploymentPostprocessing" = "0";
     };
     "76CA1C5312F83AB140566B24" = {

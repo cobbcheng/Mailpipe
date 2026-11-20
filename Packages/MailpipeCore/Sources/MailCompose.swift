@@ -37,8 +37,20 @@ public struct MailComposeRequest: Codable, Equatable, Sendable {
     }
 }
 public struct MailComposeReceipt: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable { case prefilledMessage, nativeReplyWindow }
     public let outgoingID: String
-    public init(outgoingID: String) { self.outgoingID = outgoingID }
+    public let kind: Kind
+
+    public init(outgoingID: String, kind: Kind = .prefilledMessage) {
+        self.outgoingID = outgoingID
+        self.kind = kind
+    }
+
+    public init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        outgoingID = try fields.decode(String.self, forKey: .outgoingID)
+        kind = try fields.decodeIfPresent(Kind.self, forKey: .kind) ?? .prefilledMessage
+    }
 }
 public struct MailComposeHandoff: Codable, Sendable {
     public let fingerprint: String
