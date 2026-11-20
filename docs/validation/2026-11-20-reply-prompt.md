@@ -36,3 +36,8 @@ build 40 的应用源码为 `aea9f96`。
 已与 0.1.5 正式包核对签名身份、权限和更新公钥。
 最终 ZIP 解压后通过公证票据与 Gatekeeper 核验。
 包大小为 8,397,819 字节。校验值见[官网发布信息](../../website/release.mjs)。
+
+三语官网和[生产更新源](https://mailpipeai.com/appcast.xml)指向同一个 ZIP。
+R2 与[官网下载包](https://mailpipeai.com/downloads/Mailpipe-0.1.6-build40-aea9f96.zip)的回读均与公证包逐字节一致。
+0.1.5 内置的 Sparkle 从生产更新源识别出 build 40。
+此次仅验证更新发现，安装与重启未验证。
