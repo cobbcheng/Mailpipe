@@ -19,11 +19,11 @@ final class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
         self.model = model
         let context = session.composeContext
         let isReply = context.action == .reply || context.action == .replyAll
-        let identity = isReply ? context.originalMessage.flatMap(Self.identity) : nil
-        return ComposePopoverController(model: model, identity: identity, isReply: isReply)
+        let original = isReply ? context.originalMessage.flatMap(Self.original) : nil
+        return ComposePopoverController(model: model, original: original, isReply: isReply)
     }
 
-    private static func identity(_ message: MEMessage) -> ComposeMessageIdentity? {
+    private static func original(_ message: MEMessage) -> OriginalMessage? {
         let fields = (message.headers ?? [:]).filter { $0.key.lowercased() == "message-id" }
         let raw = message.rawData
         let rawID = raw.flatMap(MailHeaderCodec.messageID(in:))
@@ -42,21 +42,35 @@ final class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
         guard let messageID, let from = message.fromAddress.addressString,
               to.count == message.toAddresses.count, cc.count == message.ccAddresses.count else { return nil }
         let displayBody = raw.flatMap { try? PlainMailBody.displayText($0, fromMailKit: true) }
-        return ComposeMessageIdentity(messageID: messageID, subject: message.subject, sender: from,
-                                      to: to, cc: cc, displayBody: displayBody)
+        let modelBody = raw.flatMap { try? PlainMailBody.decode($0, fromMailKit: true) }
+        guard let identity = ComposeMessageIdentity(messageID: messageID, subject: message.subject, sender: from,
+            to: to, cc: cc, displayBody: displayBody, modelBody: modelBody) else { return nil }
+        let source: ComposePanelOriginal?
+        if let modelBody, let displayBody {
+            source = ComposePanelOriginal(messageID: messageID, subject: message.subject, sender: from,
+                                          to: to, cc: cc, body: modelBody, displayBody: displayBody)
+        } else {
+            source = nil
+        }
+        return OriginalMessage(identity: identity, source: source)
     }
+}
+
+private struct OriginalMessage {
+    let identity: ComposeMessageIdentity
+    let source: ComposePanelOriginal?
 }
 
 @MainActor
 private final class ComposePopoverController: MEExtensionViewController {
     private let presentationID = UUID()
     private let model: ComposeSuggestionModel
-    private let identity: ComposeMessageIdentity?
+    private let original: OriginalMessage?
     private let isReply: Bool
 
-    init(model: ComposeSuggestionModel, identity: ComposeMessageIdentity?, isReply: Bool) {
+    init(model: ComposeSuggestionModel, original: OriginalMessage?, isReply: Bool) {
         self.model = model
-        self.identity = identity
+        self.original = original
         self.isReply = isReply
         super.init(nibName: nil, bundle: nil)
         preferredContentSize = NSSize(width: 380, height: 280)
@@ -73,7 +87,7 @@ private final class ComposePopoverController: MEExtensionViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        model.present(identity: identity, isReply: isReply, presentationID: presentationID)
+        model.present(original: original, isReply: isReply, presentationID: presentationID)
     }
 
     override func viewDidDisappear() {
@@ -89,8 +103,12 @@ private func panelText(_ key: String, _ argument: String? = nil) -> String {
 
 @MainActor
 private final class ComposeSuggestionModel: ObservableObject {
-    enum Screen { case loading, editing, message(String) }
-    enum Operation { case lookup, copy, regenerate }
+    enum Screen {
+        case loading, editing, message(String)
+        case firstDraft(ComposePanelOffer, subject: String, sourceBody: String)
+        case preparing
+    }
+    enum Operation { case lookup, copy, generate, regenerate }
 
     @Published private(set) var screen = Screen.loading
     @Published private(set) var busy: Operation?
@@ -100,7 +118,7 @@ private final class ComposeSuggestionModel: ObservableObject {
     var canCopy: Bool { !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private let sessionID: UUID
     private var currentPresentation: UUID?
-    private var identity: ComposeMessageIdentity?
+    private var original: OriginalMessage?
     private var task: Task<Void, Never>?
     private var exchange: ComposePanelExchange?
 
@@ -112,12 +130,12 @@ private final class ComposeSuggestionModel: ObservableObject {
         }
     }
 
-    func present(identity: ComposeMessageIdentity?, isReply: Bool, presentationID: UUID) {
+    func present(original: OriginalMessage?, isReply: Bool, presentationID: UUID) {
         dismiss()
         currentPresentation = presentationID
-        self.identity = identity
+        self.original = original
         guard isReply else { reset(panelText("Open a reply to see its suggestion.")); return }
-        guard identity != nil else { reset(panelText("Mail could not identify the original message.")); return }
+        guard original != nil else { reset(panelText("Mail could not identify the original message.")); return }
         screen = .loading
         perform(.lookup)
     }
@@ -138,11 +156,23 @@ private final class ComposeSuggestionModel: ObservableObject {
     }
 
     func perform(_ operation: Operation) {
-        guard let identity, busy == nil else { return }
+        guard let original, busy == nil else { return }
         guard let exchange else { reset(panelText("Open Mailpipe, then reopen this panel.")); return }
         let previous = suggestion
         let submitted = body
-        guard operation == .lookup || previous != nil, operation != .copy || canCopy else { return }
+        let action: ComposePanelAction
+        switch operation {
+        case .lookup: action = .lookup
+        case .copy:
+            guard previous != nil, canCopy else { return }
+            action = .lookup
+        case .regenerate:
+            guard let previous else { return }
+            action = .regenerate(version: previous.version)
+        case .generate:
+            guard case let .firstDraft(offer, _, _) = screen else { return }
+            action = .generate(version: offer.version, original: offer.body == nil ? original.source : nil)
+        }
         busy = operation
         feedback = nil
         task = Task {
@@ -150,13 +180,7 @@ private final class ComposeSuggestionModel: ObservableObject {
                 if !Task.isCancelled { busy = nil; task = nil }
             }
             do {
-                let response: ComposePanelResponse
-                if operation == .regenerate, let previous {
-                    response = try await exchange.send(sessionID: sessionID, identity: identity,
-                                                       action: .regenerate(version: previous.version))
-                } else {
-                    response = try await exchange.send(sessionID: sessionID, identity: identity, action: .lookup)
-                }
+                let response = try await exchange.send(sessionID: sessionID, identity: original.identity, action: action)
                 try Task.checkCancellation()
                 switch response {
                 case let .ready(latest):
@@ -172,6 +196,20 @@ private final class ComposeSuggestionModel: ObservableObject {
                     if previous?.version != latest.version || operation == .regenerate { body = latest.body }
                     suggestion = latest
                     screen = .editing
+                case let .canGenerate(offer):
+                    suggestion = nil
+                    body = ""
+                    if let subject = offer.subject, let sourceBody = offer.body {
+                        screen = .firstDraft(offer, subject: subject, sourceBody: sourceBody)
+                    } else if let source = original.source {
+                        screen = .firstDraft(offer, subject: source.subject, sourceBody: source.body)
+                    } else {
+                        reset(panelText("Mail could not provide a readable original message."))
+                    }
+                case .preparing:
+                    suggestion = nil
+                    body = ""
+                    screen = .preparing
                 case .noDraft:
                     reset(panelText("No reply suggestion is ready for this message."))
                 case .unavailable:
@@ -190,7 +228,9 @@ private final class ComposeSuggestionModel: ObservableObject {
     }
 
     private func showFailure(for operation: Operation) {
-        if operation == .regenerate, suggestion != nil {
+        if operation == .generate {
+            reset(panelText("Could not generate the draft. Reopen the panel to check its status."))
+        } else if operation == .regenerate, suggestion != nil {
             feedback = panelText("Could not regenerate the suggestion. Your text is still here.")
         } else {
             // Retain unsubmitted edits for a successful recheck when the panel reopens.
@@ -220,6 +260,40 @@ private struct ComposeSuggestionView: View {
             case .message(let message):
                 Text(verbatim: message).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
+            case let .firstDraft(offer, subject, sourceBody):
+                Text(verbatim: panelText("Generate a reply with %@ using the message below.", offer.agentName))
+                    .font(.callout)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !subject.isEmpty { Text(verbatim: subject).bold() }
+                        Text(verbatim: sourceBody)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                }
+                HStack {
+                    Spacer()
+                    if model.busy == .generate {
+                        ProgressView { Text(verbatim: panelText("Generating draft…")) }
+                            .controlSize(.small)
+                    } else {
+                        Button { model.perform(.generate) } label: {
+                            Text(verbatim: panelText("Generate Draft"))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.busy != nil)
+                    }
+                }
+            case .preparing:
+                Text(verbatim: panelText("Mailpipe is already preparing a draft for this message."))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                HStack {
+                    Spacer()
+                    if model.busy != nil { ProgressView().controlSize(.small) }
+                    Button { model.perform(.lookup) } label: { Text(verbatim: panelText("Refresh")) }
+                        .disabled(model.busy != nil)
+                }
             case .editing:
                 TextEditor(text: Binding(get: { model.body }, set: model.edited))
                     .font(.body)

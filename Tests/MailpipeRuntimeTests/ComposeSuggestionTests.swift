@@ -82,6 +82,140 @@ final class ComposeSuggestionTests: XCTestCase {
         XCTAssertEqual(calls, 0)
     }
 
+    func testFirstDraftFromStoredNoReplyIsPublishedOnceAndCanBeReopened() async throws {
+        let f = try fixture(body: "Please review https://github.com/example/example/pull/7")
+        var item = f.item
+        item.state = .noReply
+        item.draftData = nil
+        item.editedBody = nil
+        try f.pipeline.store.save(item)
+        let lookup = await f.pipeline.handleComposePanelRequest(f.request(.lookup)) { true }
+        guard case .canGenerate(let offer) = lookup else { return XCTFail("Expected generation offer") }
+        XCTAssertEqual(offer.subject, item.input.subject)
+        XCTAssertEqual(offer.body, item.input.body)
+        let callsBefore = await f.model.calls
+        XCTAssertEqual(callsBefore, 0)
+        let action = ComposePanelAction.generate(version: offer.version, original: nil)
+        let request = f.request(action)
+        await f.model.setAfterRun { @MainActor in
+            let pending = await f.pipeline.handleComposePanelRequest(f.request(.lookup)) { true }
+            XCTAssertEqual(pending, .preparing)
+            let overlap = await f.pipeline.handleComposePanelRequest(f.request(action)) { true }
+            XCTAssertEqual(overlap, .changed)
+        }
+        let result = await f.pipeline.handleComposePanelRequest(request) { true }
+        guard case .ready(let first) = result else { return XCTFail("Expected first draft") }
+        let requests = await f.model.draftRequests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?.message, item.input)
+        XCTAssertEqual(requests.first?.replyInstructions, "Use a custom sign-off.")
+        XCTAssertEqual(requests.first?.allowsNoReply, false)
+        XCTAssertNil(requests.first?.pullRequestReviewTarget)
+        let stored = try XCTUnwrap(f.pipeline.store.record(item.id))
+        XCTAssertEqual(stored.state, .draftReady)
+        XCTAssertEqual(stored.displayedBody, first.body)
+        XCTAssertEqual(stored.runs.last?.destination.runID, request.id.uuidString)
+        XCTAssertNotNil(stored.runs.last?.finishedAt)
+        XCTAssertNil(stored.regenerationCount)
+        let reopen = try await f.lookup()
+        XCTAssertEqual(first, reopen)
+        let repeated = await f.pipeline.handleComposePanelRequest(request) { true }
+        XCTAssertEqual(repeated, .changed)
+    }
+
+    func testUncapturedOriginalRequiresConfirmedPayloadAndCurrentScope() async throws {
+        let f = try fixture()
+        let subject = "An older question", body = "Could you reply?", display = "Could you reply? (quoted history)"
+        func identity(_ subject: String) throws -> ComposeMessageIdentity {
+            try XCTUnwrap(ComposeMessageIdentity(messageID: "<old@example.com>", subject: subject, sender: "a@example.com",
+                to: ["b@example.com"], cc: [], displayBody: display, modelBody: body))
+        }
+        let original = try XCTUnwrap(ComposePanelOriginal(messageID: "<old@example.com>", subject: subject, sender: "a@example.com",
+            to: ["b@example.com"], cc: [], body: body, displayBody: display))
+        let session = UUID(), id = try identity(subject)
+        func request(_ action: ComposePanelAction) -> ComposePanelRequest {
+            ComposePanelRequest(sessionID: session, identity: id, action: action)
+        }
+        try f.pipeline.updateSettings { $0.permission = CapturePermission(exactSubject: "Other", delivery: .mailKit) }
+        let outside = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        XCTAssertEqual(outside, .noDraft)
+        try f.pipeline.updateSettings { $0.permission = CapturePermission(exactSubject: subject, delivery: .mailKit) }
+        let lookup = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        guard case .canGenerate(let offer) = lookup else { return XCTFail("Expected offer") }
+        XCTAssertNil(offer.subject)
+        XCTAssertNil(offer.body)
+        XCTAssertEqual(try f.pipeline.store.records().count, 1)
+        let missing = await f.pipeline.handleComposePanelRequest(request(.generate(version: offer.version, original: nil))) { true }
+        XCTAssertEqual(missing, .changed)
+        let substituted = try XCTUnwrap(ComposePanelOriginal(messageID: original.messageID, subject: subject, sender: original.sender,
+            to: original.to, cc: [], body: "different", displayBody: display))
+        let mismatch = await f.pipeline.handleComposePanelRequest(request(.generate(version: offer.version, original: substituted))) { true }
+        XCTAssertEqual(mismatch, .changed)
+        let action = ComposePanelAction.generate(version: offer.version, original: original)
+        let otherSession = ComposePanelRequest(sessionID: UUID(), identity: id, action: action)
+        let stale = await f.pipeline.handleComposePanelRequest(otherSession) { true }
+        XCTAssertEqual(stale, .changed)
+        let before = await f.model.calls
+        XCTAssertEqual(before, 0)
+        let firstRequest = request(action), doubleClick = request(action)
+        let firstClick = Task { @MainActor in await f.pipeline.handleComposePanelRequest(firstRequest) { true } }
+        let nextClick = Task { @MainActor in await f.pipeline.handleComposePanelRequest(doubleClick) { true } }
+        let outcomes = [await firstClick.value, await nextClick.value]
+        XCTAssertEqual(outcomes.filter { $0 == .changed }.count, 1)
+        let result = try XCTUnwrap(outcomes.first { if case .ready = $0 { return true }; return false })
+        guard case .ready(let draft) = result else { return XCTFail("Expected new draft") }
+        let records = try f.pipeline.store.records()
+        let stored = try XCTUnwrap(records.first(where: { $0.messageID == "old@example.com" }))
+        XCTAssertEqual(records.count, 2)
+        XCTAssertEqual(stored.displayedBody, draft.body)
+        XCTAssertEqual(stored.displayBody, display)
+        let requests = await f.model.draftRequests
+        XCTAssertEqual(requests.map(\.message.body), [body])
+        let reopen = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        XCTAssertEqual(result, reopen)
+        let replay = await f.pipeline.handleComposePanelRequest(request(action)) { true }
+        XCTAssertEqual(replay, .changed)
+        let calls = await f.model.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testIneligibleOriginalCannotBeRecreatedAndRevocationPreventsPublishing() async throws {
+        let f = try fixture()
+        var item = f.item
+        item.state = .noReply
+        item.draftData = nil
+        item.editedBody = nil
+        let identity = try XCTUnwrap(ComposeMessageIdentity(messageID: "question@example.com", subject: item.input.subject,
+            sender: "sender@example.com", to: ["receiver@example.com"], cc: [], displayBody: item.displayBody, modelBody: item.input.body))
+        let session = UUID()
+        func request(_ action: ComposePanelAction) -> ComposePanelRequest { .init(sessionID: session, identity: identity, action: action) }
+        item.discardedAt = Date()
+        try f.pipeline.store.save(item)
+        let discarded = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        XCTAssertEqual(discarded, .noDraft)
+        item.discardedAt = nil; item.state = .cancelled
+        try f.pipeline.store.save(item)
+        let cancelled = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        XCTAssertEqual(cancelled, .noDraft)
+        item.state = .queued
+        try f.pipeline.store.save(item)
+        let queued = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        XCTAssertEqual(queued, .preparing)
+        item.state = .needsReply
+        try f.pipeline.store.save(item)
+        let lookup = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
+        guard case .canGenerate(let offer) = lookup else { return XCTFail("Expected offer") }
+        await f.model.setAfterRun { @MainActor in
+            try f.pipeline.updateSettings { $0.permission = nil }
+        }
+        let revoked = await f.pipeline.handleComposePanelRequest(request(.generate(version: offer.version, original: nil))) { true }
+        XCTAssertEqual(revoked, .changed)
+        let stored = try XCTUnwrap(f.pipeline.store.record(item.id))
+        XCTAssertNil(stored.draftData)
+        XCTAssertNotNil(stored.runs.last?.error)
+        XCTAssertNotNil(stored.runs.last?.finishedAt)
+    }
+
     func testRegeneratesOnceFromOriginalMailAndSavedInstructions() async throws {
         let f = try fixture(body: "Please review https://github.com/example/example/pull/7")
         let original = try await f.lookup()

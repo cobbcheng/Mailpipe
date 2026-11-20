@@ -1,10 +1,16 @@
 import Foundation
 
-/// Matches a compose session's original message to a local capture. The exchange only needs hashes.
+/// A read-only panel lookup identifies the original without transmitting mail text.
 public struct ComposeMessageIdentity: Codable, Equatable, Sendable {
     public let messageIDDigest: String
+    public let subjectDigest: String
     public let envelopeDigest: String
     public let displayBodyDigest: String?
+    public let modelBodyDigest: String?
+
+    public static func digest(forSubject subject: String) -> String {
+        contentDigest(Data(subject.precomposedStringWithCanonicalMapping.utf8))
+    }
 
     public static func digest(forMessageID messageID: String) -> String? {
         var id = messageID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -14,7 +20,8 @@ public struct ComposeMessageIdentity: Codable, Equatable, Sendable {
         return contentDigest(Data(id.utf8))
     }
 
-    public init?(messageID: String, subject: String, sender: String, to: [String], cc: [String], displayBody: String? = nil) {
+    public init?(messageID: String, subject: String, sender: String, to: [String], cc: [String],
+                 displayBody: String? = nil, modelBody: String? = nil) {
         guard let id = Self.digest(forMessageID: messageID),
               subject.utf8.count <= 2048, to.count <= 100, cc.count <= 100 else { return nil }
         func normalized(_ address: String) -> String? {
@@ -27,7 +34,9 @@ public struct ComposeMessageIdentity: Codable, Equatable, Sendable {
         let fields = [[subject.precomposedStringWithCanonicalMapping], [from], recipients, copies]
         guard let encoded = try? JSONEncoder().encode(fields) else { return nil }
         messageIDDigest = id
+        subjectDigest = Self.digest(forSubject: subject)
         envelopeDigest = contentDigest(encoded)
+        modelBodyDigest = modelBody.map { contentDigest(Data($0.utf8)) }
         displayBodyDigest = displayBody.map {
             contentDigest(Data($0.replacingOccurrences(of: "\r\n", with: "\n").precomposedStringWithCanonicalMapping.utf8))
         }
@@ -40,14 +49,46 @@ public struct ComposeMessageIdentity: Codable, Equatable, Sendable {
     }
 
     fileprivate var valid: Bool {
-        [messageIDDigest, envelopeDigest, displayBodyDigest].compactMap { $0 }.allSatisfy {
+        [messageIDDigest, subjectDigest, envelopeDigest, displayBodyDigest, modelBodyDigest].compactMap { $0 }.allSatisfy {
             $0.utf8.count == 64 && $0.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
         }
     }
 }
 
+/// Only sent following explicit confirmation for a previously uncaptured original.
+public struct ComposePanelOriginal: Codable, Equatable, Sendable {
+    public let messageID: String
+    public let subject: String
+    public let sender: String
+    public let to: [String]
+    public let cc: [String]
+    public let body: String
+    public let displayBody: String
+
+    public init?(messageID: String, subject: String, sender: String, to: [String], cc: [String], body: String, displayBody: String) {
+        self.messageID = messageID
+        self.subject = subject
+        self.sender = sender
+        self.to = to
+        self.cc = cc
+        self.body = body
+        self.displayBody = displayBody
+        guard identity != nil else { return nil }
+    }
+
+    private var identity: ComposeMessageIdentity? {
+        guard body.utf8.count <= MailBodyLimits.modelBudget, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              displayBody.utf8.count <= MailBodyLimits.extractCap, !displayBody.isEmpty else { return nil }
+        return ComposeMessageIdentity(messageID: messageID, subject: subject, sender: sender, to: to, cc: cc,
+                                      displayBody: displayBody, modelBody: body)
+    }
+
+    public func matches(_ expected: ComposeMessageIdentity) -> Bool { identity == expected }
+}
+
 public enum ComposePanelAction: Codable, Equatable, Sendable {
     case lookup
+    case generate(version: String, original: ComposePanelOriginal?)
     case regenerate(version: String)
 }
 
@@ -70,7 +111,7 @@ public struct ComposePanelRequest: Codable, Equatable, Sendable {
         switch action {
         case .lookup: 15
         // A single authorized adapter run can take 120 s, plus process startup/teardown.
-        case .regenerate: 180
+        case .generate, .regenerate: 180
         }
     }
 
@@ -78,6 +119,8 @@ public struct ComposePanelRequest: Codable, Equatable, Sendable {
         guard identity.valid, createdAt <= now.addingTimeInterval(1), createdAt.addingTimeInterval(lifetime) > now else { return false }
         switch action {
         case .lookup: return true
+        case let .generate(version, original):
+            return !version.isEmpty && version.utf8.count <= 512 && (original?.matches(identity) ?? true)
         case let .regenerate(version):
             return !version.isEmpty && version.utf8.count <= 512
         }
@@ -100,9 +143,33 @@ public struct ComposePanelSuggestion: Codable, Equatable, Sendable {
     }
 }
 
+public struct ComposePanelOffer: Codable, Equatable, Sendable {
+    public let version: String
+    public let agentName: String
+    /// A missing preview means that only the extension has the original.
+    public let subject: String?
+    public let body: String?
+
+    public init(version: String, agentName: String, subject: String? = nil, body: String? = nil) {
+        self.version = version
+        self.agentName = agentName
+        self.subject = subject
+        self.body = body
+    }
+
+    fileprivate var valid: Bool {
+        guard !version.isEmpty, version.utf8.count <= 512, !agentName.isEmpty, agentName.utf8.count <= 512 else { return false }
+        if let subject, let body {
+            return subject.utf8.count <= 2_048 && body.utf8.count <= MailBodyLimits.modelBudget && ComposePanelSuggestion.validBody(body)
+        }
+        return subject == nil && body == nil
+    }
+}
+
 public enum ComposePanelResponse: Codable, Equatable, Sendable {
     case ready(ComposePanelSuggestion)
-    case noDraft, unavailable, changed, regenerationLimitReached, failed
+    case canGenerate(ComposePanelOffer)
+    case preparing, noDraft, unavailable, changed, regenerationLimitReached, failed
 }
 
 public enum ComposePanelTransportError: Error, Sendable {
@@ -115,6 +182,8 @@ public enum ComposePanelTransportError: Error, Sendable {
 public struct ComposePanelExchange: Sendable {
     private let directory: URL
     private static let limit = 512 * 1024
+    // The confirmed source can include up to 256 KiB display text and escaped JSON characters.
+    private static let requestLimit = 2 * 1024 * 1024
     private static let acceptInterval: TimeInterval = 8
 
     public init(directory: URL) throws {
@@ -131,7 +200,9 @@ public struct ComposePanelExchange: Sendable {
         let folder = folder(for: request.id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: folder) }
-        try JSONEncoder().encode(request).write(to: folder.appendingPathComponent("pending"), options: .atomic)
+        let data = try JSONEncoder().encode(request)
+        guard data.count <= Self.requestLimit else { throw ComposePanelTransportError.invalidRequest }
+        try data.write(to: folder.appendingPathComponent("pending"), options: .atomic)
         let result = folder.appendingPathComponent("result")
         while true {
             try Task.checkCancellation()
@@ -145,6 +216,7 @@ public struct ComposePanelExchange: Sendable {
                         throw ComposePanelTransportError.invalidResponse
                     }
                 }
+                if case .canGenerate(let offer) = response, !offer.valid { throw ComposePanelTransportError.invalidResponse }
                 return response
             }
             if age >= Self.acceptInterval, !FileManager.default.fileExists(atPath: folder.appendingPathComponent("claimed").path) {
@@ -171,7 +243,7 @@ public struct ComposePanelExchange: Sendable {
             }
             let pending = child.appendingPathComponent("pending"), claimed = child.appendingPathComponent("claimed")
             guard manager.fileExists(atPath: pending.path), (try? manager.moveItem(at: pending, to: claimed)) != nil else { continue }
-            guard let data = try? CaptureInbox.read(claimed, limit: Self.limit),
+            guard let data = try? CaptureInbox.read(claimed, limit: Self.requestLimit),
                   let request = try? JSONDecoder().decode(ComposePanelRequest.self, from: data),
                   request.id == id, request.isValid(at: now),
                   now.timeIntervalSince(request.createdAt) < Self.acceptInterval else {
@@ -184,7 +256,8 @@ public struct ComposePanelExchange: Sendable {
     }
 
     public func isActive(_ request: ComposePanelRequest) -> Bool {
-        request.isValid(at: Date()) && FileManager.default.fileExists(atPath: folder(for: request.id).appendingPathComponent("claimed").path)
+        request.createdAt.addingTimeInterval(request.lifetime) > Date() &&
+            FileManager.default.fileExists(atPath: folder(for: request.id).appendingPathComponent("claimed").path)
     }
 
     public func respond(_ response: ComposePanelResponse, to request: ComposePanelRequest) throws {

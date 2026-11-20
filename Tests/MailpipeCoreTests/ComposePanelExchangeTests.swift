@@ -35,6 +35,36 @@ final class ComposePanelExchangeTests: XCTestCase {
         }
     }
 
+    func testFirstDraftRequiresTheOriginalThatWasPreviewed() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let exchange = try ComposePanelExchange(directory: root)
+        let modelBody = "Can we meet on Friday?"
+        let display = modelBody + "\n> Previous email"
+        let id = try XCTUnwrap(ComposeMessageIdentity(messageID: "m@example.com", subject: "Meeting",
+            sender: "sender@example.com", to: ["reader@example.com"], cc: [], displayBody: display, modelBody: modelBody))
+        func original(_ body: String) -> ComposePanelOriginal? {
+            ComposePanelOriginal(messageID: "m@example.com", subject: "Meeting", sender: "sender@example.com",
+                to: ["reader@example.com"], cc: [], body: body, displayBody: display)
+        }
+        XCTAssertNil(original(String(repeating: "x", count: MailBodyLimits.modelBudget + 1)))
+        let incorrect = try XCTUnwrap(original("A different message"))
+        do {
+            _ = try await exchange.send(sessionID: UUID(), identity: id, action: .generate(version: "v1", original: incorrect))
+            XCTFail("Mismatched original was accepted")
+        } catch ComposePanelTransportError.invalidRequest { }
+        XCTAssertTrue(try exchange.claimRequests().isEmpty)
+        let source = try XCTUnwrap(original(modelBody))
+        let action = ComposePanelAction.generate(version: "v1", original: source)
+        let client = Task { try await exchange.send(sessionID: UUID(), identity: id, action: action) }
+        let claimed = try await claim(1, from: exchange)
+        let request = try XCTUnwrap(claimed.first)
+        XCTAssertEqual(request.action, action)
+        try exchange.respond(.ready(.init(body: "Friday works.", version: "v2", agentName: "Agent")), to: request)
+        _ = try await client.value
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
     func testLookupRepliesAreBoundToUniqueRequestsAndRemovedAfterConsumption() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

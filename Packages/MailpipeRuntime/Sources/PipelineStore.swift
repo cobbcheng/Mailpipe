@@ -168,17 +168,39 @@ public struct StoredReply: Codable, Identifiable, Sendable {
         return runs.contains { $0.destination.taskKind == .draft && $0.error == nil && ($0.finishedAt ?? .distantPast) > handoff.startedAt }
     }
     func isReadyForComposeSuggestion(settings: PipelineSettings, now: Date) -> Bool {
-        guard state == .draftReady, error == nil, discardedAt == nil, excludedFromAuthorizedInbox != true,
+        guard state == .draftReady, error == nil, isAuthorizedForCompose(settings: settings, now: now), let draft else { return false }
+        return !(editedBody ?? draft.body).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    func isAuthorizedForCompose(settings: PipelineSettings, now: Date) -> Bool {
+        guard discardedAt == nil, excludedFromAuthorizedInbox != true,
               !syntheticAuthorized, manualExecutable == nil, messageID?.isEmpty == false, !input.body.isEmpty,
               capturedAt > now.addingTimeInterval(-7 * 86_400),
-              !settings.paused, let permission = settings.permission, permission.id == permissionID else { return false }
+              !settings.paused, let permission = settings.permission, permission.id == permissionID,
+              permission.accepts(input.subject) else { return false }
         if mailKitBody == true {
             guard permission.delivery == .mailKit else { return false }
         } else {
             guard settings.authorizedScopes.contains(where: { $0.accountID == accountID && (scopeID == nil || $0.id == scopeID) }) else { return false }
         }
-        guard let draft else { return false }
-        return !(editedBody ?? draft.body).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return true
+    }
+    var canGenerateFirstComposeDraft: Bool {
+        guard draftData == nil, editedSubject == nil, editedBody == nil, composeHandoff == nil,
+              !isRegeneratingInCompose, !runs.contains(where: { $0.finishedAt == nil }) else { return false }
+        switch state {
+        case .needsReply, .noReply:
+            return error == nil
+        case .needsReview:
+            guard let error, let code = MailpipeError(rawValue: error), runs.last?.error == error else { return false }
+            // Safe to ask for a new draft after a known, completed failure.
+            switch code {
+            case .notInstalled, .launchFailed, .authRequired, .rateLimited, .quotaExhausted,
+                 .invalidOutput, .outputLimit, .outputJSON, .outputFields, .outputReference, .outputSummary, .outputEvidence:
+                return !regenerationLimitReached
+            default: return false
+            }
+        default: return false
+        }
     }
     /// UI preflight only; dispatch still rechecks the authoritative policy.
     public func canRequestRegeneration(settings: PipelineSettings, now: Date = Date()) -> Bool {
@@ -367,6 +389,9 @@ public final class PipelineStore {
                 candidates.append(item)
             }
         }
+    }
+    func canAddComposeOriginal() throws -> Bool {
+        try scalar("SELECT COUNT(*) < 1000 FROM records") == "1"
     }
     public func record(_ id: String) throws -> StoredReply? { try values(StoredReply.self, table: "records", id: id).first }
     public func save(_ item: StoredReply) throws { try put(item, id: item.id, table: "records") }

@@ -93,6 +93,29 @@
         }
       }
     },
+    "Could not generate the draft. Reopen the panel to check its status.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not generate the draft. Reopen the panel to check its status."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能生成草稿，请重新打开面板查看状态。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo generar el borrador. Vuelve a abrir el panel para consultar su estado."
+          }
+        }
+      }
+    },
     "Could not regenerate the suggestion. Your text is still here.": {
       "extractionState": "manual",
       "localizations": {
@@ -139,6 +162,75 @@
         }
       }
     },
+    "Generate Draft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate Draft"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成草稿"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generar borrador"
+          }
+        }
+      }
+    },
+    "Generate a reply with %@ using the message below.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate a reply with %@ using the message below."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 %@ 根据以下邮件生成回复。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa %@ para redactar una respuesta al mensaje que se muestra a continuación."
+          }
+        }
+      }
+    },
+    "Generating draft…": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generating draft…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在生成草稿…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generando borrador…"
+          }
+        }
+      }
+    },
     "Loading suggestion…": {
       "extractionState": "manual",
       "localizations": {
@@ -181,6 +273,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mail no pudo identificar el mensaje original."
+          }
+        }
+      }
+    },
+    "Mail could not provide a readable original message.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mail could not provide a readable original message."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mail 未能提供可读取的原邮件正文。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mail no pudo proporcionar el texto del mensaje original."
+          }
+        }
+      }
+    },
+    "Mailpipe is already preparing a draft for this message.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe is already preparing a draft for this message."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe 正在为这封邮件准备草稿。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe ya está preparando un borrador para este mensaje."
           }
         }
       }
@@ -250,6 +388,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Abre una respuesta para ver su sugerencia."
+          }
+        }
+      }
+    },
+    "Refresh": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刷新"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualizar"
           }
         }
       }

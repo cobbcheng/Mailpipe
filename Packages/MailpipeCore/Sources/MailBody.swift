@@ -230,6 +230,11 @@ public struct MailCorrespondents: Codable, Equatable, Sendable {
     public let sender: String?
     public let recipients: [String]
     public let cc: [String]
+    public init(sender: String, recipients: [String], cc: [String]) {
+        self.sender = sender
+        self.recipients = recipients
+        self.cc = cc
+    }
     public init?(_ raw: Data) {
         guard raw.count <= MailBodyLimits.rawCeiling,
               let split = try? splitHeaders(raw),

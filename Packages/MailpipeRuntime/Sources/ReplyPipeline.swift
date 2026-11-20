@@ -442,7 +442,7 @@ public final class ReplyPipeline {
         }
         let installation = HarnessInstallation(kind: settings.harnessKind, executable: URL(fileURLWithPath: executable),
                                                openCodeModel: settings.openCodeModel)
-        try await generateDraft(id: id, request: request, installation: installation)
+        try await generateDraft(for: item, request: request, installation: installation)
     }
     private func authorize(_ id: String, revision: UUID) throws {
         try Task.checkCancellation()
@@ -452,23 +452,33 @@ public final class ReplyPipeline {
               item.state == .triaging || item.state == .drafting,
               (item.mailKitBody == true && settings.permission?.delivery == .mailKit && settings.permission?.id == item.permissionID) || item.syntheticAuthorized || (settings.permission?.id == item.permissionID && settings.authorizedScopes.contains { $0.accountID == item.accountID && (item.scopeID == nil || $0.id == item.scopeID) }) else { throw PipelineError.revoked }
     }
-    private func generateDraft(id: String, request: ReplyDraftRequest, installation: HarnessInstallation) async throws {
-        guard var item = try store.record(id), let revision = item.revision else { throw PipelineError.storage }
+    func generateDraft(for original: StoredReply, request: ReplyDraftRequest, installation: HarnessInstallation,
+                       runID: String = UUID().uuidString,
+                       confirmStart: @MainActor () throws -> Void = {},
+                       checkPanel: @escaping @MainActor @Sendable () throws -> Void = {}) async throws {
+        var item = original
+        let id = item.id
+        guard let revision = item.revision else { throw PipelineError.storage }
         item.state = .drafting
-        let destination = try DataDestination(messageRef: id, runID: UUID().uuidString, taskKind: .draft, harness: installation.kind)
+        let destination = try DataDestination(messageRef: id, runID: runID, taskKind: .draft, harness: installation.kind)
         item.runs.append(PipelineRun(destination: destination, startedAt: Date()))
+        try confirmStart()
         try store.save(item)
         do {
             let route = item.mailKitBody == true ? AccountRoute(mailKitPermission: item.permissionID, allowedHarnesses: [installation.kind])
                 : AccountRoute(accountID: item.accountID, allowedHarnesses: [installation.kind])
             let output = try await model(installation).run(.draft(request), route: route) { [self] in
-                try await MainActor.run { try self.authorize(id, revision: revision) }
+                try await MainActor.run {
+                    try self.authorize(id, revision: revision)
+                    try checkPanel()
+                }
             }
             guard var current = try store.record(id) else { throw PipelineError.storage }
             let last = current.runs.count - 1
             try current.runs[last].record(output, installation: installation)
             try store.save(current)
             try authorize(id, revision: revision)
+            try checkPanel()
             switch try ReplyDraftOutcome.validated(output.content, for: request) {
             case .noReply:
                 current.state = .noReply
