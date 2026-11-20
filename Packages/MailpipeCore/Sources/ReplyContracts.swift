@@ -61,6 +61,8 @@ public struct ReplyDraftRequest: Encodable, Sendable {
     public let requestID: String
     public let triageRequestID: String
     public let message: MailInput
+    /// Selects the output contract supplied by the host, independently of the mail content.
+    public let allowsNoReply: Bool
     // Host-only grant. Never decoded from model output or email.
     public var approvedPullRequest: String?
     public static func linkedPullRequest(in body: String) -> String? {
@@ -68,11 +70,12 @@ public struct ReplyDraftRequest: Encodable, Sendable {
         guard let range = body.range(of: pattern, options: .regularExpression) else { return nil }
         return String(body[range])
     }
-    public init(message: MailInput) throws {
+    public init(message: MailInput, allowsNoReply: Bool = false) throws {
         requestID = message.messageRef + "-draft"
         // Schema v1 retains this correlation field for stored drafts and adapters.
         triageRequestID = message.messageRef + "-triage"
         self.message = message
+        self.allowsNoReply = allowsNoReply
         try validate()
     }
     public init(requestID: String, triage: ReplyTriageRequest, decision: ReplyDecision, level: ServiceLevel = .default) throws {
@@ -83,6 +86,7 @@ public struct ReplyDraftRequest: Encodable, Sendable {
             throw MailpipeError.invalidInput
         }
         self.requestID = requestID; self.triageRequestID = triage.requestID; self.message = triage.message
+        self.allowsNoReply = false
         try validate()
     }
     enum CodingKeys: String, CodingKey {
@@ -120,6 +124,33 @@ public struct ReplyDraft: Codable, Equatable, Sendable {
             return draft
         } catch let error as MailpipeError { throw error }
         catch { throw MailpipeError.invalidOutput }
+    }
+}
+
+public enum ReplyDraftOutcome: Equatable, Sendable {
+    case draft(ReplyDraft)
+    case noReply
+
+    public static func validated(_ data: Data, for request: ReplyDraftRequest) throws -> Self {
+        if request.allowsNoReply, (try? closedObject(data, keys: NoReply.fields)) != nil {
+            try request.validate()
+            guard let value = try? JSONDecoder().decode(NoReply.self, from: data),
+                  value.schemaVersion == 1, value.disposition == "no_reply" else { throw MailpipeError.invalidOutput }
+            guard value.requestID == request.requestID, value.triageRequestID == request.triageRequestID,
+                  value.messageRef == request.message.messageRef else { throw MailpipeError.outputReference }
+            return .noReply
+        }
+        return .draft(try ReplyDraft.validated(data, for: request))
+    }
+
+    private struct NoReply: Decodable {
+        let schemaVersion: Int
+        let requestID, triageRequestID, messageRef, disposition: String
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case schemaVersion = "schema_version", requestID = "request_id", triageRequestID = "triage_request_id"
+            case messageRef = "message_ref", disposition
+        }
+        static let fields = Set(CodingKeys.allCases.map(\.rawValue))
     }
 }
 
@@ -179,4 +210,6 @@ public enum ReplySchemas {
         return String(decoding: try! JSONSerialization.data(withJSONObject: root, options: [.sortedKeys]), as: UTF8.self)
     }
     public static let draft = #"{"type":"object","additionalProperties":false,"required":["schema_version","request_id","triage_request_id","message_ref","subject","body"],"properties":{"schema_version":{"type":"integer","enum":[1]},"request_id":{"type":"string"},"triage_request_id":{"type":"string"},"message_ref":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"}}}"#
+    private static let noReply = #"{"type":"object","additionalProperties":false,"required":["schema_version","request_id","triage_request_id","message_ref","disposition"],"properties":{"schema_version":{"type":"integer","enum":[1]},"request_id":{"type":"string"},"triage_request_id":{"type":"string"},"message_ref":{"type":"string"},"disposition":{"type":"string","enum":["no_reply"]}}}"#
+    public static let automaticDraft = #"{"oneOf":[\#(draft),\#(noReply)]}"#
 }

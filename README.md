@@ -30,7 +30,9 @@ Mail 草稿邮箱要等实机验证，未通过前不写入。
 发送只打开草稿，不调用 send。
 P1 历史搜索是单独授权的只读能力，方案尚未实机验证。
 P1 的增删改只产生意图，由 Mailpipe 经 Apple Events 执行。
-入站的 Agent 生成回复草稿。DeepSeek Harness 可只读核对 GitHub PR 变更。Claude Code、OpenCode、OpenClaw 和 Hermes Agent 仅依据来信起草。
+明确的简报、促销和付款回执可在本机跳过。
+其余授权来信由 Agent 阅读，只为需要答复的邮件备稿。
+DeepSeek Harness 可只读核对 GitHub PR 变更。Claude Code、OpenCode、OpenClaw 和 Hermes Agent 仅依据来信起草。
 用户主动的查找不在这条限制里，也不能由来信触发。
 
 ## 当前使用入口

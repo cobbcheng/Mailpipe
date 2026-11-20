@@ -4,6 +4,47 @@ import MailpipeCore
 
 @MainActor
 final class ReplyModelTests: XCTestCase {
+    func testOnlyAutomaticDraftsOfferTheNoReplySchema() async throws {
+        let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
+        let draft = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ReplySchemas.draft.utf8)) as? NSDictionary)
+        for automatic in [false, true] {
+            let message = automatic ? MailInput(messageRef: "receipt", subject: "Payment received", body: "Your payment was received.") : ReplySyntheticFixture.triage.message
+            let request = try ReplyDraftRequest(message: message, allowsNoReply: automatic)
+            var result: [String: Any] = ["schema_version": 1, "request_id": request.requestID,
+                "triage_request_id": request.triageRequestID, "message_ref": request.message.messageRef]
+            if automatic {
+                result["disposition"] = "no_reply"
+            } else {
+                result["subject"] = "Re: Example"
+                result["body"] = "I confirm receipt."
+            }
+            let answer = try JSONSerialization.data(withJSONObject: result)
+            let runner = RecordingRunner(inspectionOutputs(dialect) + [ProcessOutput(stdout: try deepseekEvents(answer))])
+            let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("fake"), dialect: dialect,
+                runner: runner, temporaryRoot: root.url, environment: ["HOME": root.url.path])
+            let output = try await adapter.run(.draft(request), route: AccountRoute(accountID: "test", allowedHarnesses: [.deepseek])) {}
+            let outcome = try ReplyDraftOutcome.validated(output.content, for: request)
+            let calls = await runner.calls
+            XCTAssertEqual(calls.count, 3)
+            let call = try XCTUnwrap(calls.last)
+            let input = try XCTUnwrap(JSONSerialization.jsonObject(with: call.stdin) as? [String: Any])
+            let schema = try XCTUnwrap(input["output_schema"] as? NSDictionary)
+            if automatic {
+                XCTAssertEqual(outcome, .noReply)
+                let choices = try XCTUnwrap(schema["oneOf"] as? [NSDictionary])
+                XCTAssertEqual(choices.count, 2)
+                XCTAssertEqual(choices.first, draft)
+                let noReply = try XCTUnwrap(choices.last)
+                let fields = try XCTUnwrap(noReply["properties"] as? [String: [String: Any]])
+                XCTAssertEqual(fields["disposition"]?["enum"] as? [String], ["no_reply"])
+                XCTAssertEqual(Set(noReply["required"] as? [String] ?? []), Set(fields.keys))
+                XCTAssertEqual(noReply["additionalProperties"] as? Bool, false)
+            } else {
+                XCTAssertEqual(outcome, .draft(try ReplyDraft.validated(answer, for: request)))
+                XCTAssertEqual(schema, draft)
+            }
+        }
+    }
     func testTypedReplyChecksLiveAuthorizationBeforeLaunchingModel() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let runner = RecordingRunner(inspectionOutputs(dialect))

@@ -50,6 +50,43 @@ final class ReplyContractTests: XCTestCase {
         row["evidence"] = [["field": "body", "text": "invented evidence"]]
         XCTAssertThrowsError(try ReplyDecision.validated(JSONSerialization.data(withJSONObject: row), for: ReplySyntheticFixture.triage))
     }
+
+    func testAutomaticDraftCanReturnAnExplicitBoundNoReply() throws {
+        let message = MailInput(messageRef: "receipt", subject: "Payment received", body: "Your payment was received.")
+        let automatic = try ReplyDraftRequest(message: message, allowsNoReply: true)
+        let manual = try ReplyDraftRequest(message: message)
+        let row: [String: Any] = [
+            "schema_version": 1, "request_id": automatic.requestID, "triage_request_id": automatic.triageRequestID,
+            "message_ref": message.messageRef, "disposition": "no_reply"
+        ]
+        let noReply = try JSONSerialization.data(withJSONObject: row)
+        XCTAssertEqual(try ReplyDraftOutcome.validated(noReply, for: automatic), .noReply)
+        XCTAssertThrowsError(try ReplyDraftOutcome.validated(noReply, for: manual))
+        XCTAssertThrowsError(try ReplyDraft.validated(noReply, for: automatic))
+        for (key, value): (String, Any) in [
+            ("schema_version", 2), ("schema_version", true), ("disposition", "unknown"), ("request_id", "foreign"),
+            ("triage_request_id", "foreign"), ("message_ref", "foreign"), ("action", "dismiss"), ("body", "")
+        ] {
+            var changed = row
+            changed[key] = value
+            XCTAssertThrowsError(try ReplyDraftOutcome.validated(JSONSerialization.data(withJSONObject: changed), for: automatic), key)
+        }
+        for key in row.keys {
+            var changed = row
+            changed.removeValue(forKey: key)
+            XCTAssertThrowsError(try ReplyDraftOutcome.validated(JSONSerialization.data(withJSONObject: changed), for: automatic), key)
+        }
+        var draft = row
+        draft.removeValue(forKey: "disposition")
+        draft["subject"] = "Re: Payment received"
+        draft["body"] = "Please send a copy to accounting."
+        let data = try JSONSerialization.data(withJSONObject: draft)
+        for request in [automatic, manual] {
+            XCTAssertEqual(try ReplyDraftOutcome.validated(data, for: request), .draft(try ReplyDraft.validated(data, for: request)))
+        }
+        draft["body"] = " "
+        XCTAssertThrowsError(try ReplyDraftOutcome.validated(JSONSerialization.data(withJSONObject: draft), for: automatic))
+    }
     func testTriageReportsRejectedValidationStage() throws {
         let request = ReplySyntheticFixture.triage
         let valid = try XCTUnwrap(JSONSerialization.jsonObject(with: ReplySyntheticFixture.decision) as? [String: Any])

@@ -8,6 +8,8 @@ actor FakeReplyModel: ReplyModelRunning {
     let shouldReply: String
     let harness: HarnessKind
     let actualModel: String?
+    private var returnsNoReply = false
+    func respondWithNoReply() { returnsNoReply = true }
     var afterRun: (@Sendable () async throws -> Void)?
     func setAfterRun(_ action: @escaping @Sendable () async throws -> Void) { afterRun = action }
     init(shouldReply: String = "yes", harness: HarnessKind = .deepseek, actualModel: String? = nil) {
@@ -22,7 +24,11 @@ actor FakeReplyModel: ReplyModelRunning {
             object["request_id"] = request.requestID; object["message_ref"] = request.message.messageRef
             object["should_reply"] = shouldReply; object["evidence"] = []
         case .draft(let request):
-            object = try JSONSerialization.jsonObject(with: ReplySyntheticFixture.draft) as! [String: Any]
+            if returnsNoReply {
+                object = ["schema_version": 1, "disposition": "no_reply"]
+            } else {
+                object = try JSONSerialization.jsonObject(with: ReplySyntheticFixture.draft) as! [String: Any]
+            }
             object["request_id"] = request.requestID; object["triage_request_id"] = request.triageRequestID; object["message_ref"] = request.message.messageRef
         }
         try await afterRun?()
@@ -528,7 +534,7 @@ final class PipelineTests: XCTestCase {
         try await pipeline.pump()
         XCTAssertEqual(try pipeline.store.records().first?.state, .cancelled)
     }
-    func testEveryAuthorizedMessageGoesDirectlyToDraft() async throws {
+    func testReplyRequestsUseOneDraftCallAtEveryServiceLevel() async throws {
         for level in [ServiceLevel.l0, .l1, .l2] {
             let fake = FakeReplyModel(shouldReply: "no"), pipeline = try setup(try temporary(), fake: fake)
             try pipeline.updateSettings { $0.level = level }
