@@ -32,7 +32,7 @@ public final class ReplyPipeline {
     private let composeInboxes: @MainActor () async throws -> [AccountScope]
     private let resolve: MailIdentityResolver
     private let model: ReplyModelFactory
-    private var pumping = false
+    public private(set) var pumping = false
     private let inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) async throws -> Bool?)?
     private var scopeChecked: Set<String> = []
     private var nextCaptureCheck: [String: Date] = [:]

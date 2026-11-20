@@ -46,6 +46,12 @@ P1 的增删改只产生意图，由 Mailpipe 经 Apple Events 执行。
 草稿可在工作台查看、修改。发送前由你在 Apple Mail 核对收件人和正文。
 验证范围见[紧凑引导验收](docs/validation/2026-11-19-compact-onboarding.md)和[手动来信入口移除验收](docs/validation/2026-11-19-remove-manual-intake.md)。
 
+0.1.1 开始，Mailpipe 会自动检查更新。
+也可在菜单栏选择「检查更新…」。
+安装前退出 Apple Mail，安装后再打开以加载新版扩展。
+0.1.0 用户需从官网手动安装首个带更新器的版本。
+候选包状态见[自更新验收](docs/validation/2026-11-20-self-update.md)。
+
 ## 文档入口
 
 | 需要 | 阅读 |

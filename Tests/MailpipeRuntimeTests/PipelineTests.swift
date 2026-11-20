@@ -257,11 +257,13 @@ final class PipelineTests: XCTestCase {
         let pumping = Task { try await pipeline.pump() }
         let status = await XCTWaiter.fulfillment(of: [delayed.started], timeout: 3)
         XCTAssertEqual(status, .completed)
+        XCTAssertTrue(pipeline.pumping)
         try pipeline.cancel(id)
         try pipeline.store.saveEdits(id, subject: "Edited", body: "Keep these edits")
         try pipeline.store.discard(id)
         delayed.finish()
         try await pumping.value
+        XCTAssertFalse(pipeline.pumping)
         let current = try XCTUnwrap(pipeline.store.record(id))
         XCTAssertEqual(current.editedBody, "Keep these edits")
         XCTAssertNotNil(current.discardedAt)

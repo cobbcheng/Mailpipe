@@ -3,5 +3,6 @@
   "main": "worker.mjs",
   "compatibility_date": "2026-11-01",
   "workers_dev": true,
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "mailpipe-local-releases" }],
   "assets": { "directory": "./public" }
 }
