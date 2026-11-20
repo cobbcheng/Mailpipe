@@ -56,11 +56,13 @@ public struct ReplyTriageRequest: Encodable, Sendable {
     }
 }
 public struct ReplyDraftRequest: Encodable, Sendable {
+    public static let maxReplyInstructionLength = 4_000
     public let schemaVersion = 1
     public let taskKind = "reply_draft"
     public let requestID: String
     public let triageRequestID: String
     public let message: MailInput
+    public let replyInstructions: String?
     /// Selects the output contract supplied by the host, independently of the mail content.
     public let allowsNoReply: Bool
     // Host-only grant. Never decoded from model output or email.
@@ -70,11 +72,17 @@ public struct ReplyDraftRequest: Encodable, Sendable {
         guard let range = body.range(of: pattern, options: .regularExpression) else { return nil }
         return String(body[range])
     }
-    public init(message: MailInput, allowsNoReply: Bool = false) throws {
+    public static func normalizedReplyInstructions(_ value: String?) throws -> String? {
+        guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+        guard text.unicodeScalars.count <= maxReplyInstructionLength else { throw MailpipeError.invalidInput }
+        return text
+    }
+    public init(message: MailInput, allowsNoReply: Bool = false, replyInstructions: String? = nil) throws {
         requestID = message.messageRef + "-draft"
         // Schema v1 retains this correlation field for stored drafts and adapters.
         triageRequestID = message.messageRef + "-triage"
         self.message = message
+        self.replyInstructions = try Self.normalizedReplyInstructions(replyInstructions)
         self.allowsNoReply = allowsNoReply
         try validate()
     }
@@ -86,12 +94,13 @@ public struct ReplyDraftRequest: Encodable, Sendable {
             throw MailpipeError.invalidInput
         }
         self.requestID = requestID; self.triageRequestID = triage.requestID; self.message = triage.message
+        self.replyInstructions = nil
         self.allowsNoReply = false
         try validate()
     }
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version", taskKind = "task_kind", requestID = "request_id"
-        case triageRequestID = "triage_request_id", message
+        case triageRequestID = "triage_request_id", message, replyInstructions = "reply_instructions"
     }
     public func validate() throws {
         try ClassificationRequest(requestID: requestID, messages: [message]).validate()

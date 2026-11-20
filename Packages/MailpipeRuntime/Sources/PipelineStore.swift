@@ -43,6 +43,7 @@ public struct PipelineSettings: Codable, Sendable {
     }
     public var executable: String?
     public var openCodeModel: String?
+    public fileprivate(set) var replyInstructions: String?
     public var level: ServiceLevel = .default
     var suggestionsOnly: Bool? // Decode the old manual-only policy without granting capture.
     public var paused = false
@@ -269,6 +270,11 @@ public final class PipelineStore {
             current.permission == expected.permission && current.authorizedScopes == expected.authorizedScopes
     }
     public func saveSettings(_ value: PipelineSettings) throws { try put(value, id: "settings", table: "metadata") }
+    public func saveReplyInstructions(_ value: String) throws {
+        var current = try settings()
+        current.replyInstructions = try ReplyDraftRequest.normalizedReplyInstructions(value)
+        try saveSettings(current)
+    }
     public func onboarding() throws -> OnboardingDraft {
         var draft = try values(OnboardingDraft.self, table: "metadata", id: "onboarding").first ?? OnboardingDraft()
         if draft.suggestionsOnly == true {

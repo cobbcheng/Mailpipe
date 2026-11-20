@@ -45,24 +45,24 @@
         }
       }
     },
-    "%1$@ will use only the message and cannot verify PR changes. The new draft will replace your reply.": {
+    "%1$@ cannot verify PR changes. The new draft will replace your reply.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$@ will use only the message and cannot verify PR changes. The new draft will replace your reply."
+            "value": "%1$@ cannot verify PR changes. The new draft will replace your reply."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$@ 会仅依据邮件内容重新起草，无法核对 PR 的代码变更。新草稿会替换当前回复。"
+            "value": "%1$@ 无法核对 PR 的代码变更。新草稿会替换当前回复。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$@ solo usará el mensaje y no podrá verificar los cambios del PR. El borrador sustituirá tu respuesta."
+            "value": "%1$@ no puede verificar los cambios del PR. El nuevo borrador sustituirá tu respuesta."
           }
         }
       }
@@ -881,6 +881,28 @@
         }
       }
     },
+    "Clear prompt": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear prompt"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清空提示词"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Borrar instrucciones"
+          }
+        }
+      }
+    },
     "Collapse message": {
       "localizations": {
         "en": {
@@ -1475,6 +1497,28 @@
         }
       }
     },
+    "Could not save the reply prompt. Try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not save the reply prompt. Try again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能保存回复提示词，请重试。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudieron guardar las instrucciones de respuesta. Inténtalo de nuevo."
+          }
+        }
+      }
+    },
     "Daily reply reminder": {
       "localizations": {
         "en": {
@@ -1889,6 +1933,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "El agente puede consultar cambios públicos de PR de GitHub. El acceso mediante tu cuenta requiere otra confirmación."
+          }
+        }
+      }
+    },
+    "For example, reply in the sender’s language and use at most two paragraphs.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For example, reply in the sender’s language and use at most two paragraphs."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例如，用来信的语言回复，两段以内。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Por ejemplo, responde en el idioma del remitente en un máximo de dos párrafos."
           }
         }
       }
@@ -2421,24 +2487,46 @@
         }
       }
     },
-    "Mailpipe stores mail, drafts and settings on this Mac. Only authorized subjects and message bodies go to your agent.": {
+    "Mailpipe sends these instructions to %1$@ for new drafts and when you regenerate a reply. Clear the prompt and save to use the default.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mailpipe stores mail, drafts and settings on this Mac. Only authorized subjects and message bodies go to your agent."
+            "value": "Mailpipe sends these instructions to %1$@ for new drafts and when you regenerate a reply. Clear the prompt and save to use the default."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mailpipe 在这台 Mac 上保存来信、草稿和设置，只把获准起草的邮件主题和正文交给你连接的 Agent。"
+            "value": "生成新草稿或手动重新生成回复时，Mailpipe 会将这段提示词发送给 %1$@。清空并保存即可恢复默认。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mailpipe guarda correos, borradores y ajustes en este Mac. Tu agente solo recibe los asuntos y el texto de los mensajes autorizados."
+            "value": "Mailpipe envía estas instrucciones a %1$@ al crear borradores y cuando vuelves a generar una respuesta. Para usar las instrucciones predeterminadas, borra el texto y guarda el cambio."
+          }
+        }
+      }
+    },
+    "Mailpipe stores mail, drafts and settings on this Mac. Your agent receives the subject and body of authorized messages along with any reply prompt you save.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe stores mail, drafts and settings on this Mac. Your agent receives the subject and body of authorized messages along with any reply prompt you save."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe 在这台 Mac 上保存来信、草稿和设置。起草时，Agent 会收到已授权邮件的主题和正文，以及你保存的回复提示词。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe guarda los mensajes, borradores y ajustes en este Mac. Tu agente recibe el asunto y el cuerpo de los mensajes autorizados junto con las instrucciones de respuesta que hayas guardado."
           }
         }
       }
@@ -2839,24 +2927,24 @@
         }
       }
     },
-    "Once authorized, Mailpipe gives %1$@ the subject and body of new messages from all Apple Mail accounts to send to %2$@. Enter a subject to require an exact match.": {
+    "Once authorized, %1$@ sends %2$@ the subject and body of new messages from all Apple Mail accounts, along with any saved reply prompt. Enter a subject to require an exact match.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Once authorized, Mailpipe gives %1$@ the subject and body of new messages from all Apple Mail accounts to send to %2$@. Enter a subject to require an exact match."
+            "value": "Once authorized, %1$@ sends %2$@ the subject and body of new messages from all Apple Mail accounts, along with any saved reply prompt. Enter a subject to require an exact match."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "授权后，Mailpipe 会将 Apple Mail 所有账户的新来信主题和正文交给 %1$@，由它发送至%2$@。填写主题后，仅处理主题完全匹配的新来信。"
+            "value": "授权后，%1$@ 会把 Apple Mail 各账户新来信的主题、正文和已保存的回复提示词发给 %2$@。填写主题可限定为完全匹配的来信。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Con tu permiso, Mailpipe entrega a %1$@ el asunto y el texto de mensajes nuevos de todas tus cuentas de Apple Mail para enviarlos a %2$@. Introduce un asunto para exigir una coincidencia exacta."
+            "value": "Con tu autorización, %1$@ envía a %2$@ el asunto y el cuerpo de los mensajes nuevos de todas tus cuentas de Apple Mail, junto con las instrucciones de respuesta que hayas guardado. Escribe un asunto para exigir una coincidencia exacta."
           }
         }
       }
@@ -3389,6 +3477,28 @@
         }
       }
     },
+    "Replies": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replies"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Respuestas"
+          }
+        }
+      }
+    },
     "Reply copied. Paste it in Mail to send.": {
       "localizations": {
         "en": {
@@ -3429,6 +3539,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "Borradores de respuesta"
+          }
+        }
+      }
+    },
+    "Reply prompt": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reply prompt"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复提示词"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instrucciones de respuesta"
+          }
+        }
+      }
+    },
+    "Reply prompt saved.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reply prompt saved."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已保存回复提示词。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se han guardado las instrucciones de respuesta."
           }
         }
       }
@@ -3653,6 +3807,28 @@
         }
       }
     },
+    "Save prompt": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save prompt"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存提示词"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guardar instrucciones"
+          }
+        }
+      }
+    },
     "Save settings": {
       "localizations": {
         "en": {
@@ -3847,6 +4023,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ajustes…"
+          }
+        }
+      }
+    },
+    "Shorten your prompt to %1$@ characters or fewer.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shorten your prompt to %1$@ characters or fewer."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请将提示词缩短至 %1$@ 个字符以内。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Acorta las instrucciones a un máximo de %1$@ caracteres."
           }
         }
       }

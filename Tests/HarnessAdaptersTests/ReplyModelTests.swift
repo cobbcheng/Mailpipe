@@ -28,9 +28,11 @@ final class ReplyModelTests: XCTestCase {
     func testOnlyAutomaticDraftsOfferTheNoReplySchema() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let draft = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ReplySchemas.draft.utf8)) as? NSDictionary)
+        let instructions = "Use two sentences.\nDescribe https://github.com/example/sample/pull/42 as \"the proposal\"."
         for automatic in [false, true] {
             let message = automatic ? MailInput(messageRef: "receipt", subject: "Payment received", body: "Your payment was received.") : ReplySyntheticFixture.triage.message
-            let request = try ReplyDraftRequest(message: message, allowsNoReply: automatic)
+            let request = try ReplyDraftRequest(message: message, allowsNoReply: automatic,
+                                                replyInstructions: automatic ? instructions : nil)
             var result: [String: Any] = ["schema_version": 1, "request_id": request.requestID,
                 "triage_request_id": request.triageRequestID, "message_ref": request.message.messageRef]
             if automatic {
@@ -49,8 +51,12 @@ final class ReplyModelTests: XCTestCase {
             XCTAssertEqual(calls.count, 3)
             let call = try XCTUnwrap(calls.last)
             let input = try XCTUnwrap(JSONSerialization.jsonObject(with: call.stdin) as? [String: Any])
+            let payload = try XCTUnwrap(input["request"] as? [String: Any])
+            XCTAssertFalse(call.arguments.joined().contains(instructions))
+            XCTAssertNil(call.environment["MAILPIPE_PR_REVIEW"])
             let schema = try XCTUnwrap(input["output_schema"] as? NSDictionary)
             if automatic {
+                XCTAssertEqual(payload["reply_instructions"] as? String, instructions)
                 XCTAssertEqual(outcome, .noReply)
                 let choices = try XCTUnwrap(schema["oneOf"] as? [NSDictionary])
                 XCTAssertEqual(choices.count, 2)
@@ -61,6 +67,7 @@ final class ReplyModelTests: XCTestCase {
                 XCTAssertEqual(Set(noReply["required"] as? [String] ?? []), Set(fields.keys))
                 XCTAssertEqual(noReply["additionalProperties"] as? Bool, false)
             } else {
+                XCTAssertNil(payload["reply_instructions"])
                 XCTAssertEqual(outcome, .draft(try ReplyDraft.validated(answer, for: request)))
                 XCTAssertEqual(schema, draft)
             }

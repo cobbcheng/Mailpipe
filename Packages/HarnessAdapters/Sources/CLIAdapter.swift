@@ -103,7 +103,7 @@ extension CLIAdapter: ReplyModelRunning where Dialect: ReplyHarnessDialect {
         return try await withWorkspace { directory in
             let environment = try dialect.prepare(directory: directory, executable: executable, environment: self.environment)
             // Policy is loaded from the bundled Markdown into the system role.
-            // Only the output contract and the untrusted task payload belong on stdin.
+            // Stdin carries the output contract and task data, including any user writing preferences.
             let stdin = try JSONSerialization.data(withJSONObject: [
                 "output_schema": try JSONSerialization.jsonObject(with: Data(schema.utf8)),
                 "request": try JSONSerialization.jsonObject(with: payload)

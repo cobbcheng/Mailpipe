@@ -111,6 +111,36 @@ final class MailKitAdmissionTests: XCTestCase {
         XCTAssertEqual(calls, 2)
     }
 
+    func testAutomaticDraftAndRegenerationUseCurrentReplyInstructions() async throws {
+        let model = FakeReplyModel()
+        let pipeline = try pipeline(model: model)
+        let first = "Reply in Spanish."
+        let second = "Use bullet points.\nSign with a thank-you."
+        try pipeline.store.saveReplyInstructions(first)
+        let raw = Data("Content-Type: text/plain\r\n\r\nCan you review the schedule?".utf8)
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Schedule",
+            sender: "person@example.com", headers: ["Message-ID": ["<schedule@example.com>"]], rawData: raw), .finished)
+        try await pipeline.pump()
+        let original = try XCTUnwrap(pipeline.store.records().first)
+        XCTAssertEqual(original.state, .draftReady)
+
+        try pipeline.store.saveReplyInstructions(second)
+        try await pipeline.pump()
+        let unchanged = try XCTUnwrap(pipeline.store.record(original.id))
+        XCTAssertEqual(unchanged.draftVersion, original.draftVersion)
+        XCTAssertEqual(unchanged.runs.count, 1)
+        try pipeline.regenerate(original.id)
+        try await pipeline.pump()
+
+        try pipeline.store.saveReplyInstructions("")
+        try pipeline.regenerate(original.id)
+        try await pipeline.pump()
+        let requests = await model.draftRequests
+        XCTAssertEqual(requests.map(\.replyInstructions), [first, second, nil])
+        XCTAssertEqual(requests.map(\.allowsNoReply), [true, false, false])
+        XCTAssertEqual(try pipeline.store.record(original.id)?.state, .draftReady)
+    }
+
     func testReplyStartedBeforeBodyArrivalSurvivesNoReplyResult() async throws {
         let model = FakeReplyModel()
         await model.respondWithNoReply()

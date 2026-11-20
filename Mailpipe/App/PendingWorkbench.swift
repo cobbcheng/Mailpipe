@@ -165,6 +165,11 @@ final class PendingModel: ObservableObject {
         guard onboarding.completed, !onboardingBusy else { return }
         saveConfiguration(updating: true)
     }
+    func saveReplyInstructions(_ value: String) throws {
+        guard let pipeline else { throw PipelineError.storage }
+        try pipeline.store.saveReplyInstructions(value)
+        settings = try pipeline.store.settings()
+    }
     var selected: StoredReply? { records.first { $0.id == selectedID } }
 
     init() {
@@ -677,7 +682,7 @@ private struct DraftDetail: View {
             if model.settings.harnessKind == .deepseek, let link = ReplyDraftRequest.linkedPullRequest(in: item.input.body) {
                 Text(L("Continuing lets Mailpipe use your GitHub account to read changes at %1$@ and share them with DeepSeek Harness for review and drafting. The new draft replaces your reply.", String(describing: link)))
             } else if ReplyDraftRequest.linkedPullRequest(in: item.input.body) != nil {
-                Text(L("%1$@ will use only the message and cannot verify PR changes. The new draft will replace your reply.", String(describing: model.settings.harnessKind.displayName)))
+                Text(L("%1$@ cannot verify PR changes. The new draft will replace your reply.", String(describing: model.settings.harnessKind.displayName)))
             } else {
                 Text(L("The agent will use your model quota again and replace the current reply."))
             }

@@ -425,7 +425,10 @@ public final class ReplyPipeline {
         }
         let allowsNoReply = !item.syntheticAuthorized && item.runs.isEmpty &&
             (item.regenerationCount ?? 0) == 0 && item.editedBody == nil
-        var request = try ReplyDraftRequest(message: item.input, allowsNoReply: allowsNoReply)
+        // A connection test is authorized for the fixed example alone.
+        let instructions = item.syntheticAuthorized ? nil : try store.settings().replyInstructions
+        var request = try ReplyDraftRequest(message: item.input, allowsNoReply: allowsNoReply,
+                                            replyInstructions: instructions)
         request.approvedPullRequest = item.approvedPullRequest
         if settings.harnessKind == .opencode && !item.syntheticAuthorized {
             guard let model = settings.openCodeModel, OpenCodeDialect.validModelReference(model) else {

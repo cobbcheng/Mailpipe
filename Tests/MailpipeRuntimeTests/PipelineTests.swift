@@ -5,6 +5,7 @@ import HarnessAdapters
 
 actor FakeReplyModel: ReplyModelRunning {
     private(set) var calls = 0
+    private(set) var draftRequests: [ReplyDraftRequest] = []
     let shouldReply: String
     let harness: HarnessKind
     let actualModel: String?
@@ -24,6 +25,7 @@ actor FakeReplyModel: ReplyModelRunning {
             object["request_id"] = request.requestID; object["message_ref"] = request.message.messageRef
             object["should_reply"] = shouldReply; object["evidence"] = []
         case .draft(let request):
+            draftRequests.append(request)
             if returnsNoReply {
                 object = ["schema_version": 1, "disposition": "no_reply"]
             } else {
@@ -411,6 +413,16 @@ final class PipelineTests: XCTestCase {
         XCTAssertNotNil(item.draft)
         XCTAssertEqual(item.displayedBody, item.draft?.body)
     }
+    func testSyntheticRunOmitsSavedReplyInstructions() async throws {
+        let fake = FakeReplyModel()
+        let pipeline = try setup(temporary(), fake: fake)
+        try pipeline.store.saveReplyInstructions("Close with a thank-you.")
+        let id = try pipeline.enqueueSynthetic()
+        try await pipeline.pump()
+        XCTAssertEqual(try pipeline.store.record(id)?.state, .draftReady)
+        let requests = await fake.draftRequests
+        XCTAssertEqual(requests.map(\.replyInstructions), [nil])
+    }
     func testLegacyManualRecordsReopenWithoutDispatchAndKeepLocalEdits() async throws {
         let directory = try temporary()
         let inbox = try CaptureInbox(directory: directory.appendingPathComponent("inbox"))
@@ -493,13 +505,36 @@ final class PipelineTests: XCTestCase {
         var legacy = PipelineSettings(); legacy.scope = scope
         var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(legacy)) as! [String: Any]
         object.removeValue(forKey: "scopes")
+        object.removeValue(forKey: "replyInstructions")
         let decoded = try JSONDecoder().decode(PipelineSettings.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(decoded.replyInstructions)
         XCTAssertEqual(decoded.authorizedScopes, [scope])
         let store = try PipelineStore(directory: temporary()); try store.saveSettings(decoded)
         var draft = OnboardingDraft(); draft.selectedScopes = [scope, try AccountScope(accountID: "b", accountName: "Other", mailboxName: "INBOX")]
         try store.saveOnboarding(draft)
         XCTAssertEqual(try store.onboarding().selections.count, 2)
         XCTAssertEqual(try store.settings().authorizedScopes, [scope])
+    }
+    func testReplyInstructionsPersistWithoutChangingCaptureAuthorization() throws {
+        let directory = try temporary()
+        let instructions = String(repeating: "e\u{301}", count: ReplyDraftRequest.maxReplyInstructionLength / 2)
+        var active = PipelineSettings()
+        active.permission = CapturePermission(delivery: .mailKit)
+        active.paused = true
+        do {
+            let store = try PipelineStore(directory: directory)
+            try store.saveSettings(active)
+            try store.saveReplyInstructions(instructions)
+            XCTAssertThrowsError(try store.saveReplyInstructions(instructions + "!"))
+        }
+        let reopened = try PipelineStore(directory: directory)
+        let saved = try reopened.settings()
+        XCTAssertEqual(saved.replyInstructions, instructions)
+        XCTAssertEqual(saved.revision, active.revision)
+        XCTAssertEqual(saved.permission, active.permission)
+        XCTAssertTrue(saved.paused)
+        try reopened.saveReplyInstructions("  \n\t  ")
+        XCTAssertNil(try reopened.settings().replyInstructions)
     }
     func testPersistentImportDedupAndL2() async throws {
         let root = try temporary(), fake = FakeReplyModel()

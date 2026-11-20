@@ -214,7 +214,7 @@ struct MailpipeSettings: View {
     @ObservedObject var model: PendingModel
     @ObservedObject var diagnostics: WorkbenchModel
     @State private var selectedTab = Tab.general
-    private enum Tab { case general, scope, agent, privacy }
+    private enum Tab { case general, replies, scope, agent, privacy }
     var body: some View {
         TabView(selection: $selectedTab) {
             Form {
@@ -231,9 +231,11 @@ struct MailpipeSettings: View {
                 }
                 configurationFooter()
             }.formStyle(.grouped).tabItem { Label(L("General"), systemImage: "gearshape") }.tag(Tab.general)
+            ReplyPromptSettings(model: model)
+                .tabItem { Label(L("Replies"), systemImage: "arrowshape.turn.up.left") }.tag(Tab.replies)
             Form {
                 Section(L("Incoming mail")) {
-                    Text(L("Once authorized, Mailpipe gives %1$@ the subject and body of new messages from all Apple Mail accounts to send to %2$@. Enter a subject to require an exact match.", String(describing: model.onboarding.harnessKind.displayName), String(describing: model.onboarding.harnessKind.modelServiceDescription))).foregroundStyle(.secondary)
+                    Text(L("Once authorized, %1$@ sends %2$@ the subject and body of new messages from all Apple Mail accounts, along with any saved reply prompt. Enter a subject to require an exact match.", String(describing: model.onboarding.harnessKind.displayName), String(describing: model.onboarding.harnessKind.modelServiceDescription))).foregroundStyle(.secondary)
                     if model.onboarding.harnessKind == .opencode, let modelID = model.onboardingResult?.runs.last?.destination.model {
                         LabeledContent(L("Authorized model"), value: modelID)
                     }
@@ -278,7 +280,7 @@ struct MailpipeSettings: View {
             }.formStyle(.grouped).tabItem { Label("Agent", systemImage: "sparkles") }.tag(Tab.agent)
             Form {
                 Section(L("Privacy and data")) {
-                    Text(L("Mailpipe stores mail, drafts and settings on this Mac. Only authorized subjects and message bodies go to your agent."))
+                    Text(L("Mailpipe stores mail, drafts and settings on this Mac. Your agent receives the subject and body of authorized messages along with any reply prompt you save."))
                     Text(L("%1$@ sends this content to %2$@. Mailpipe excludes attachment contents.", String(describing: model.settings.harnessKind.displayName), String(describing: model.settings.harnessKind.modelServiceDescription)))
                     if model.settings.harnessKind == .deepseek {
                         Text(L("For GitHub PR links, the agent can check public changes. Access through your GitHub account requires separate confirmation."))
@@ -300,6 +302,66 @@ struct MailpipeSettings: View {
                     .disabled(model.onboardingBusy || !model.onboardingTestPassed || !model.onboarding.extensionAcknowledged || !model.hasSharedInbox)
             }
         }
+    }
+}
+
+private struct ReplyPromptSettings: View {
+    @ObservedObject var model: PendingModel
+    @State private var edit: String?
+    @State private var feedback: String?
+
+    private var savedPrompt: String { model.settings.replyInstructions ?? "" }
+    private var prompt: Binding<String> {
+        Binding(get: { edit ?? savedPrompt }, set: {
+            edit = $0
+            feedback = nil
+        })
+    }
+
+    var body: some View {
+        let trimmed = prompt.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let limit = ReplyDraftRequest.maxReplyInstructionLength
+        let exceedsLimit = trimmed.unicodeScalars.count > limit
+        Form {
+            Section(L("Reply prompt")) {
+                Text(L("Mailpipe sends these instructions to %1$@ for new drafts and when you regenerate a reply. Clear the prompt and save to use the default.", model.settings.harnessKind.displayName))
+                    .foregroundStyle(.secondary)
+                TextEditor(text: prompt)
+                    .font(.body)
+                    .frame(height: 160)
+                    .accessibilityLabel(L("Reply prompt"))
+                    .overlay(alignment: .topLeading) {
+                        if prompt.wrappedValue.isEmpty {
+                            Text(L("For example, reply in the sender’s language and use at most two paragraphs."))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 5)
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                HStack {
+                    Button(L("Clear prompt")) { prompt.wrappedValue = "" }
+                        .disabled(prompt.wrappedValue.isEmpty)
+                    Spacer()
+                    Button(L("Save prompt")) {
+                        do {
+                            try model.saveReplyInstructions(trimmed)
+                            edit = nil
+                            feedback = L("Reply prompt saved.")
+                        } catch {
+                            feedback = L("Could not save the reply prompt. Try again.")
+                        }
+                    }
+                    .keyboardShortcut("s", modifiers: .command)
+                    .disabled(exceedsLimit || trimmed == savedPrompt)
+                }
+                if exceedsLimit {
+                    Text(L("Shorten your prompt to %1$@ characters or fewer.", String(limit)))
+                } else if let feedback {
+                    Text(feedback)
+                }
+            }
+        }.formStyle(.grouped)
     }
 }
 

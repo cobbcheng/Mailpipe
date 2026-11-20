@@ -48,6 +48,14 @@ DeepSeek Harness 可只读核对 GitHub PR 变更。Codex CLI、Claude Code、Op
 草稿可在工作台查看、修改。发送前由你在 Apple Mail 核对收件人和正文。
 验证范围见[紧凑引导验收](docs/validation/2026-11-19-compact-onboarding.md)和[手动来信入口移除验收](docs/validation/2026-11-19-remove-manual-intake.md)。
 
+### 自定义回复提示词
+
+完成首次设置后，在「设置 → 回复」中填写提示词并保存。
+例如：“用来信的语言回复。先回答问题，结尾写明下一步。”
+提示词适用于所有已授权账户，随起草请求发给所选 Agent。
+保存后，新草稿和手动重新生成的草稿会使用这段提示词。
+清空并保存即可恢复默认写法。
+
 ### 每日回复提醒
 
 在「设置 → 通用 → 每日回复提醒」允许通知并选择时间。
