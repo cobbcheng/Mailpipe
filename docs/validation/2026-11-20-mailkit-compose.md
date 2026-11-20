@@ -151,3 +151,15 @@ ZIP 解压后通过 Apple 公证票据、Gatekeeper 和签名验证。
 官网按英文、中文和西班牙语分别展示已生成回复和空态。
 六张截图使用原生扩展视图、本地化资源与合成内容。
 三语页面均已在 320、390、768、1440 像素宽度核对。
+
+官网三语首页和 [Sparkle 更新源](https://mailpipeai.com/appcast.xml)均已上线。
+六张线上截图与构建产物逐字节一致。
+[官网下载包](https://mailpipeai.com/downloads/Mailpipe-0.2.0-build50-3427852.zip)和 R2 回读均与公证 ZIP 一致。
+发布初期一个 CDN 节点短暂缓存了 404。
+缓存过期后，原始下载地址的 GET 和 HEAD 均通过。0.1.6 下载仍可用。
+
+0.1.6 内置的 Sparkle 从生产更新源识别出 build 50。
+旧版公钥验证了线上 ZIP 的签名。
+在临时目录用此包替换旧版后，宿主与扩展均是 build 50。
+签名、票据和 Gatekeeper 校验通过。
+Sparkle 安装界面与自动重启未验证。
