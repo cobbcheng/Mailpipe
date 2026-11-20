@@ -43,8 +43,8 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
 
 ## 下载状态
 
-0.1.0（build 34）使用 Developer ID 签名并通过 Apple 公证。
-此前 Pages 随站点部署 ZIP。切换后由私有 R2 提供下载。
+0.1.1（build 35）已通过 Apple 公证并装订票据。
+官网与 Sparkle 通过同一个 `/downloads/` 地址从私有 R2 下载。
 页面与构建脚本共用[发布信息](release.mjs)中的版本、文件名和校验值。
 
 在仓库根目录执行 `node website/build-pages.mjs <含已公证App的ZIP> <全新输出目录>`。
