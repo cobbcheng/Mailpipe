@@ -44,7 +44,7 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
 ## 下载状态
 
 0.1.0（build 34）使用 Developer ID 签名并通过 Apple 公证。
-私有 R2 保存归档。官网通过 Pages 提供静态下载。
+此前 Pages 随站点部署 ZIP。切换后由私有 R2 提供下载。
 页面与构建脚本共用[发布信息](release.mjs)中的版本、文件名和校验值。
 
 在仓库根目录执行 `node website/build-pages.mjs <含已公证App的ZIP> <全新输出目录>`。
@@ -92,7 +92,21 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
    它核对 ZIP 内宿主及扩展的标识与版本。
    它还核对宿主的系统下限、更新地址和公钥。
    最后用源码中的 `SUPublicEDKey` 验证归档签名。
-6. 获得发布授权后，整体部署输出目录。
+6. 在 Pages 项目 `mailpipe-official` 的生产环境绑定私有 R2 桶，变量名设为 `RELEASES`。
+   桶内 `downloads/` 前缀只存放已批准公开的版本包。
+   首次切换时，先将当前 build 34 和需保留的历史 ZIP 放入此前缀。
+   每个版本使用唯一文件名。获得发布授权后，在仓库根目录上传并回读核验。
+
+   ```sh
+   filename=$(node --input-type=module -e "import { release } from './website/release.mjs'; console.log(release.filename)")
+   key="$MAILPIPE_RELEASE_BUCKET/downloads/$filename"
+   npx wrangler@4 r2 object put "$key" --remote --file "$MAILPIPE_RELEASE_ZIP"
+   npx wrangler@4 r2 object get "$key" --remote --file "$MAILPIPE_READBACK_ZIP"
+   cmp "$MAILPIPE_RELEASE_ZIP" "$MAILPIPE_READBACK_ZIP"
+   ```
+
+7. 回读一致后，将输出目录部署到 Pages。该目录包含更新清单及下载处理程序。
+   官网下载按钮和更新器均请求 `/downloads/<文件名>`，处理程序从 R2 流式返回 ZIP。
    回读线上更新源和其中的 ZIP，分别与本地产物比对。
    用上一版带更新器的 App 验收安装和重启。
 

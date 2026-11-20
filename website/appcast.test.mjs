@@ -23,7 +23,7 @@ test('Pages builds a signed release and rejects a ZIP signed by another key', as
   await mkdir(join(site, 'public'), { recursive: true });
   await mkdir(join(root, 'Mailpipe/App'), { recursive: true });
   // Exercise the real CLI with isolated metadata and plist files at its normal relative paths.
-  for (const file of ['build-pages.mjs', 'appcast.mjs', 'release-public-key.py', 'worker.mjs', 'messages.mjs']) {
+  for (const file of ['build-pages.mjs', 'appcast.mjs', 'release-public-key.py', 'worker.mjs', 'messages.mjs', 'downloads.mjs']) {
     await symlink(new URL(file, import.meta.url), join(site, file));
   }
   const filename = 'Mailpipe-test.zip';
@@ -64,7 +64,8 @@ with zipfile.ZipFile(Path(root, filename), "w") as archive:
   assert.ok(feed.includes('<sparkle:minimumSystemVersion>13.0.0</sparkle:minimumSystemVersion>'));
   assert.ok(feed.includes(`sparkle:edSignature="${release.edSignature}"`));
   assert.ok(feed.includes(`url="https://mailpipeai.com/downloads/${filename}" length="${bytes.length}"`));
-  assert.deepEqual(await readFile(join(out, 'downloads', filename)), bytes);
+  await assert.rejects(readFile(join(out, 'downloads', filename)), { code: 'ENOENT' });
+  assert.deepEqual(await readFile(join(out, '_worker.js')), await readFile(new URL('./downloads.mjs', import.meta.url)));
   assert.ok((await readFile(join(out, 'index.html'), 'utf8')).includes(`href="/downloads/${filename}"`));
 
   const wrongKey = generateKeyPairSync('ed25519').privateKey;
@@ -72,4 +73,21 @@ with zipfile.ZipFile(Path(root, filename), "w") as archive:
   await assert.rejects(build({ ...release, edSignature: sign(null, bytes, wrongKey).toString('base64') }, bad),
     /failed Sparkle Ed25519 signature verification/);
   await assert.rejects(readFile(join(bad, 'appcast.xml')), { code: 'ENOENT' });
+});
+
+test('download route reads only ZIPs in the public release prefix', async () => {
+  const { default: downloads } = await import('./downloads.mjs');
+  const keys = [];
+  const zip = { body: 'zip', size: 3, httpEtag: '"test"' };
+  const lookup = key => { keys.push(key); return key === 'downloads/old.zip' ? zip : null; };
+  const env = { RELEASES: { get: lookup, head: lookup } };
+  const fetch = (path, method = 'GET') => downloads.fetch(new Request('https://example.com' + path, { method }), env);
+  assert.equal(await (await fetch('/downloads/old.zip')).text(), 'zip');
+  const head = await fetch('/downloads/old.zip', 'HEAD');
+  assert.equal(head.headers.get('Content-Length'), '3');
+  assert.equal(await head.text(), '');
+  assert.equal((await fetch('/downloads/missing.zip')).status, 404);
+  assert.equal((await fetch('/downloads/private/file.zip')).status, 404);
+  assert.equal((await fetch('/downloads/old.zip', 'PUT')).status, 405);
+  assert.deepEqual(keys, ['downloads/old.zip', 'downloads/old.zip', 'downloads/missing.zip']);
 });
