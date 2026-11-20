@@ -53,6 +53,51 @@ final class InboundMailFilterTests: XCTestCase {
         XCTAssertFalse(skips("你对这个报价怎么看？", headers: listHeaders))
     }
 
+    func testBroadcastNewslettersProductUpdatesAndSeasonalOffers() {
+        let subjects = [
+            "Here’s your February newsletter", "Your weekly newsletter", "本週產品簡報",
+            "What’s new in Sample Studio",
+            "🗓️ Sample Black Friday starts tomorrow", "Black Friday savings start today"
+        ]
+        for subject in subjects {
+            XCTAssertTrue(skips(subject, from: "hello@example.com", headers: listHeaders), subject)
+            XCTAssertTrue(skips(subject, from: "News@example.com"), subject)
+            XCTAssertFalse(skips(subject, from: "person@example.com"), subject)
+        }
+        XCTAssertFalse(skips("Your weekly newsletter", from: "Newsletter <editor@example.com>"))
+        XCTAssertFalse(skips("Your weekly newsletter", from: "news+team@example.com"))
+        XCTAssertFalse(skips("Important update", from: "newsletter@example.com", headers: listHeaders))
+        XCTAssertFalse(skips("去海边还是上山？选择旅行目的地", headers: listHeaders))
+    }
+
+    func testPaymentReceiptsRequireAutomationAndClosedPaymentWording() {
+        let service = ["Auto-Submitted": ["auto-generated"]]
+        for subject in ["Payment received", "Your payment receipt", "付款成功"] {
+            XCTAssertTrue(skips(subject, from: "billing@example.com", headers: service), subject)
+            XCTAssertTrue(skips(subject, from: automaticSender), subject)
+            XCTAssertFalse(skips(subject, from: "billing@example.com"), subject)
+        }
+        for subject in ["Customer invoice", "Invoice overdue", "Please confirm payment", "Payment received?"] {
+            XCTAssertFalse(skips(subject, from: automaticSender, headers: service), subject)
+        }
+    }
+
+    func testBroadcastEvidenceDoesNotOverrideRequestsOrConversationHeaders() {
+        for subject in [
+            "What’s new in Sample Studio: could you review this",
+            "What’s new in Sample Studio: feedback requested",
+            "What’s new in Sample Studio: send me your estimate",
+            "Re: Your monthly newsletter", "轉寄：本週產品簡報"
+        ] {
+            XCTAssertFalse(skips(subject, from: "news@example.com", headers: listHeaders), subject)
+        }
+        for conflict in [["Reply-To": ["editor@example.com"]], ["Auto-Submitted": ["no"]],
+                         ["In-Reply-To": ["<person@example.com>"]], ["References": ["<thread@example.com>"]]] {
+            XCTAssertFalse(skips("Your monthly newsletter", from: "newsletter@example.com",
+                                 headers: conflict.merging(listHeaders) { first, _ in first }))
+        }
+    }
+
     func testForwardsDiscussionsAndTicketMessagesContinue() {
         for subject in ["转发：会员专享，全场七折", "Fwd: Save 20% today", "Re: 20% off sitewide"] {
             XCTAssertFalse(skips(subject, from: "colleague@example.com", headers: listHeaders), subject)

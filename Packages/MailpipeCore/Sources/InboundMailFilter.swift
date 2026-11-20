@@ -13,8 +13,8 @@ public enum InboundMailFilter {
         let title = MailHeaderCodec.decodeEncodedWords(subject).precomposedStringWithCompatibilityMapping
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !title.isEmpty, !title.contains(where: \.isNewline), !title.contains("?"),
-              !matches(title, #"^(?:re|回复|fw|fwd|转发)\s*:"#),
-              !matches(title, #"工单|客户(?:提问|询问|回复|留言)|请(?:回复|审批|确认)|\b(?:ticket|customer (?:question|reply)|please reply|approval required|action required)\b"#)
+              !matches(title, #"^(?:re|回复|回覆|fw|fwd|转发|轉寄|轉發)\s*:"#),
+              !matches(title, replyRequest)
         else { return false }
 
         // An explicit human submission, unsupported keyword or malformed value is ambiguous.
@@ -39,22 +39,33 @@ public enum InboundMailFilter {
             return true
         }
         let bulk = fields["precedence"] == "bulk" || fields["precedence"] == "list"
-        guard bulk || hasUnsubscribeLinks(fields["list-unsubscribe"]) else { return false }
-        return promotions.contains { matches(title, $0) }
+        let broadcast = bulk || hasUnsubscribeLinks(fields["list-unsubscribe"]) ||
+            mailbox(sender, localPartMatching: #"news|newsletters?"#)
+        return broadcast && campaignTitles.contains { matches(title, $0) }
     }
 
     private static let systemTitles: Set<String> = [
         "登录成功", "账户登录成功", "您的账户登录成功", "您的订单已发货", "订单已发货",
-        "your order has shipped", "new sign-in to your account", "successful sign-in"
+        "your order has shipped", "new sign-in to your account", "successful sign-in",
+        "payment received", "payment confirmation", "invoice payment confirmation",
+        "payment receipt", "your payment receipt", "your payment was successful",
+        "支付成功", "付款成功", "付款回执", "付款收據", "付款收据"
     ]
 
     private static let verificationCode =
         #"^(?:(?:您的)?(?:登录|邮箱|身份验证)?验证码\s*(?:为|是|:)\s*|(?:your )?(?:verification|sign-in|login) code(?: is |:\s*))[0-9]{4,8}[.。]?$"#
-    private static let promotions = [
+    private static let replyRequest =
+        #"工单|工單|客[户戶](?:提[问問]|[询詢][问問]|回复|回覆|留言)|[请請](?:您)?(?:回复|回覆|审批|審批|[确確][认認])|\b(?:ticket|customer (?:question|reply|message)|please|(?:could|can|would|will) you|(?:need|awaiting) your|(?:reply|response|feedback|approval|confirmation|action) (?:required|requested|needed))\b"#
+
+    private static let campaignTitles = [
         #"^(?:会员专享|限时优惠|限时抢购)\s*[,!:]\s*全场\s*(?:[一二三四五六七八九]{1,2}|[1-9](?:\.[0-9])?)\s*折[!.。]?$"#,
         #"^save [1-9][0-9]?% (?:today|sitewide)[!.]?$"#,
         #"^[1-9][0-9]?% off (?:sitewide|everything)[!.]?$"#,
-        #"^flash sale:\s*[1-9][0-9]?% off[!.]?$"#
+        #"^flash sale:\s*[1-9][0-9]?% off[!.]?$"#,
+        #"^(?:(?:here['’]s )?your )?(?:daily|weekly|monthly|january|february|march|april|may|june|july|august|september|october|november|december) (?:newsletter|digest)[!.]?$"#,
+        #"^what['’]s new (?:on|in|at|from) [\p{L}\p{N}][\p{L}\p{N}&.+-]*(?: [\p{L}\p{N}&.+-]+){0,3}[!.]?$"#,
+        #"^(?:\p{So}\uFE0F?\s*)?(?:[\p{L}\p{N}&-]+ ){0,2}(?:black friday|cyber monday) (?:savings |deals |sale )?starts? (?:today|tomorrow|now|soon|this (?:week|weekend|friday))[!.]?$"#,
+        #"^(?:本周|本週|本月|每周|每週|每月)(?:产品|產品|订阅|訂閱)(?:简报|簡報|通讯|通訊)[!。]?$"#
     ]
 
     private static func hasUnsubscribeLinks(_ header: String?) -> Bool {
@@ -75,8 +86,12 @@ public enum InboundMailFilter {
 
     /// MailKit provides the outer sender mailbox separately. Display-name text is never evidence.
     private static func isMachineAddress(_ value: String?) -> Bool {
+        mailbox(value, localPartMatching: #"no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?"#)
+    }
+
+    private static func mailbox(_ value: String?, localPartMatching pattern: String) -> Bool {
         guard let value, value.utf8.count <= 254 else { return false }
-        return matches(value.lowercased(), #"^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?)@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"#)
+        return matches(value.lowercased(), #"\A(?:\#(pattern))@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\z"#)
     }
 
     /// Duplicates, including differently cased spellings of one field, cannot corroborate a decision.

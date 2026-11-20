@@ -33,16 +33,19 @@ final class MailKitAdmissionTests: XCTestCase {
     func testExcludedCallbacksDoNotRequestBodyReadRawOrEnterPipeline() async throws {
         let model = FakeReplyModel()
         let pipeline = try pipeline(model: model)
-        let samples = [
-            ("Automatic reply", ["Auto-Submitted": ["auto-replied"]]),
-            ("Save 20% today", ["List-Unsubscribe": ["<mailto:unsubscribe@example.com>"]])
+        let samples: [(String, String, [String: [String]])] = [
+            ("Automatic reply", "sender@example.com", ["Auto-Submitted": ["auto-replied"]]),
+            ("Save 20% today", "sender@example.com", ["List-Unsubscribe": ["<mailto:unsubscribe@example.com>"]]),
+            ("Black Friday savings start today", "offers@example.com", ["Precedence": ["bulk"]]),
+            ("Your weekly newsletter", "newsletter@example.com", [:]),
+            ("Payment received", "billing@example.com", ["Auto-Submitted": ["auto-generated"]])
         ]
         for (index, sample) in samples.enumerated() {
-            let (subject, evidence) = sample
+            let (subject, sender, evidence) = sample
             var headers = evidence
             headers["Message-ID"] = ["<sample-\(index)@example.com>"]
             for raw in [nil, Data("Content-Type: text/plain\r\n\r\nSynthetic".utf8)] as [Data?] {
-                let decision = try pipeline.inbox.receiveMailKitMessage(subject: subject, sender: "sender@example.com",
+                let decision = try pipeline.inbox.receiveMailKitMessage(subject: subject, sender: sender,
                     headers: headers, rawData: unexpectedRead(raw))
                 XCTAssertEqual(decision, .finished, subject)
             }
@@ -53,6 +56,86 @@ final class MailKitAdmissionTests: XCTestCase {
         XCTAssertTrue(try pipeline.store.records().isEmpty)
         let calls = await model.calls
         XCTAssertEqual(calls, 0)
+    }
+
+    func testAmbiguousBroadcastCanFinishWithoutDraftOrSecondModelCall() async throws {
+        let model = FakeReplyModel()
+        await model.respondWithNoReply()
+        let pipeline = try pipeline(model: model)
+        let headers = ["Message-ID": ["<bulletin@example.com>"]]
+        let raw = Data("Content-Type: text/plain\r\n\r\nThe monthly results are attached for your records.".utf8)
+        // A duplicate body callback must keep the original decision.
+        for _ in 0..<2 {
+            XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "This month",
+                sender: nil, headers: headers, rawData: raw), .finished)
+            try await pipeline.pump()
+        }
+        let records = try pipeline.store.records()
+        XCTAssertEqual(records.count, 1)
+        let notice = try XCTUnwrap(records.first)
+        XCTAssertEqual(notice.state, .noReply)
+        XCTAssertNil(notice.error)
+        XCTAssertNil(notice.draftData)
+        XCTAssertFalse(notice.state.isPending)
+        XCTAssertFalse(notice.canDisplayInWorkbench)
+        XCTAssertEqual(notice.runs.map(\.destination.taskKind), [.draft])
+        let run = try XCTUnwrap(notice.runs.first)
+        XCTAssertNotNil(run.finishedAt)
+        XCTAssertNil(run.error)
+        XCTAssertEqual(run.inputTokens, 10)
+        XCTAssertEqual(run.outputTokens, 20)
+        let calls = await model.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testExplicitRegenerationRejectsNoReplyAndKeepsUserEdits() async throws {
+        let model = FakeReplyModel()
+        let pipeline = try pipeline(model: model)
+        let raw = Data("Content-Type: text/plain\r\n\r\nPlease confirm the date by email.".utf8)
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Schedule",
+            sender: "person@example.com", headers: ["Message-ID": ["<request@example.com>"]], rawData: raw), .finished)
+        try await pipeline.pump()
+        let original = try XCTUnwrap(pipeline.store.records().first)
+        XCTAssertNotNil(original.draft)
+        try pipeline.store.saveEdits(original.id, subject: "Our schedule", body: "Monday works for me.")
+        await model.respondWithNoReply()
+        try pipeline.regenerate(original.id)
+        try await pipeline.pump()
+        let saved = try XCTUnwrap(pipeline.store.record(original.id))
+        XCTAssertEqual(saved.state, .needsReview)
+        XCTAssertNotNil(saved.runs.last?.error)
+        XCTAssertEqual(saved.draftData, original.draftData)
+        XCTAssertEqual(saved.displayedBody, "Monday works for me.")
+        XCTAssertTrue(saved.canDisplayInWorkbench)
+        let calls = await model.calls
+        XCTAssertEqual(calls, 2)
+    }
+
+    func testReplyStartedBeforeBodyArrivalSurvivesNoReplyResult() async throws {
+        let model = FakeReplyModel()
+        await model.respondWithNoReply()
+        let pipeline = try pipeline(model: model)
+        let subject = "Monthly statement"
+        let headers = ["Message-ID": ["<statement@example.com>"]]
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: subject, sender: nil,
+            headers: headers, rawData: nil), .requestBody)
+        try await pipeline.pump()
+        let waiting = try XCTUnwrap(pipeline.store.records().first)
+        XCTAssertEqual(waiting.state, .awaitingBody)
+        try pipeline.store.saveEdits(waiting.id, subject: "Question about the statement", body: "Could you check the total?")
+        let raw = Data("Content-Type: text/plain\r\n\r\nFor your records.".utf8)
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: subject, sender: nil,
+            headers: headers, rawData: raw), .finished)
+        try await pipeline.pump()
+        XCTAssertEqual(try pipeline.store.records().map(\.id), [waiting.id])
+        let saved = try XCTUnwrap(pipeline.store.record(waiting.id))
+        XCTAssertEqual(saved.state, .needsReview)
+        XCTAssertNotNil(saved.runs.last?.error)
+        XCTAssertEqual(saved.editedSubject, "Question about the statement")
+        XCTAssertEqual(saved.editedBody, "Could you check the total?")
+        XCTAssertTrue(saved.canDisplayInWorkbench)
+        let calls = await model.calls
+        XCTAssertEqual(calls, 1)
     }
 
     func testOrdinaryMailAndHumanForwardFinishTheSameWaitingRecord() async throws {

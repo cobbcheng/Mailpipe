@@ -93,7 +93,10 @@ extension CLIAdapter: ReplyModelRunning where Dialect: ReplyHarnessDialect {
         let payload: Data, schema: String
         switch task {
         case .triage(let request): try request.validate(); payload = try JSONEncoder().encode(request); schema = ReplySchemas.triage
-        case .draft(let request): try request.validate(); payload = try JSONEncoder().encode(request); schema = ReplySchemas.draft
+        case .draft(let request):
+            try request.validate()
+            payload = try JSONEncoder().encode(request)
+            schema = request.allowsNoReply ? ReplySchemas.automaticDraft : ReplySchemas.draft
         }
         let capability = try await inspect()
         guard capability.supportsHeadlessRun else { throw MailpipeError.unsupportedVersion }

@@ -138,7 +138,8 @@ DeepSeek 使用 `approval-policy never` 且工具全禁用。
 `parse_rule` 和批次调度尚未实现。
 `triage` 用类别和摘要回答“要不要回复”。
 当前回复流水线对已授权来信直接调用 `draft`。
-这次调用只读、无工具，输出只能是草稿。
+首次自动处理可返回草稿或 `no_reply`。
+用户明确要求重新生成时，只接受草稿。
 classify 与 summarize 不再作为独立交付，只作为 triage 的输入字段。
 历史搜索和写意图不走这些批次。
 它们走第 8 节的 Mailpipe 工具，并且只能由用户主动发起。
@@ -166,13 +167,14 @@ classify 与 summarize 不再作为独立交付，只作为 triage 的输入字�
 
 `category` 枚举为 customer、billing、notification、newsletter、other、unknown。
 `needs_action` 与 `should_reply` 的枚举都是 yes、no、unknown。
-只有 `should_reply` 为 yes 才进入 draft。
+使用 triage 决策创建草稿请求时，须取得 yes。
 摘要最多 3 项，每项长度受限。
-draft 响应包含版本、请求 ID、分拣请求 ID。
-内容只有 `message_ref`、主题和正文。
-收件人由未来的可信 Mail 交接层确定，模型不可指定。
+两种 draft 结果均须匹配版本和三个关联 ID。
+草稿携带主题和正文。无需回复的结果携带 `disposition: no_reply`。
+宿主拒绝混用两种格式的响应。
+收件人由 Mail 交接层核对。
 证据必须能在输入对应字段中找到。
-入站的 triage 与 draft 不授予工具权限。
+可用的只读查询由宿主限定。
 输出不得包含脚本、任意动作或文件访问请求。
 draft 结果不能被解释成发送、移动或打开撰写窗口。
 

@@ -266,7 +266,8 @@ P0。每封交给 Harness 的邮件都要能回答发给了谁。
 |---|---|
 | `ReplyTriageRequest` | 单封输入；任务为 `reply_triage` |
 | `ReplyDecision` | 独立 `should_reply`；保留分类、行动判断、摘要和原文证据 |
-| `ReplyDraftRequest` | 仅接受已校验的 yes 决策和 L2；绑定原始内容 |
+| `ReplyDraftRequest` | 绑定原始输入，宿主限定本次允许的结果 |
+| `ReplyDraftOutcome` | 首次自动处理可返回草稿或明确的 `no_reply` |
 | `ReplyDraft` | 只含关联 ID、主题和正文；无收件人或动作 |
 | `ServiceLevel` | L0、L1、L2；默认 L2；不含 L3 |
 | `DataDestination` | 绑定邮件、调用、任务和 Harness；独立保存证据 |
@@ -275,7 +276,7 @@ P0。每封交给 Harness 的邮件都要能回答发给了谁。
 它们不替换 M0 分类探针的旧 schema。
 未知字段、错误关联 ID 和越界输出均被拒绝。
 草稿主题拒绝控制字符，正文最多 16 KiB。
-`should_reply=no/unknown` 均不能创建草稿请求。
+使用分拣决策创建草稿请求时，须取得 L2 的 yes。
 L1 的 yes 只产生 `needsReply` 展示意图。
 L0 不产生回复展示或草稿意图。
 这不代表 L0 的整理执行已经实现。
@@ -323,6 +324,7 @@ Task、Run、Decision 和草稿存于同一记录中。
 | triaging / drafting | 转 needsReview，不自动重放 |
 | draftQueued | 重验存储决策与策略版本，只接续草稿 |
 | draftReady / needsReply | 直接显示，不再次调用 |
+| noReply | 保留处理记录，重启后不重新起草 |
 | needsReview / cancelled | 不自动重试 |
 
 全局暂停单独持久化。
