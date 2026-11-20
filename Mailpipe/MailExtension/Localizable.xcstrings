@@ -24,6 +24,29 @@
         }
       }
     },
+    "Choose Existing Draft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Existing Draft"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选取已有草稿"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elegir borrador existente"
+          }
+        }
+      }
+    },
     "Copied. Paste in your Mail reply.": {
       "extractionState": "manual",
       "localizations": {
@@ -392,25 +415,48 @@
         }
       }
     },
-    "Open a reply to see its suggestion.": {
+    "Original Subject": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open a reply to see its suggestion."
+            "value": "Original Subject"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "打开一封回复即可查看建议。"
+            "value": "原邮件主题"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Abre una respuesta para ver su sugerencia."
+            "value": "Asunto original"
+          }
+        }
+      }
+    },
+    "Reply to or forward a message to see its suggestion.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reply to or forward a message to see its suggestion."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复或转发一封邮件即可查看建议。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Responde a un mensaje o reenvíalo para ver su sugerencia."
           }
         }
       }
@@ -480,6 +526,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sugerencia de respuesta"
+          }
+        }
+      }
+    },
+    "Search": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar"
           }
         }
       }

@@ -49,9 +49,12 @@ public struct ComposeMessageIdentity: Codable, Equatable, Sendable {
     }
 
     fileprivate var valid: Bool {
-        [messageIDDigest, subjectDigest, envelopeDigest, displayBodyDigest, modelBodyDigest].compactMap { $0 }.allSatisfy {
-            $0.utf8.count == 64 && $0.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
-        }
+        [messageIDDigest, subjectDigest, envelopeDigest, displayBodyDigest, modelBodyDigest]
+            .compactMap { $0 }.allSatisfy(Self.validDigest)
+    }
+
+    fileprivate static func validDigest(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 }
 
@@ -88,6 +91,8 @@ public struct ComposePanelOriginal: Codable, Equatable, Sendable {
 
 public enum ComposePanelAction: Codable, Equatable, Sendable {
     case lookup
+    /// The user asked to choose a saved draft in a composer without its original message.
+    case findDrafts(subjectDigest: String)
     /// A stored draft was found. Match any available body evidence before returning it.
     case verifiedLookup
     case generate(version: String, original: ComposePanelOriginal?)
@@ -97,11 +102,11 @@ public enum ComposePanelAction: Codable, Equatable, Sendable {
 public struct ComposePanelRequest: Codable, Equatable, Sendable {
     public let id: UUID
     public let sessionID: UUID
-    public let identity: ComposeMessageIdentity
+    public let identity: ComposeMessageIdentity?
     public let action: ComposePanelAction
     public let createdAt: Date
 
-    public init(sessionID: UUID, identity: ComposeMessageIdentity, action: ComposePanelAction, id: UUID = UUID(), createdAt: Date = Date()) {
+    public init(sessionID: UUID, identity: ComposeMessageIdentity?, action: ComposePanelAction, id: UUID = UUID(), createdAt: Date = Date()) {
         self.id = id
         self.sessionID = sessionID
         self.identity = identity
@@ -111,20 +116,23 @@ public struct ComposePanelRequest: Codable, Equatable, Sendable {
 
     fileprivate var lifetime: TimeInterval {
         switch action {
-        case .lookup, .verifiedLookup: 15
+        case .lookup, .verifiedLookup, .findDrafts: 15
         // A single authorized adapter run can take 120 s, plus process startup/teardown.
         case .generate, .regenerate: 180
         }
     }
 
     fileprivate func isValid(at now: Date) -> Bool {
-        guard identity.valid, createdAt <= now.addingTimeInterval(1), createdAt.addingTimeInterval(lifetime) > now else { return false }
+        guard createdAt <= now.addingTimeInterval(1), createdAt.addingTimeInterval(lifetime) > now else { return false }
         switch action {
-        case .lookup, .verifiedLookup: return true
+        case let .findDrafts(digest):
+            return identity == nil && ComposeMessageIdentity.validDigest(digest)
+        case .lookup, .verifiedLookup: return identity?.valid == true
         case let .generate(version, original):
+            guard let identity, identity.valid else { return false }
             return !version.isEmpty && version.utf8.count <= 512 && (original?.matches(identity) ?? true)
         case let .regenerate(version):
-            return !version.isEmpty && version.utf8.count <= 512
+            return identity?.valid == true && !version.isEmpty && version.utf8.count <= 512
         }
     }
 }
@@ -162,8 +170,28 @@ public struct ComposePanelOffer: Codable, Equatable, Sendable {
     }
 }
 
+/// Identifies one source the user can select without transferring the original or the draft.
+public struct ComposeDraftChoice: Codable, Equatable, Sendable {
+    public static let limit = 50
+    public let sender: String
+    public let capturedAt: Date
+    public let identity: ComposeMessageIdentity
+
+    public init(sender: String, capturedAt: Date, identity: ComposeMessageIdentity) {
+        self.sender = sender
+        self.capturedAt = capturedAt
+        self.identity = identity
+    }
+
+    fileprivate func isValid(for subjectDigest: String) -> Bool {
+        MailComposeRequest.validAddress(sender) && capturedAt.timeIntervalSinceReferenceDate.isFinite &&
+            identity.valid && identity.subjectDigest == subjectDigest && identity.displayBodyDigest != nil
+    }
+}
+
 public enum ComposePanelResponse: Codable, Equatable, Sendable {
     case ready(ComposePanelSuggestion)
+    case draftChoices([ComposeDraftChoice])
     case canGenerate(ComposePanelOffer)
     case verifyOriginal, preparing, noDraft, unavailable, changed, regenerationLimitReached, failed
 }
@@ -189,7 +217,7 @@ public struct ComposePanelExchange: Sendable {
         guard attributes.isDirectory == true, attributes.isSymbolicLink != true else { throw ComposePanelTransportError.invalidRequest }
     }
 
-    public func send(sessionID: UUID, identity: ComposeMessageIdentity, action: ComposePanelAction) async throws -> ComposePanelResponse {
+    public func send(sessionID: UUID, identity: ComposeMessageIdentity?, action: ComposePanelAction) async throws -> ComposePanelResponse {
         try Task.checkCancellation()
         let request = ComposePanelRequest(sessionID: sessionID, identity: identity, action: action)
         guard request.isValid(at: Date()) else { throw ComposePanelTransportError.invalidRequest }
@@ -206,6 +234,15 @@ public struct ComposePanelExchange: Sendable {
             guard age < request.lifetime else { throw ComposePanelTransportError.timedOut }
             if FileManager.default.fileExists(atPath: result.path) {
                 let response = try JSONDecoder().decode(ComposePanelResponse.self, from: CaptureInbox.read(result, limit: Self.limit))
+                switch (action, response) {
+                case let (.findDrafts(subjectDigest), .draftChoices(choices)):
+                    guard choices.count <= ComposeDraftChoice.limit, choices.allSatisfy({ $0.isValid(for: subjectDigest) }) else {
+                        throw ComposePanelTransportError.invalidResponse
+                    }
+                case (.findDrafts, .failed), (.findDrafts, .unavailable), (.findDrafts, .noDraft): break
+                case (.findDrafts, _), (_, .draftChoices): throw ComposePanelTransportError.invalidResponse
+                default: break
+                }
                 if case .ready(let suggestion) = response {
                     guard ComposePanelSuggestion.validBody(suggestion.body), !suggestion.version.isEmpty,
                           suggestion.version.utf8.count <= 512, suggestion.agentName.utf8.count <= 512 else {

@@ -5,7 +5,7 @@ import HarnessAdapters
 extension ReplyPipeline {
     private enum ComposeLookup {
         case context(ComposeContext)
-        case verifyOriginal
+        case response(ComposePanelResponse)
     }
 
     private struct ComposeContext {
@@ -39,17 +39,27 @@ extension ReplyPipeline {
             }
             guard let result = try lookup() else {
                 switch request.action {
+                case .findDrafts: return .draftChoices([])
                 case .lookup, .verifiedLookup: return .noDraft
                 case .generate, .regenerate: return .changed
                 }
             }
-            guard case let .context(context) = result else { return .verifyOriginal }
+            let context: ComposeContext
+            switch result {
+            case let .response(response): return response
+            case let .context(found): context = found
+            }
             let current: @MainActor @Sendable () throws -> ComposeContext? = {
                 guard case let .context(latest) = try lookup() else { return nil }
                 return latest
             }
             switch request.action {
-            case .lookup, .verifiedLookup: return context.response
+            case .findDrafts: return .failed
+            case .lookup: return context.response
+            case .verifiedLookup:
+                let response = context.response
+                guard case .ready = response else { return .noDraft }
+                return response
             case let .generate(version, original):
                 guard case .canGenerate = context.response, context.version == version else { return .changed }
                 return try await generateFirstSuggestion(for: request, original: original, context: context,
@@ -72,20 +82,21 @@ extension ReplyPipeline {
         if settings.harnessKind == .opencode {
             guard let target = settings.openCodeModel, OpenCodeDialect.validModelReference(target) else { return nil }
         }
-        let candidates = try store.composeCandidates(messageIDDigest: request.identity.messageIDDigest)
+        if case let .findDrafts(subjectDigest) = request.action {
+            guard request.identity == nil else { return nil }
+            return .response(.draftChoices(try store.composeDraftChoices(subjectDigest: subjectDigest, settings: settings, now: Date())))
+        }
+        guard let identity = request.identity else { return nil }
+        let candidates = try store.composeCandidates(messageIDDigest: identity.messageIDDigest)
         // Resolve identity before eligibility. Discarded or revoked duplicates cannot break a tie.
         var matches: [StoredReply] = []
         for item in candidates {
-            guard let id = item.messageID, let addresses = item.correspondents, let sender = addresses.sender,
-                  let identity = ComposeMessageIdentity(messageID: id, subject: item.input.subject, sender: sender,
-                      to: addresses.recipients, cc: addresses.cc,
-                      displayBody: request.identity.displayBodyDigest == nil ? nil : (item.displayBody ?? item.input.body))
-            else { return nil }
-            if request.identity.matches(identity) { matches.append(item) }
+            guard let storedIdentity = item.composeIdentity(includingBody: identity.displayBodyDigest != nil) else { return nil }
+            if identity.matches(storedIdentity) { matches.append(item) }
         }
-        if request.action == .lookup, request.identity.displayBodyDigest == nil,
+        if request.action == .lookup, identity.displayBodyDigest == nil,
            matches.contains(where: { $0.isReadyForComposeSuggestion(settings: settings, now: Date()) }) {
-            return .verifyOriginal
+            return .response(.verifyOriginal)
         }
         guard matches.count <= 1 else { return nil }
         let item: StoredReply?
@@ -94,8 +105,8 @@ extension ReplyPipeline {
                   record.isAuthorizedForCompose(settings: settings, now: Date()) else { return nil }
             item = record
         } else {
-            guard candidates.isEmpty, permission.delivery == .mailKit,
-                  permission.exactSubject.map({ ComposeMessageIdentity.digest(forSubject: $0) == request.identity.subjectDigest }) ?? true,
+            guard request.action != .verifiedLookup, candidates.isEmpty, permission.delivery == .mailKit,
+                  permission.exactSubject.map({ ComposeMessageIdentity.digest(forSubject: $0) == identity.subjectDigest }) ?? true,
                   try store.canAddComposeOriginal() else { return nil }
             item = nil
         }
@@ -103,7 +114,7 @@ extension ReplyPipeline {
                                                openCodeModel: settings.openCodeModel)
         // Opening and confirming use the same message envelope. The full source is checked separately on submission.
         var binding = [request.sessionID.uuidString, permission.id.uuidString, settings.revision.uuidString,
-                       installation.id, installation.openCodeModel ?? "", request.identity.messageIDDigest, request.identity.envelopeDigest]
+                       installation.id, installation.openCodeModel ?? "", identity.messageIDDigest, identity.envelopeDigest]
         if let item {
             binding += [item.id, item.state.rawValue, item.runs.last?.destination.runID ?? "",
                         item.draftVersion ?? "", item.input.subject, item.input.body, item.displayedSubject, item.displayedBody]
@@ -133,7 +144,7 @@ extension ReplyPipeline {
             item = stored
             if stored.state == .needsReview { item.regenerationCount = (item.regenerationCount ?? 0) + 1 }
         } else {
-            guard let original, original.matches(panel.identity), permission.accepts(original.subject) else { return .changed }
+            guard let original, let identity = panel.identity, original.matches(identity), permission.accepts(original.subject) else { return .changed }
             let id = UUID().uuidString
             let messageID = original.messageID.trimmingCharacters(in: .whitespacesAndNewlines)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "<>"))

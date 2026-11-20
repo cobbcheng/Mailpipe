@@ -44,6 +44,42 @@ final class ComposePanelExchangeTests: XCTestCase {
         }
     }
 
+    func testRestoredForwardSearchOnlyReturnsChoicesForRequestedSubject() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let exchange = try ComposePanelExchange(directory: root)
+        let source = try identity(body: "Original message")
+        let search = ComposePanelAction.findDrafts(subjectDigest: source.subjectDigest)
+        for (identity, action) in [(Optional(source), search), (nil, .lookup), (nil, .findDrafts(subjectDigest: "Meeting"))] {
+            do {
+                _ = try await exchange.send(sessionID: UUID(), identity: identity, action: action)
+                XCTFail("Invalid search scope")
+            } catch ComposePanelTransportError.invalidRequest {}
+        }
+        let choice = ComposeDraftChoice(sender: "alice@example.com", capturedAt: Date(), identity: source)
+        let different = try XCTUnwrap(ComposeMessageIdentity(messageID: "next@example.com", subject: "Other",
+            sender: choice.sender, to: [], cc: [], displayBody: "Different message"))
+        let expected = ComposePanelResponse.draftChoices([choice])
+        let wrongSubject = ComposeDraftChoice(sender: choice.sender, capturedAt: choice.capturedAt, identity: different)
+        for response in [expected, .draftChoices([wrongSubject]), .ready(.init(body: "private reply", version: "v", agentName: "Agent"))] {
+            let pending = Task { try await exchange.send(sessionID: UUID(), identity: nil, action: search) }
+            let requests = try await claim(1, from: exchange)
+            let request = try XCTUnwrap(requests.first)
+            XCTAssertNil(request.identity)
+            try exchange.respond(response, to: request)
+            if response == expected {
+                let result = try await pending.value
+                XCTAssertEqual(result, response)
+                let fields = String(decoding: try JSONEncoder().encode(result), as: UTF8.self)
+                XCTAssertFalse(fields.contains("Original message"))
+                XCTAssertFalse(fields.contains("Meeting"))
+            } else {
+                do { _ = try await pending.value; XCTFail("Search returned a draft or an unrelated choice") }
+                catch ComposePanelTransportError.invalidResponse {}
+            }
+        }
+    }
+
     func testFirstDraftRequiresTheOriginalFromTheConfirmedGenerationRequest() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

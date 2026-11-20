@@ -171,6 +171,12 @@ public struct StoredReply: Codable, Identifiable, Sendable {
         guard state == .draftReady, error == nil, isAuthorizedForCompose(settings: settings, now: now), let draft else { return false }
         return !(editedBody ?? draft.body).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+    func composeIdentity(includingBody: Bool) -> ComposeMessageIdentity? {
+        guard let messageID, let correspondents, let sender = correspondents.sender else { return nil }
+        return ComposeMessageIdentity(messageID: messageID, subject: input.subject, sender: sender,
+            to: correspondents.recipients, cc: correspondents.cc,
+            displayBody: includingBody ? (displayBody ?? input.body) : nil)
+    }
     func isAuthorizedForCompose(settings: PipelineSettings, now: Date) -> Bool {
         guard discardedAt == nil, excludedFromAuthorizedInbox != true,
               !syntheticAuthorized, manualExecutable == nil, messageID?.isEmpty == false, !input.body.isEmpty,
@@ -389,6 +395,30 @@ public final class PipelineStore {
                 candidates.append(item)
             }
         }
+    }
+    /// A restored compose window can explicitly search existing ready drafts by original subject.
+    func composeDraftChoices(subjectDigest: String, settings: PipelineSettings, now: Date) throws -> [ComposeDraftChoice] {
+        guard let permission = settings.permission else { return [] }
+        let stmt = try statement("""
+            SELECT id, json_extract(CAST(payload AS TEXT), '$.input.subject') FROM records
+            WHERE json_extract(CAST(payload AS TEXT), '$.state') = ?
+              AND json_extract(CAST(payload AS TEXT), '$.permissionID') = ?
+              AND json_extract(CAST(payload AS TEXT), '$.discardedAt') IS NULL
+            ORDER BY json_extract(CAST(payload AS TEXT), '$.capturedAt') DESC, id
+            """, [ReplyState.draftReady.rawValue, permission.id.uuidString])
+        defer { sqlite3_finalize(stmt) }
+        var choices: [ComposeDraftChoice] = []
+        while choices.count < ComposeDraftChoice.limit {
+            let status = sqlite3_step(stmt)
+            if status == SQLITE_DONE { break }
+            guard status == SQLITE_ROW, let id = sqlite3_column_text(stmt, 0),
+                  let subject = sqlite3_column_text(stmt, 1) else { throw PipelineError.storage }
+            guard ComposeMessageIdentity.digest(forSubject: String(cString: subject)) == subjectDigest,
+                  let item = try record(String(cString: id)), item.isReadyForComposeSuggestion(settings: settings, now: now),
+                  let sender = item.correspondents?.sender, let identity = item.composeIdentity(includingBody: true) else { continue }
+            choices.append(ComposeDraftChoice(sender: sender, capturedAt: item.capturedAt, identity: identity))
+        }
+        return choices
     }
     func canAddComposeOriginal() throws -> Bool {
         try scalar("SELECT COUNT(*) < 1000 FROM records") == "1"

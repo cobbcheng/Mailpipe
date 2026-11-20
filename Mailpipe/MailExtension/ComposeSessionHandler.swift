@@ -15,13 +15,43 @@ final class ComposeSessionHandler: NSObject, MEComposeSessionHandler {
     }
 
     func viewController(for session: MEComposeSession) -> MEExtensionViewController {
-        let model = self.model ?? ComposeSuggestionModel(sessionID: session.sessionID)
+        let model = self.model.flatMap { $0.sessionID == session.sessionID ? $0 : nil } ?? ComposeSuggestionModel(sessionID: session.sessionID)
         self.model = model
         let context = session.composeContext
         let isReply = context.action == .reply || context.action == .replyAll
-        let original = isReply ? context.originalMessage.flatMap { OriginalMessage($0, reply: session.mailMessage) } : nil
-        return ComposePopoverController(model: model, original: original, isReply: isReply)
+        let supportsSuggestions = isReply || context.action == .forward
+        let projected = context.originalMessage
+        let original = supportsSuggestions ? projected.flatMap {
+            OriginalMessage($0, reply: isReply ? session.mailMessage : nil)
+        } : nil
+        let hint = original?.messageID == nil ? subjectHint(for: session.mailMessage) : nil
+        return ComposePopoverController(model: model, original: original, subjectHint: hint)
     }
+}
+
+// A subject can narrow a user-requested search, but cannot identify a message.
+private func forwardedSubjectDigest(_ subject: String) -> String? {
+    guard let colon = subject.firstIndex(where: { $0 == ":" || $0 == "：" }) else { return nil }
+    let prefix = subject[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+    guard ["fw", "fwd", "转发", "轉發", "转寄", "轉寄", "rv", "reenv", "reenviado"].contains(prefix) else { return nil }
+    let original = subject[subject.index(after: colon)...].drop(while: \.isWhitespace)
+    guard !original.isEmpty, original.utf8.count <= 2048 else { return nil }
+    return ComposeMessageIdentity.digest(forSubject: String(original))
+}
+
+private func exactSubjectDigest(_ subject: String) -> String? {
+    let text = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, text.utf8.count <= 2048 else { return nil }
+    return forwardedSubjectDigest(text) ?? ComposeMessageIdentity.digest(forSubject: text)
+}
+
+private func subjectHint(for outgoing: MEMessage) -> String? {
+    let subject = MailHeaderCodec.decodeEncodedWords(outgoing.subject)
+    if let digest = forwardedSubjectDigest(subject) { return digest }
+    let fields = (outgoing.headers ?? [:]).filter { $0.key.lowercased() == "subject" }
+    guard fields.count == 1, let values = fields.first?.value, values.count == 1 else { return exactSubjectDigest(subject) }
+    let header = MailHeaderCodec.decodeEncodedWords(values[0])
+    return forwardedSubjectDigest(header) ?? exactSubjectDigest(subject) ?? exactSubjectDigest(header)
 }
 
 @MainActor
@@ -32,10 +62,10 @@ private struct OriginalMessage {
     let cc: [String]
     private(set) var messageID: String?
 
-    init?(_ message: MEMessage, reply: MEMessage) {
-        // In-Reply-To refers to this reply's parent even when its original has partial headers.
+    init?(_ message: MEMessage, reply: MEMessage?) {
+        // Only a reply's outgoing In-Reply-To identifies the original. A forward uses the forwarded message itself.
         let originalID = (message.headers ?? [:]).filter { $0.key.lowercased() == "message-id" }
-        let parentID = (reply.headers ?? [:]).filter { $0.key.lowercased() == "in-reply-to" }
+        let parentID = (reply?.headers ?? [:]).filter { $0.key.lowercased() == "in-reply-to" }
         var id: String?
         for fields in [originalID, parentID] where !fields.isEmpty {
             guard fields.count == 1, let values = fields.first?.value, values.count == 1,
@@ -87,12 +117,12 @@ private final class ComposePopoverController: MEExtensionViewController {
     private let presentationID = UUID()
     private let model: ComposeSuggestionModel
     private let original: OriginalMessage?
-    private let isReply: Bool
+    private let subjectHint: String?
 
-    init(model: ComposeSuggestionModel, original: OriginalMessage?, isReply: Bool) {
+    init(model: ComposeSuggestionModel, original: OriginalMessage?, subjectHint: String?) {
         self.model = model
         self.original = original
-        self.isReply = isReply
+        self.subjectHint = subjectHint
         super.init(nibName: nil, bundle: nil)
         preferredContentSize = NSSize(width: 380, height: 280)
     }
@@ -108,7 +138,7 @@ private final class ComposePopoverController: MEExtensionViewController {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        model.present(original: original, isReply: isReply, presentationID: presentationID)
+        model.present(original: original, subjectHint: subjectHint, presentationID: presentationID)
     }
 
     override func viewDidDisappear() {
@@ -128,19 +158,27 @@ private final class ComposeSuggestionModel: ObservableObject {
         case loading, editing, message(String)
         case firstDraft(ComposePanelOffer)
         case missingMessageID
+        case chooseDraft, searchSubject(emptyResult: Bool), draftChoices([ComposeDraftChoice])
         case preparing
     }
-    enum Operation { case lookup, copy, generate, regenerate }
+    enum Operation { case lookup, findDrafts, copy, generate, regenerate }
 
     @Published private(set) var screen = Screen.loading
     @Published private(set) var busy: Operation?
     @Published var body = ""
+    @Published var searchText = ""
     @Published private(set) var feedback: String?
     @Published private(set) var suggestion: ComposePanelSuggestion?
     var canCopy: Bool { !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private let sessionID: UUID
+    var canChangeChoice: Bool { selectedIdentity != nil }
+    var hasSubjectHint: Bool { searchDigest != nil }
+    var canSearch: Bool { exactSubjectDigest(searchText) != nil }
+    let sessionID: UUID
     private var currentPresentation: UUID?
     private var original: OriginalMessage?
+    private var projectedHint: String?
+    private var searchDigest: String?
+    private var selectedIdentity: ComposeMessageIdentity?
     private var task: Task<Void, Never>?
     private var exchange: ComposePanelExchange?
 
@@ -152,18 +190,44 @@ private final class ComposeSuggestionModel: ObservableObject {
         }
     }
 
-    func present(original: OriginalMessage?, isReply: Bool, presentationID: UUID) {
+    func present(original: OriginalMessage?, subjectHint: String?, presentationID: UUID) {
         dismiss()
         currentPresentation = presentationID
         self.original = original
-        guard isReply else { reset(panelText("Open a reply to see its suggestion.")); return }
-        guard let original else { reset(panelText("Mail could not identify the original message.")); return }
-        if original.messageID == nil {
-            screen = .missingMessageID
+        if original?.messageID != nil {
+            if searchDigest != nil { clearSelection() }
+            projectedHint = nil
+            searchDigest = nil
+            searchText = ""
+            perform(.lookup)
             return
         }
-        screen = .loading
-        perform(.lookup)
+        if let subjectHint, subjectHint != projectedHint {
+            clearSelection()
+            projectedHint = subjectHint
+            searchDigest = subjectHint
+            searchText = ""
+        }
+        if selectedIdentity != nil {
+            self.original = nil
+            perform(.lookup)
+        } else {
+            screen = original == nil ? .chooseDraft : .missingMessageID
+        }
+    }
+
+    func beginChoosing() {
+        guard busy == nil else { return }
+        original = nil
+        if searchDigest == nil { screen = .searchSubject(emptyResult: false) }
+        else { perform(.findDrafts) }
+    }
+
+    func search() {
+        guard case .searchSubject = screen, let digest = exactSubjectDigest(searchText), busy == nil else { return }
+        if digest != searchDigest { clearSelection() }
+        searchDigest = digest
+        perform(.findDrafts)
     }
 
     func dismiss(presentationID: UUID? = nil) {
@@ -179,7 +243,7 @@ private final class ComposeSuggestionModel: ObservableObject {
     func findDraft() {
         guard var original, busy == nil else { return }
         original.recoverMessageID()
-        guard original.messageID != nil else { reset(panelText("Mail could not identify the original message.")); return }
+        guard original.messageID != nil else { self.original = nil; screen = .chooseDraft; return }
         self.original = original
         screen = .loading
         perform(.lookup)
@@ -190,28 +254,43 @@ private final class ComposeSuggestionModel: ObservableObject {
         feedback = nil
     }
 
+    func choose(_ choice: ComposeDraftChoice) {
+        guard busy == nil, case let .draftChoices(choices) = screen, choices.contains(choice),
+              choice.identity.subjectDigest == searchDigest, choice.identity.displayBodyDigest != nil else { return }
+        if selectedIdentity != choice.identity { clearSelection() }
+        selectedIdentity = choice.identity
+        screen = .loading
+        perform(.lookup)
+    }
+
     func perform(_ operation: Operation) {
-        guard let original, busy == nil else { return }
-        guard let metadata = original.identity() else { reset(panelText("Mail could not identify the original message.")); return }
+        guard busy == nil, currentPresentation != nil else { return }
         guard let exchange else { reset(panelText("Open Mailpipe, then reopen this panel.")); return }
+        let original = self.original
         let previous = suggestion
         let submitted = body
-        var identity = metadata
+        var identity = selectedIdentity ?? original?.identity()
         let action: ComposePanelAction
         switch operation {
-        case .lookup: action = .lookup
-        case .copy:
-            guard previous != nil, canCopy else { return }
-            action = .lookup
+        case .findDrafts:
+            guard let searchDigest else { return }
+            identity = nil
+            action = .findDrafts(subjectDigest: searchDigest)
+            screen = .loading
+        case .lookup, .copy:
+            guard identity != nil else { reset(panelText("Mail could not identify the original message.")); return }
+            if operation == .copy && (previous == nil || !canCopy) { return }
+            action = selectedIdentity == nil ? .lookup : .verifiedLookup
+            if operation == .lookup { screen = .loading }
         case .regenerate:
             guard let previous else { return }
-            guard let evidence = try? original.evidence(requiresSource: false) else {
+            identity = selectedIdentity ?? (try? original?.evidence(requiresSource: false))?.identity
+            guard identity != nil else {
                 reset(panelText("Mail could not identify the original message.")); return
             }
-            identity = evidence.identity
             action = .regenerate(version: previous.version)
         case .generate:
-            guard case let .firstDraft(offer) = screen else { return }
+            guard let original, case let .firstDraft(offer) = screen else { return }
             guard let evidence = try? original.evidence(requiresSource: offer.requiresOriginal) else {
                 reset(panelText("Mail could not provide a readable original message.")); return
             }
@@ -228,14 +307,19 @@ private final class ComposeSuggestionModel: ObservableObject {
                 var response = try await exchange.send(sessionID: sessionID, identity: identity, action: action)
                 try Task.checkCancellation()
                 if response == .verifyOriginal, action == .lookup {
-                    guard let evidence = try? original.evidence(requiresSource: false) else {
+                    guard let original, let evidence = try? original.evidence(requiresSource: false) else {
                         reset(panelText("Mail could not identify the original message.")); return
                     }
                     response = try await exchange.send(sessionID: sessionID, identity: evidence.identity, action: .verifiedLookup)
                     try Task.checkCancellation()
                 }
                 switch response {
+                case let .draftChoices(choices):
+                    guard operation == .findDrafts else { showFailure(for: operation); return }
+                    if choices.isEmpty { showEmptySearch() }
+                    else { screen = .draftChoices(choices) }
                 case let .ready(latest):
+                    guard operation != .findDrafts else { showFailure(for: operation); return }
                     if operation == .copy && previous?.version == latest.version {
                         let board = NSPasteboard.general
                         board.clearContents()
@@ -249,6 +333,7 @@ private final class ComposeSuggestionModel: ObservableObject {
                     suggestion = latest
                     screen = .editing
                 case let .canGenerate(offer):
+                    guard selectedIdentity == nil, original != nil else { showEmptySearch(); return }
                     suggestion = nil
                     body = ""
                     screen = .firstDraft(offer)
@@ -259,7 +344,8 @@ private final class ComposeSuggestionModel: ObservableObject {
                     body = ""
                     screen = .preparing
                 case .noDraft:
-                    reset(panelText("No reply suggestion is ready for this message."))
+                    if original == nil || selectedIdentity != nil { showEmptySearch() }
+                    else { reset(panelText("No reply suggestion is ready for this message.")) }
                 case .unavailable:
                     reset(panelText("Check that Mailpipe is running and mail processing is authorized."))
                 case .changed:
@@ -286,10 +372,20 @@ private final class ComposeSuggestionModel: ObservableObject {
         }
     }
 
-    private func reset(_ message: String) {
-        body = ""
+    private func clearSelection() {
+        selectedIdentity = nil
         suggestion = nil
+        body = ""
         feedback = nil
+    }
+
+    private func showEmptySearch() {
+        clearSelection()
+        screen = .searchSubject(emptyResult: true)
+    }
+
+    private func reset(_ message: String) {
+        clearSelection()
         screen = .message(message)
     }
 }
@@ -299,7 +395,14 @@ private struct ComposeSuggestionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(verbatim: panelText("Reply suggestion")).font(.headline)
+            HStack {
+                Text(verbatim: panelText("Reply suggestion")).font(.headline)
+                if case .editing = model.screen, model.canChangeChoice {
+                    Spacer()
+                    Button { model.beginChoosing() } label: { Text(verbatim: panelText("Choose Existing Draft")) }
+                        .disabled(model.busy != nil)
+                }
+            }
             switch model.screen {
             case .loading:
                 ProgressView { Text(verbatim: panelText("Loading suggestion…")) }
@@ -310,7 +413,40 @@ private struct ComposeSuggestionView: View {
                 Spacer(minLength: 0)
             case .missingMessageID:
                 Button { model.findDraft() } label: { Text(verbatim: panelText("Find Draft")) }
+                Button { model.beginChoosing() } label: { Text(verbatim: panelText("Choose Existing Draft")) }
                 Spacer(minLength: 0)
+            case .chooseDraft:
+                if !model.hasSubjectHint {
+                    Text(verbatim: panelText("Reply to or forward a message to see its suggestion.")).foregroundStyle(.secondary)
+                }
+                Button { model.beginChoosing() } label: { Text(verbatim: panelText("Choose Existing Draft")) }
+                Spacer(minLength: 0)
+            case let .searchSubject(emptyResult):
+                if emptyResult { Text(verbatim: panelText("No draft yet")).foregroundStyle(.secondary) }
+                TextField(text: $model.searchText) { Text(verbatim: panelText("Original Subject")) }
+                    .accessibilityLabel(Text(verbatim: panelText("Original Subject")))
+                    .onSubmit { model.search() }
+                Button { model.search() } label: { Text(verbatim: panelText("Search")) }
+                    .disabled(!model.canSearch)
+                Spacer(minLength: 0)
+            case let .draftChoices(choices):
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(choices.indices, id: \.self) { index in
+                            let choice = choices[index]
+                            Button { model.choose(choice) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(verbatim: choice.sender)
+                                    Text(choice.capturedAt, format: .dateTime.year().month().day().hour().minute().second())
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+                }
             case let .firstDraft(offer):
                 Text(verbatim: panelText("No draft yet")).foregroundStyle(.secondary)
                 Spacer(minLength: 0)

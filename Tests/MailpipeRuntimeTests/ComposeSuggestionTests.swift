@@ -16,6 +16,14 @@ final class ComposeSuggestionTests: XCTestCase {
             ComposePanelRequest(sessionID: session, identity: identity, action: action)
         }
 
+        @MainActor func choices(subject: String = "Example") async throws -> [ComposeDraftChoice] {
+            let request = ComposePanelRequest(sessionID: session, identity: nil,
+                action: .findDrafts(subjectDigest: ComposeMessageIdentity.digest(forSubject: subject)))
+            let result = await pipeline.handleComposePanelRequest(request) { true }
+            guard case let .draftChoices(choices) = result else { throw MailpipeError.invalidOutput }
+            return choices
+        }
+
         @MainActor func lookup() async throws -> ComposePanelSuggestion {
             var result = await pipeline.handleComposePanelRequest(request(.lookup)) { true }
             if result == .verifyOriginal {
@@ -79,6 +87,78 @@ final class ComposeSuggestionTests: XCTestCase {
         try f.pipeline.store.save(duplicate)
         let ambiguous = await f.pipeline.handleComposePanelRequest(f.request(.lookup)) { true }
         XCTAssertEqual(ambiguous, .noDraft)
+        let calls = await f.model.calls
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testRestoredWindowListsReadyDraftsAndOpensOnlyTheSelectedOriginal() async throws {
+        let f = try fixture()
+        let store = f.pipeline.store
+        let raw = Data("From: another@example.com\r\nTo: receiver@example.com\r\n\r\nAnother private original".utf8)
+        let id = try store.importCapture(InboundCapture(permissionID: f.item.permissionID, subject: "Example",
+            messageID: "second@example.com", raw: raw))
+        var second = try XCTUnwrap(store.record(id))
+        let task = try ReplyDraftRequest(message: second.input)
+        second.draftData = try JSONSerialization.data(withJSONObject: ["schema_version": 1, "request_id": task.requestID,
+            "triage_request_id": task.triageRequestID, "message_ref": id, "subject": "Re: Example", "body": "Second suggestion"])
+        second.state = .draftReady
+        try store.save(second)
+
+        let choices = try await f.choices()
+        XCTAssertEqual(choices.map(\.sender), ["another@example.com", "sender@example.com"])
+        XCTAssertEqual(choices.map(\.capturedAt), [second.capturedAt, f.item.capturedAt])
+        XCTAssertEqual(choices.last?.identity, f.identity)
+        let wire = try XCTUnwrap(String(data: JSONEncoder().encode(choices), encoding: .utf8))
+        for privateText in [f.item.input.body, f.item.displayedBody, second.input.body, second.displayedBody, "receiver@example.com"] {
+            XCTAssertFalse(wire.contains(privateText))
+        }
+        let absent = try await f.choices(subject: "Other subject")
+        XCTAssertTrue(absent.isEmpty)
+        let choice = try XCTUnwrap(choices.first)
+        let selected = ComposePanelRequest(sessionID: f.session, identity: choice.identity, action: .verifiedLookup)
+        let response = await f.pipeline.handleComposePanelRequest(selected) { true }
+        guard case let .ready(draft) = response else { return XCTFail("Expected chosen draft") }
+        XCTAssertEqual(draft.body, second.displayedBody)
+        try store.saveEdits(id, subject: "Re: Example", body: "Updated suggestion")
+        let edited = await f.pipeline.handleComposePanelRequest(selected) { true }
+        guard case let .ready(latest) = edited else { return XCTFail("Expected latest edit") }
+        XCTAssertNotEqual(latest.version, draft.version)
+        XCTAssertEqual(latest.body, "Updated suggestion")
+        let stale = ComposePanelRequest(sessionID: f.session, identity: choice.identity, action: .regenerate(version: draft.version))
+        let regenerated = await f.pipeline.handleComposePanelRequest(stale) { true }
+        XCTAssertEqual(regenerated, .changed)
+        try store.discard(id)
+        let discarded = await f.pipeline.handleComposePanelRequest(selected) { true }
+        XCTAssertEqual(discarded, .noDraft)
+        let remaining = try await f.choices()
+        XCTAssertEqual(remaining, Array(choices.suffix(1)))
+        let calls = await f.model.calls
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testRestoredDraftChoiceRequiresCurrentAuthorizationAndReadyState() async throws {
+        let f = try fixture()
+        let available = try await f.choices()
+        let choice = try XCTUnwrap(available.first)
+        let request = ComposePanelRequest(sessionID: f.session, identity: choice.identity, action: .verifiedLookup)
+        var changed = f.item
+        changed.state = .noReply
+        changed.editedBody = nil
+        changed.draftData = nil
+        try f.pipeline.store.save(changed)
+        let noLongerReady = await f.pipeline.handleComposePanelRequest(request) { true }
+        XCTAssertEqual(noLongerReady, .noDraft)
+        let noChoices = try await f.choices()
+        XCTAssertTrue(noChoices.isEmpty)
+        try f.pipeline.store.save(f.item)
+        try f.pipeline.updateSettings { $0.paused = true }
+        let paused = try await f.choices()
+        XCTAssertTrue(paused.isEmpty)
+        try f.pipeline.updateSettings { $0.paused = false; $0.permission = nil }
+        let revoked = try await f.choices()
+        XCTAssertTrue(revoked.isEmpty)
+        let stale = await f.pipeline.handleComposePanelRequest(request) { true }
+        XCTAssertEqual(stale, .noDraft)
         let calls = await f.model.calls
         XCTAssertEqual(calls, 0)
     }
