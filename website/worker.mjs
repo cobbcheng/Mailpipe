@@ -19,7 +19,7 @@ const languages = { en: ["/", "English"], "zh-CN": ["/zh/", "中文"], es: ["/es
 function homepage(language = "en") {
   const copy = messages[language];
   const screenshots = `/screenshots/${language === "zh-CN" ? "zh" : language}`;
-  const previewImage = `${origin}${screenshots}/compose-ready.png`;
+  const previewImage = `${origin}${screenshots}/compose-window-ready.png`;
   const pageURL = origin + languages[language][0];
   const description = copy.description.replace("{agents}", agents.map(agent => agent.name).join(", "));
   const app = {
@@ -32,7 +32,7 @@ function homepage(language = "en") {
     operatingSystem: "macOS 13+",
     softwareVersion: release.version,
     downloadUrl: origin + downloadURL,
-    screenshot: [previewImage, `${origin}${screenshots}/compose-empty.png`, `${origin}${screenshots}/detail.jpg`],
+    screenshot: [previewImage, `${origin}${screenshots}/compose-window-empty.png`, `${origin}${screenshots}/detail.jpg`],
     inLanguage: language,
   };
   return `<!doctype html>
@@ -97,11 +97,17 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
         </div>
         <div class="compose-gallery">
           <figure>
-            <img src="${screenshots}/compose-ready.png" width="832" height="704" alt="${copy.readyAlt}" fetchpriority="high">
+            <a href="${screenshots}/compose-window-ready.png">
+              <span class="compose-image"><img src="${screenshots}/compose-window-ready.png" width="1732" height="720" alt="${copy.readyAlt}" fetchpriority="high"></span>
+              <small>${copy.fullSize}</small>
+            </a>
             <figcaption><h3>${copy.readyTitle}</h3><p>${copy.readyBody}</p></figcaption>
           </figure>
           <figure>
-            <img src="${screenshots}/compose-empty.png" width="832" height="704" alt="${copy.emptyAlt}">
+            <a href="${screenshots}/compose-window-empty.png">
+              <span class="compose-image"><img src="${screenshots}/compose-window-empty.png" width="1732" height="720" alt="${copy.emptyAlt}" loading="lazy"></span>
+              <small>${copy.fullSize}</small>
+            </a>
             <figcaption><h3>${copy.emptyTitle}</h3><p>${copy.emptyBody}</p></figcaption>
           </figure>
         </div>
