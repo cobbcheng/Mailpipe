@@ -1519,24 +1519,24 @@
         }
       }
     },
-    "Discard draft": {
+    "Delete from workbench": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Discard draft"
+            "value": "Delete from workbench"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "丢弃草稿"
+            "value": "从工作台删除"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Descartar borrador"
+            "value": "Eliminar del panel de trabajo"
           }
         }
       }

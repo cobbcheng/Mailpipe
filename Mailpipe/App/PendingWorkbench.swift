@@ -658,6 +658,13 @@ private struct DraftDetail: View {
             .padding(.top, 7)
             .padding(.bottom, 24)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            actions
+                .modifier(WorkbenchColumn())
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(.regularMaterial)
+        }
         .onAppear { model.openEditor(item) }
         .task(id: item.draftVersion) {
             model.markOpened(item)
@@ -768,7 +775,6 @@ private struct DraftDetail: View {
                         .font(.caption).buttonStyle(.link)
                 }
             }
-            actions
         }
     }
     private var replyEditor: some View {
@@ -807,12 +813,11 @@ private struct DraftDetail: View {
             Button { confirmRegeneration = true } label: { actionIcon(L("Regenerate"), "arrow.clockwise") }
                 .help(L("Regenerate"))
                 .disabled(!canRegenerate)
-            Menu {
-                Button(L("View data usage")) { showExplanation = true }
-                Divider()
-                Button(L("Discard draft"), role: .destructive) { model.discard(item.id) }.disabled(item.isPreparing)
-            } label: { actionIcon(L("More draft actions"), "ellipsis") }
-                .help(L("More draft actions")).menuIndicator(.hidden).menuStyle(.button).fixedSize().accessibilityLabel(L("More draft actions"))
+            Button(role: .destructive) {
+                model.discard(item.id)
+            } label: { actionIcon(L("Delete from workbench"), "trash") }
+                .help(L("Delete from workbench"))
+                .disabled(item.isPreparing)
             Spacer(minLength: 0)
             Button { showExplanation = true } label: { actionIcon(L("View data usage"), "info") }
                 .help(L("View data usage")).accessibilityLabel(L("View data usage"))
