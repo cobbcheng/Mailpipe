@@ -24,13 +24,13 @@
 }
 
 :root {
-  color-scheme: light;
-  --bg: #fff;
-  --surface: #f4f5f7;
-  --border: #e3e6eb;
-  --text: #15171c;
-  --muted: #626b79;
-  --accent: #2b59ff;
+  color-scheme: light dark;
+  --bg: light-dark(#fff, #15171b);
+  --surface: light-dark(#f4f5f7, #21242a);
+  --border: light-dark(#e3e6eb, #40454e);
+  --text: light-dark(#15171c, #f3f4f6);
+  --muted: light-dark(#626b79, #b7bfca);
+  --accent: light-dark(#2b59ff, #96adff);
   --display: "Inter Display", "PingFang SC", "Noto Sans SC", "WenQuanYi Micro Hei", sans-serif;
   --body: Inter, "PingFang SC", "Noto Sans SC", "WenQuanYi Micro Hei", sans-serif;
   --ease: cubic-bezier(0.44, 0, 0.56, 1);
@@ -549,7 +549,7 @@ nav a:hover { color: var(--muted); }
 .site-header select {
   appearance: none;
   color: inherit;
-  background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23202328' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 12px center;
+  background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23808080' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 12px center;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 32px 6px 6px;
@@ -559,3 +559,35 @@ nav a:hover { color: var(--muted); }
   .site-header .rails { flex-wrap: wrap; padding-block: 10px; gap: 8px; }
   .site-header nav { order: 1; width: 100%; }
 }
+
+.theme-picker:not([hidden]) { display: inline-flex; }
+.theme-picker {
+  position: relative;
+  margin: 0;
+  padding: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: light-dark(#eee, #33373e);
+}
+.theme-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+}
+.theme-picker label { cursor: pointer; }
+.theme-picker span {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.theme-picker svg { width: 20px; height: 20px; }
+.theme-picker input:checked + span {
+  background: var(--bg);
+  color: var(--text);
+}
+.theme-picker input:focus-visible + span { outline: 2px solid var(--accent); }

@@ -38,6 +38,13 @@ function homepage(language = "en") {
 <html lang="${language}">
 <head>
 <meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<script>
+try {
+  const theme = localStorage.getItem("mailpipe-theme");
+  if (theme === "dark" || theme === "light") document.documentElement.style.colorScheme = theme;
+} catch {}
+</script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${copy.title}</title>
 <meta name="description" content="${description}">
@@ -46,7 +53,7 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
 <link rel="icon" href="/icon.png">
 <link rel="preload" href="/fonts/InterDisplay-SemiBold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/Inter-Medium.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/site.css?v=${release.build}-picker">
+<link rel="stylesheet" href="/site.css?v=${release.build}-theme">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="${({en:"en_US",es:"es_ES","zh-CN":"zh_CN"})[language]}">
 <meta property="og:site_name" content="Mailpipe">
@@ -168,12 +175,37 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
         <p>${copy.footer}</p>
       </div>
     </div>
+    <fieldset class="theme-picker" hidden>
+      <legend class="theme-sr">${copy.appearance[0]}</legend>
+      ${["light", "dark", "system"].map((mode, i) => {
+        const icon = [
+          '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
+          '<path d="M20.5 14A9 9 0 0 1 10 3.5 9 9 0 1 0 20.5 14Z"/>',
+          '<rect x="2" y="3" width="20" height="14" rx="1.5"/><path d="M12 17v4m-5 0h10"/>',
+        ][i];
+        return `<label title="${copy.appearance[i + 1]}"><input class="theme-sr" type="radio" name="theme" value="${mode}" aria-label="${copy.appearance[i + 1]}"><span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icon}</svg></span></label>`;
+      }).join("")}
+    </fieldset>
     <div class="footer-contact">
       <p>${copy.support}</p>
       <a class="support" href="mailto:support@mailpipeai.com">support@mailpipeai.com</a>
     </div>
   </div>
 </footer>
+<script>
+const picker = document.querySelector(".theme-picker");
+const root = document.documentElement;
+picker.querySelector('input[value="' + (root.style.colorScheme || "system") + '"]').checked = true;
+picker.hidden = false;
+picker.addEventListener("change", event => {
+  const theme = event.target.value;
+  root.style.colorScheme = theme === "system" ? "" : theme;
+  try {
+    if (theme === "system") localStorage.removeItem("mailpipe-theme");
+    else localStorage.setItem("mailpipe-theme", theme);
+  } catch {}
+});
+</script>
 </body>
 </html>`;
 }

@@ -1,5 +1,6 @@
 export const messages = {
   "en": {
+    "appearance": ["Appearance", "Light", "Dark", "System"],
     "skip": "Skip to content",
     "platform": "AI replies for Apple Mail",
     "caption": "The sender asks about a projector and microphones. Edit the draft alongside the original or use the circular arrow to try again.",
@@ -39,6 +40,7 @@ export const messages = {
     "language": "Language"
   },
   "es": {
+    "appearance": ["Apariencia", "Claro", "Oscuro", "Sistema"],
     "skip": "Saltar al contenido",
     "platform": "Respuestas con IA para Apple Mail",
     "caption": "El remitente pregunta por un proyector y unos micrófonos. Edita el borrador junto al original o pulsa la flecha circular para volver a redactarlo.",
@@ -78,6 +80,7 @@ export const messages = {
     "language": "Idioma"
   },
   "zh-CN": {
+    "appearance": ["外观", "浅色", "深色", "跟随系统"],
     "skip": "跳到主要内容",
     "platform": "Apple Mail 的 AI 回复助手",
     "caption": "来信问到投影和麦克风。对照上方原文修改回复，或点圆形箭头重新起草。",
