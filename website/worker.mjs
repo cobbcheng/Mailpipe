@@ -4,6 +4,7 @@ import { release } from "./release.mjs";
 import { appcast } from "./appcast.mjs";
 
 const origin = "https://mailpipeai.com";
+const repositoryURL = "https://github.com/cobbcheng/Mailpipe";
 const agents = [
   { name: "Codex CLI", version: "0.169.1", repo: "openai/codex", tagPrefix: "rust-v", command: "codex" },
   { name: "DeepSeek Harness", version: "0.2.2-rc.1", repo: "deepseek-ai/deepseek-harness", tagPrefix: "dsh-v", logo: "deepseek-harness.svg" },
@@ -72,7 +73,7 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
 <header class="site-header">
   <div class="rails">
     <a class="brand" href="${languages[language][0]}"><img src="/icon.png" width="28" height="28" alt="">Mailpipe</a>
-    <nav aria-label="${copy.nav}"><a href="#apple-mail">Apple Mail</a><a href="#workbench">${copy.workbench}</a><a href="#agents">${language === "es" ? "Agentes" : "Agents"}</a><a href="#release">${copy.download}</a></nav>
+    <nav aria-label="${copy.nav}"><a href="#apple-mail">Apple Mail</a><a href="#workbench">${copy.workbench}</a><a href="#agents">${language === "es" ? "Agentes" : "Agents"}</a><a href="#release">${copy.download}</a><a href="${repositoryURL}">GitHub</a></nav>
     <select aria-label="${copy.language}" onchange="location.href=this.value+location.hash">
       ${Object.entries(languages).map(([id,[path,name]]) => `<option value="${path}" ${id === language ? "selected" : ""}>${name}</option>`).join("")}
     </select>
@@ -175,6 +176,17 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
             <span class="agent-name" lang="en">${name}</span><small class="agent-version">v${version}</small>
           </a></li>`).join("\n          ")}
         </ul>
+      </div>
+    </div>
+  </section>
+  <section id="open-source" class="band" aria-labelledby="open-source-title">
+    <div class="rails">
+      <div class="band-body release">
+        <div class="stack">
+          <h2 id="open-source-title">${copy.openTitle}</h2>
+          <p>${copy.openBody}</p>
+        </div>
+        <a class="button button-secondary" href="${repositoryURL}">${copy.openLink}</a>
       </div>
     </div>
   </section>

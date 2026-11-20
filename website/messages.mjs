@@ -1,5 +1,8 @@
 export const messages = {
   "en": {
+    "openTitle": "Mailpipe is open source",
+    "openBody": "Read the Swift code to see which parts of a message reach your agent and how the Mail extension handles a draft. Mailpipe’s own code is MIT-licensed. You can build it yourself or propose a change on GitHub.",
+    "openLink": "Explore the code on GitHub",
     "appearance": ["Appearance", "Light", "Dark", "System"],
     "skip": "Skip to content",
     "platform": "AI replies for Apple Mail",
@@ -51,6 +54,9 @@ export const messages = {
     "language": "Language"
   },
   "es": {
+    "openTitle": "Mailpipe es de código abierto",
+    "openBody": "Consulta el código Swift para ver qué partes de un mensaje recibe tu agente y cómo la extensión de Mail gestiona los borradores. El código propio de Mailpipe tiene licencia MIT. Puedes compilarlo o proponer cambios en GitHub.",
+    "openLink": "Ver el código en GitHub",
     "appearance": ["Apariencia", "Claro", "Oscuro", "Sistema"],
     "skip": "Saltar al contenido",
     "platform": "Respuestas con IA para Apple Mail",
@@ -102,6 +108,9 @@ export const messages = {
     "language": "Idioma"
   },
   "zh-CN": {
+    "openTitle": "Mailpipe 已开源",
+    "openBody": "想知道 Agent 会看到邮件的哪些内容，或 Mail 扩展如何处理草稿？可以直接读 Swift 源码。Mailpipe 自有代码采用 MIT 许可证，你可以自行编译，也可以到 GitHub 提交改进。",
+    "openLink": "在 GitHub 查看源码",
     "appearance": ["外观", "浅色", "深色", "跟随系统"],
     "skip": "跳到主要内容",
     "platform": "Apple Mail 的 AI 回复助手",
