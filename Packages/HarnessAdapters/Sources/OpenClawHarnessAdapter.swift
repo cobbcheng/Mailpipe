@@ -41,7 +41,7 @@ public struct OpenClawDialect: ReplyHarnessDialect {
         else { throw MailpipeError.unsafeCapability }
         let workspace = directory.appendingPathComponent("workspace")
         let instructions = try String(contentsOf: policy, encoding: .utf8) +
-            "\n本次没有查询工具。事实依据限于输入邮件。只输出符合 output_schema 的 JSON 对象，不加 Markdown 围栏。"
+            "\nNo lookup tools are available for this request. Base factual claims only on the input email. Return only a JSON object that conforms to output_schema, without Markdown fences."
         try Data(instructions.utf8).write(to: workspace.appendingPathComponent("AGENTS.md"), options: .atomic)
         let restricted = try String(contentsOf: config, encoding: .utf8)
         var child = environment

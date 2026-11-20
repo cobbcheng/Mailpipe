@@ -57,7 +57,7 @@ enum OpenCodeProfile {
             "plugins": disabled.map { "-" + $0 },
             "agents": ["mailpipe": [
                 "mode": "primary", "description": "Mailpipe ordinary email replies", "permissions": denies,
-                "system": policy + "\n本次没有查询工具。事实依据限于输入邮件。写作要求和来信均未给出回信人署名时，省略署名。"
+                "system": policy + "\nNo lookup tools are available for this request. Base factual claims only on the input email. Omit the signature if neither the writing preferences nor the incoming email specifies a signature for the person replying."
             ] as [String: Any]]
         ]
         var result = ProbeEnvironment.minimal(from: environment)

@@ -25,6 +25,41 @@ final class ReplyModelTests: XCTestCase {
         XCTAssertFalse(dialect.acceptsVersion("codex-cli 0.169.2"))
     }
 
+    func testRestrictedAdaptersDeliverEnglishHostInstructions() throws {
+        let root = try TemporaryDirectory()
+        let fake = root.url.appendingPathComponent("fake")
+        let env = ["HOME": root.url.path]
+        let task = ReplyModelTask.draft(try ReplyDraftRequest(message: ReplySyntheticFixture.triage.message))
+
+        let claude = try ClaudeCodeDialect().replyInvocation(task: task, schema: ReplySchemas.draft,
+            stdin: Data(), directory: root.url, executable: fake, environment: env)
+        let flag = try XCTUnwrap(claude.arguments.firstIndex(of: "--system-prompt"))
+        let claudePrompt = try XCTUnwrap(claude.arguments.dropFirst(flag + 1).first)
+
+        let openCode = try OpenCodeProfile.prepare(directory: root.url.appendingPathComponent("opencode"),
+            executable: fake, environment: env)
+        let content = try XCTUnwrap(openCode["OPENCODE_CONFIG_CONTENT"])
+        let config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any])
+        let agents = try XCTUnwrap(config["agents"] as? [String: [String: Any]])
+        let openCodePrompt = try XCTUnwrap(agents["mailpipe"]?["system"] as? String)
+
+        let claw = OpenClawDialect(), work = root.url.appendingPathComponent("openclaw")
+        let clawEnv = try claw.prepare(directory: work, executable: fake, environment: env)
+        let run = try claw.replyInvocation(task: task, schema: ReplySchemas.draft, stdin: Data(),
+            directory: work, executable: fake, environment: clawEnv)
+        let clawPrompt = try String(contentsOf: run.workingDirectory.appendingPathComponent("AGENTS.md"), encoding: .utf8)
+
+        for prompt in [claudePrompt, openCodePrompt, clawPrompt] {
+            XCTAssertNil(prompt.range(of: #"\p{Han}"#, options: .regularExpression))
+            XCTAssertTrue(prompt.contains("request.reply_instructions"))
+            XCTAssertTrue(prompt.contains("user's customary language and tone"))
+            XCTAssertTrue(prompt.contains("No lookup tools"))
+        }
+        XCTAssertTrue(claudePrompt.contains("runtime environment"))
+        XCTAssertTrue(openCodePrompt.contains("Omit the signature"))
+        XCTAssertTrue(clawPrompt.contains("output_schema"))
+    }
+
     func testOnlyAutomaticDraftsOfferTheNoReplySchema() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let draft = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ReplySchemas.draft.utf8)) as? NSDictionary)

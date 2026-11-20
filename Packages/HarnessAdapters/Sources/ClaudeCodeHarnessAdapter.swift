@@ -31,7 +31,7 @@ public struct ClaudeCodeDialect: ReplyHarnessDialect {
         let arguments = ["--print", "--safe-mode", "--tools", "", "--strict-mcp-config", "--no-session-persistence",
                          "--disable-slash-commands", "--permission-mode", "dontAsk", "--setting-sources", "user",
                          "--output-format", "stream-json", "--verbose", "--system-prompt",
-                         policy + "\n本次没有查询工具。事实依据限于输入邮件，不声称已核实外部事实。写作要求和来信均未给出回信人署名时，省略署名。不从运行环境推断身份。"]
+                         policy + "\nNo lookup tools are available for this request. Base factual claims only on the input email. Do not claim to have verified external facts. Omit the signature if neither the writing preferences nor the incoming email specifies a signature for the person replying. Do not infer identity from the runtime environment."]
         // The CLI preprocesses literal file mentions before tool permissions. JSON escaping
         // retains the exact string value while preventing implicit attachments at launch.
         let transport = String(decoding: stdin, as: UTF8.self).replacingOccurrences(of: "@", with: #"\u0040"#)
