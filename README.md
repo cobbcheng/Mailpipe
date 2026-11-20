@@ -48,6 +48,18 @@ DeepSeek Harness 可只读核对 GitHub PR 变更。Claude Code、OpenCode、Ope
 草稿可在工作台查看、修改。发送前由你在 Apple Mail 核对收件人和正文。
 验证范围见[紧凑引导验收](docs/validation/2026-11-19-compact-onboarding.md)和[手动来信入口移除验收](docs/validation/2026-11-19-remove-manual-intake.md)。
 
+### 每日回复提醒
+
+在「设置 → 通用 → 每日回复提醒」允许通知并选择时间。
+默认按本地时间每天上午 10 点检查一次。
+通知只显示仍在交接有效期内的待回复邮件数。
+打开草稿后仍会计入。丢弃或交接给 Mail 后移出。
+菜单栏也显示该数量。点击数量或通知，可在工作台查看最新一封。
+如果 Mac 在睡眠或 Mailpipe 已退出，当天恢复运行后再检查。
+队列为空、处理已暂停或授权已撤销时保持安静。
+
+### 应用更新
+
 0.1.1 开始，Mailpipe 会自动检查更新。
 也可在菜单栏选择「检查更新…」。
 安装前退出 Apple Mail，安装后再打开以加载新版扩展。

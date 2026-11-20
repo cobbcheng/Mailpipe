@@ -1,6 +1,28 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%1$@ reply drafts are ready to review.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ reply drafts are ready to review."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有 %1$@ 封邮件的回复草稿待审阅。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay %1$@ borradores de respuesta listos para revisar."
+          }
+        }
+      }
+    },
     "%1$@ sends this content to %2$@. Mailpipe excludes attachment contents.": {
       "localizations": {
         "en": {
@@ -63,6 +85,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "(Sin asunto)"
+          }
+        }
+      }
+    },
+    "1 reply draft is ready to review.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 reply draft is ready to review."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有 1 封邮件的回复草稿待审阅。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay 1 borrador de respuesta listo para revisar."
           }
         }
       }
@@ -217,6 +261,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Permitir que %1$@ procese mensajes nuevos"
+          }
+        }
+      }
+    },
+    "Allow notifications…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow notifications…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许通知…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir notificaciones…"
           }
         }
       }
@@ -1365,6 +1431,28 @@
         }
       }
     },
+    "Could not request notification permission. Try again in Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not request notification permission. Try again in Settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未能请求通知权限。请在设置中重试。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo solicitar permiso para enviar notificaciones. Inténtalo de nuevo en Ajustes."
+          }
+        }
+      }
+    },
     "Could not save settings: %1$@": {
       "localizations": {
         "en": {
@@ -1383,6 +1471,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "No se pudieron guardar los ajustes: %1$@"
+          }
+        }
+      }
+    },
+    "Daily reply reminder": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daily reply reminder"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每日回复提醒"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recordatorio diario de respuestas"
           }
         }
       }
@@ -2267,6 +2377,28 @@
         }
       }
     },
+    "Mailpipe checks for ready replies once a day while running. If it misses the scheduled time, it checks when it next runs that day.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe checks for ready replies once a day while running. If it misses the scheduled time, it checks when it next runs that day."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe 每天在运行时检查一次有多少封邮件可回复。错过提醒时间后，会在当天恢复运行时补查。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe comprueba una vez al día si hay respuestas listas. Si no está en marcha a la hora prevista, lo comprueba cuando vuelve a ejecutarse ese día."
+          }
+        }
+      }
+    },
     "Mailpipe saves messages and drafts on this Mac. Use the reply arrow to review and send in Apple Mail.": {
       "localizations": {
         "en": {
@@ -2795,6 +2927,28 @@
         }
       }
     },
+    "Open notification settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open notification settings"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开通知设置"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abrir los ajustes de notificaciones"
+          }
+        }
+      }
+    },
     "Open original": {
       "localizations": {
         "en": {
@@ -3059,6 +3213,28 @@
         }
       }
     },
+    "Ready to reply: %1$@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ready to reply: %1$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可回复邮件：%1$@ 封"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Correos listos para responder: %1$@"
+          }
+        }
+      }
+    },
     "Receive new messages from Apple Mail": {
       "localizations": {
         "en": {
@@ -3187,6 +3363,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Se alcanzó el límite de regeneraciones. Puedes seguir editando la respuesta."
+          }
+        }
+      }
+    },
+    "Remind me at": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remind me at"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提醒时间"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hora del recordatorio"
           }
         }
       }
@@ -3983,6 +4181,28 @@
         }
       }
     },
+    "The last reminder could not be delivered. Check notification settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The last reminder could not be delivered. Check notification settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上一条提醒未能送达。请检查通知设置。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo entregar el último recordatorio. Revisa los ajustes de notificaciones."
+          }
+        }
+      }
+    },
     "The response contains invalid fields, types or values.": {
       "localizations": {
         "en": {
@@ -4133,6 +4353,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Este mensaje ha caducado."
+          }
+        }
+      }
+    },
+    "To receive reminders, allow notifications for Mailpipe in System Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To receive reminders, allow notifications for Mailpipe in System Settings."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要接收提醒，请在系统设置中允许 Mailpipe 发送通知。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Para recibir recordatorios, permite las notificaciones de Mailpipe en Ajustes del Sistema."
           }
         }
       }

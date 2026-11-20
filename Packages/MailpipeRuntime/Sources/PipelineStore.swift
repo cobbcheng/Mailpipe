@@ -131,6 +131,23 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var isPreparing: Bool { [.awaitingAccount, .queued, .triaging, .draftQueued, .drafting].contains(state) }
     public var displayedSubject: String { editedSubject ?? draft?.subject ?? input.subject }
     public var displayedBody: String { editedBody ?? draft?.body ?? "" }
+    public func isReadyForReplyReminder(settings: PipelineSettings, now: Date) -> Bool {
+        guard state == .draftReady, error == nil, discardedAt == nil, excludedFromAuthorizedInbox != true,
+              !syntheticAuthorized, manualExecutable == nil, messageID?.isEmpty == false, !input.body.isEmpty,
+              capturedAt > now.addingTimeInterval(-7 * 86_400),
+              !settings.paused, let permission = settings.permission, permission.id == permissionID else { return false }
+        if mailKitBody == true {
+            guard permission.delivery == .mailKit else { return false }
+        } else {
+            guard settings.authorizedScopes.contains(where: { $0.id == scopeID || (scopeID == nil && $0.accountID == accountID) }) else { return false }
+        }
+        // Both confirmed and unresolved handoffs remove that draft from the reminder.
+        if let handoff = composeHandoff {
+            guard runs.contains(where: { $0.destination.taskKind == .draft && $0.error == nil && ($0.finishedAt ?? .distantPast) > handoff.startedAt }) else { return false }
+        }
+        guard let draft else { return false }
+        return !(editedBody ?? draft.body).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     /// UI preflight only; dispatch still rechecks the authoritative policy.
     public func canRequestRegeneration(settings: PipelineSettings, now: Date = Date()) -> Bool {
         guard manualExecutable == nil, excludedFromAuthorizedInbox != true, state != .awaitingBody, !settings.paused, !isPreparing, discardedAt == nil,
