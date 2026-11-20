@@ -43,6 +43,8 @@ private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate, UNUser
     private enum Destination { case workbench, readyReply }
     private var present: ((Destination) -> Void)?
     private var awaitingWindow: Destination?
+    lazy var pending = PendingModel()
+    let updates = AppUpdates()
 
     func connect(_ action: OpenWindowAction, model: PendingModel) {
         present = { destination in
@@ -72,10 +74,35 @@ private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate, UNUser
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        updates.start()
         let event = NSAppleEventManager.shared().currentAppleEvent
         guard event?.paramDescriptor(forKeyword: keyAELaunchedAsLogInItem) == nil,
               event?.paramDescriptor(forKeyword: keyAELaunchedAsServiceItem) == nil else { return }
         showMainWindow()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard updates.installationPending else { return .terminateNow }
+        if let blocker = pending.terminationBlocker() {
+            switch blocker {
+            case .workInProgress:
+                return postponeInstallation(L("Let the current Mailpipe task finish, then try installing again."))
+            case .unsavedDraft:
+                return postponeInstallation(L("A draft could not be saved. Review your edits before installing the update."))
+            }
+        }
+        if !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.mail").isEmpty {
+            return postponeInstallation(L("Quit Apple Mail, then try installing again. You can reopen Mail after the update to load the new extension."))
+        }
+        return .terminateNow
+    }
+
+    private func postponeInstallation(_ reason: String) -> NSApplication.TerminateReply {
+        let alert = NSAlert()
+        alert.messageText = L("Mailpipe update is waiting")
+        alert.informativeText = reason
+        alert.runModal()
+        return .terminateCancel
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -100,11 +127,15 @@ extension OpenWindowAction {
 struct MailpipeApp: App {
     @NSApplicationDelegateAdaptor(MailpipeAppDelegate.self) private var appDelegate
     @StateObject private var model = WorkbenchModel()
-    @StateObject private var pending = PendingModel()
+    @StateObject private var pending: PendingModel
+    init() {
+        let delegate = _appDelegate.wrappedValue
+        _pending = StateObject(wrappedValue: delegate.pending)
+    }
     @AppStorage(AppLanguage.key) private var language = AppLanguage.english.rawValue
     var body: some Scene {
         MenuBarExtra {
-            PendingMenu(model: pending).environment(\.locale, Locale(identifier: language)).id(language)
+            PendingMenu(model: pending, updates: appDelegate.updates).environment(\.locale, Locale(identifier: language)).id(language)
         } label: {
             LaunchStatusIcon(appDelegate: appDelegate, model: pending)
         }.menuBarExtraStyle(.menu)
@@ -120,6 +151,9 @@ struct MailpipeApp: App {
         .defaultSize(width: pending.onboarding.completed ? 900 : 480,
                      height: pending.onboarding.completed ? 580 : 440)
         .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesButton(updates: appDelegate.updates).id(language)
+            }
             CommandGroup(after: .newItem) {
                 WorkbenchCommand(model: pending).environment(\.locale, Locale(identifier: language)).id(language)
             }

@@ -57,7 +57,7 @@ enum OpenCodeProfile {
             "plugins": disabled.map { "-" + $0 },
             "agents": ["mailpipe": [
                 "mode": "primary", "description": "Mailpipe ordinary email replies", "permissions": denies,
-                "system": policy + "\n本次没有查询工具。只依据输入邮件起草。缺少回信人署名时省略署名。"
+                "system": policy + "\n本次没有查询工具。只依据输入邮件作答。缺少回信人署名时省略署名。"
             ] as [String: Any]]
         ]
         var result = ProbeEnvironment.minimal(from: environment)

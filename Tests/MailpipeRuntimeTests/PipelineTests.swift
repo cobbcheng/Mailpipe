@@ -8,6 +8,8 @@ actor FakeReplyModel: ReplyModelRunning {
     let shouldReply: String
     let harness: HarnessKind
     let actualModel: String?
+    private var returnsNoReply = false
+    func respondWithNoReply() { returnsNoReply = true }
     var afterRun: (@Sendable () async throws -> Void)?
     func setAfterRun(_ action: @escaping @Sendable () async throws -> Void) { afterRun = action }
     init(shouldReply: String = "yes", harness: HarnessKind = .deepseek, actualModel: String? = nil) {
@@ -22,7 +24,11 @@ actor FakeReplyModel: ReplyModelRunning {
             object["request_id"] = request.requestID; object["message_ref"] = request.message.messageRef
             object["should_reply"] = shouldReply; object["evidence"] = []
         case .draft(let request):
-            object = try JSONSerialization.jsonObject(with: ReplySyntheticFixture.draft) as! [String: Any]
+            if returnsNoReply {
+                object = ["schema_version": 1, "disposition": "no_reply"]
+            } else {
+                object = try JSONSerialization.jsonObject(with: ReplySyntheticFixture.draft) as! [String: Any]
+            }
             object["request_id"] = request.requestID; object["triage_request_id"] = request.triageRequestID; object["message_ref"] = request.message.messageRef
         }
         try await afterRun?()
@@ -257,11 +263,13 @@ final class PipelineTests: XCTestCase {
         let pumping = Task { try await pipeline.pump() }
         let status = await XCTWaiter.fulfillment(of: [delayed.started], timeout: 3)
         XCTAssertEqual(status, .completed)
+        XCTAssertTrue(pipeline.pumping)
         try pipeline.cancel(id)
         try pipeline.store.saveEdits(id, subject: "Edited", body: "Keep these edits")
         try pipeline.store.discard(id)
         delayed.finish()
         try await pumping.value
+        XCTAssertFalse(pipeline.pumping)
         let current = try XCTUnwrap(pipeline.store.record(id))
         XCTAssertEqual(current.editedBody, "Keep these edits")
         XCTAssertNotNil(current.discardedAt)
@@ -528,7 +536,7 @@ final class PipelineTests: XCTestCase {
         try await pipeline.pump()
         XCTAssertEqual(try pipeline.store.records().first?.state, .cancelled)
     }
-    func testEveryAuthorizedMessageGoesDirectlyToDraft() async throws {
+    func testReplyRequestsUseOneDraftCallAtEveryServiceLevel() async throws {
         for level in [ServiceLevel.l0, .l1, .l2] {
             let fake = FakeReplyModel(shouldReply: "no"), pipeline = try setup(try temporary(), fake: fake)
             try pipeline.updateSettings { $0.level = level }

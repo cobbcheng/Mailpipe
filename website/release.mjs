@@ -1,7 +1,9 @@
 export const release = {
-  version: '0.1.0',
-  build: 34,
-  filename: 'Mailpipe-0.1.0-build34-f7589cd.zip',
-  bytes: 7221813,
-  sha256: 'f076181f021a75ed133f9f4c048e0463558b08c2b746b36e06ecfd36a789dbf9',
+  "version": "0.1.1",
+  "build": 35,
+  "filename": "Mailpipe-0.1.1-build35-00d7d59.zip",
+  "bytes": 8283597,
+  "sha256": "8f1b96445e9046fbca5cf2b97ffd7a78ae32de5ac5690ee21f7cdc8dcec67bd6",
+  "minimumSystemVersion": "13.0.0",
+  "edSignature": "Q9HFrqmI/QlpOgQZZmbwO/ehIbqnjeMoyVCrfS9XWJx8TR6nXZFcVCPwdOuTDAA27tnOL2C+M8Zzzw2xX4v9Dw=="
 };

@@ -1,5 +1,7 @@
+import downloads from './downloads.mjs';
 import { messages } from "./messages.mjs";
 import { release } from "./release.mjs";
+import { appcast } from "./appcast.mjs";
 
 const origin = "https://mailpipeai.com";
 const agents = [
@@ -177,12 +179,14 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
 }
 
 export default {
-  fetch(request) {
+  fetch(request, env) {
     const path = new URL(request.url).pathname;
     if (!["GET", "HEAD"].includes(request.method)) {
       return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     }
+    if (path.startsWith('/downloads/')) return downloads.fetch(request, env);
     const routes = {
+      "/appcast.xml": ["application/xml", () => appcast(release)],
       "/": ["text/html", homepage],
       "/es/": ["text/html", () => homepage("es")],
       "/zh/": ["text/html", () => homepage("zh-CN")],

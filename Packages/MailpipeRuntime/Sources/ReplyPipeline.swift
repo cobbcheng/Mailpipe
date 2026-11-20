@@ -32,7 +32,7 @@ public final class ReplyPipeline {
     private let composeInboxes: @MainActor () async throws -> [AccountScope]
     private let resolve: MailIdentityResolver
     private let model: ReplyModelFactory
-    private var pumping = false
+    public private(set) var pumping = false
     private let inAuthorizedInbox: (@MainActor @Sendable (String, String, [AccountScope]) async throws -> Bool?)?
     private var scopeChecked: Set<String> = []
     private var nextCaptureCheck: [String: Date] = [:]
@@ -423,7 +423,9 @@ public final class ReplyPipeline {
         guard item.revision == settings.revision else {
             item.state = .needsReview; item.error = "policyChanged"; try store.save(item); return
         }
-        var request = try ReplyDraftRequest(message: item.input)
+        let allowsNoReply = !item.syntheticAuthorized && item.runs.isEmpty &&
+            (item.regenerationCount ?? 0) == 0 && item.editedBody == nil
+        var request = try ReplyDraftRequest(message: item.input, allowsNoReply: allowsNoReply)
         request.approvedPullRequest = item.approvedPullRequest
         if settings.harnessKind == .opencode && !item.syntheticAuthorized {
             guard let model = settings.openCodeModel, OpenCodeDialect.validModelReference(model) else {
@@ -475,12 +477,16 @@ public final class ReplyPipeline {
             current.runs[last].finishedAt = Date()
             try store.save(current)
             try authorize(id, revision: revision)
-            _ = try ReplyDraft.validated(output.content, for: request)
-            current.draftData = output.content
-            current.state = .draftReady
-            if (current.regenerationCount ?? 0) > 0 {
-                current.editedBody = nil
-                current.reviewedDraftVersion = current.draftVersion
+            switch try ReplyDraftOutcome.validated(output.content, for: request) {
+            case .noReply:
+                current.state = .noReply
+            case .draft:
+                current.draftData = output.content
+                current.state = .draftReady
+                if (current.regenerationCount ?? 0) > 0 {
+                    current.editedBody = nil
+                    current.reviewedDraftVersion = current.draftVersion
+                }
             }
             try store.save(current)
         } catch {

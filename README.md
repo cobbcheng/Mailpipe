@@ -30,7 +30,9 @@ Mail 草稿邮箱要等实机验证，未通过前不写入。
 发送只打开草稿，不调用 send。
 P1 历史搜索是单独授权的只读能力，方案尚未实机验证。
 P1 的增删改只产生意图，由 Mailpipe 经 Apple Events 执行。
-入站的 Agent 生成回复草稿。DeepSeek Harness 可只读核对 GitHub PR 变更。Claude Code、OpenCode、OpenClaw 和 Hermes Agent 仅依据来信起草。
+明确的简报、促销和付款回执可在本机跳过。
+其余授权来信由 Agent 阅读，只为需要答复的邮件备稿。
+DeepSeek Harness 可只读核对 GitHub PR 变更。Claude Code、OpenCode、OpenClaw 和 Hermes Agent 仅依据来信起草。
 用户主动的查找不在这条限制里，也不能由来信触发。
 
 ## 当前使用入口
@@ -55,6 +57,14 @@ P1 的增删改只产生意图，由 Mailpipe 经 Apple Events 执行。
 菜单栏也显示该数量。点击数量或通知，可在工作台查看最新一封。
 如果 Mac 在睡眠或 Mailpipe 已退出，当天恢复运行后再检查。
 队列为空、处理已暂停或授权已撤销时保持安静。
+
+### 应用更新
+
+0.1.1 开始，Mailpipe 会自动检查更新。
+也可在菜单栏选择「检查更新…」。
+安装前退出 Apple Mail，安装后再打开以加载新版扩展。
+0.1.0 用户需从官网手动安装首个带更新器的版本。
+候选包状态见[自更新验收](docs/validation/2026-11-20-self-update.md)。
 
 ## 文档入口
 

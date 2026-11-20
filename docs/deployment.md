@@ -3,7 +3,7 @@
 本地测试包沿用 Apple Development 签名。
 官网下载包使用 Developer ID 签名并通过 Apple 公证。
 静态下载与校验流程见[官网发布说明](../website/README.md#下载状态)。
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 1. 当前限制
 
@@ -72,6 +72,46 @@ Apple 配置来源见 [来源](sources.md)。
 不兼容的新 schema 禁止让旧版本直接写入。
 回滚应恢复匹配的软件与备份，并核对外部动作。
 备份恢复不能撤回 Mail 中已经发生的变化。
+
+### 官网自更新
+
+0.1.1 build 35 起，交互宿主启动 Sparkle 2。
+菜单栏和应用菜单都提供「检查更新…」。
+后台自动检查，由用户确认下载和安装。
+默认更新地址为 `https://mailpipeai.com/appcast.xml`。
+隔离队列和 Mail 读取子进程不启动更新器。
+
+安装器通过 AppKit 请求宿主正常退出。
+宿主核对在途起草、连接测试和写信操作，并保存草稿。
+任务仍在运行或草稿保存失败时，用户可稍后重试。
+Mail 占用旧扩展曾导致 PlugInKit Code=16。
+安装前须正常退出 Mail，更新后重新打开。
+更新器仅替换应用包，权限与队列沿用原数据目录。
+
+发行包通过 Xcode 归档并导出到本地。
+在导出 plist 中将 `method` 设为 `developer-id`。
+`destination` 设为 `export`，`signingStyle` 设为 `manual`。
+`teamID` 填签名团队，`signingCertificate` 填 `Developer ID Application`。
+
+```sh
+xcodebuild -project Mailpipe.xcodeproj -scheme Mailpipe -configuration Release \
+  -destination 'generic/platform=macOS' -derivedDataPath .build/xcode \
+  -archivePath "$MAILPIPE_ARCHIVE" CODE_SIGN_STYLE=Manual \
+  'CODE_SIGN_IDENTITY=Developer ID Application' DEVELOPMENT_TEAM="$TEAM_ID" archive
+xcodebuild -exportArchive -archivePath "$MAILPIPE_ARCHIVE" \
+  -exportOptionsPlist "$EXPORT_OPTIONS" -exportPath "$MAILPIPE_EXPORT"
+codesign --verify --deep --strict --all-architectures "$MAILPIPE_EXPORT/Mailpipe.app"
+```
+
+导出后逐项核验宿主、扩展和嵌套组件。
+Sparkle 的 Autoupdate、Updater.app 和两个 XPC 服务都需核对签名。
+公证装订后，再对最终 ZIP 生成 Ed25519 签名。
+更新包在解压前由内置公钥校验。
+签名私钥保存在发布机钥匙串 `com.mailpipe.app` 账户中。
+保留该密钥的受控备份，供后续正式发行使用。
+操作步骤见[官网自更新发布](../website/README.md#自更新发布)。
+首个带更新器的版本需用户从官网手动安装。
+候选包验证范围见[自更新验收](validation/2026-11-20-self-update.md)。
 
 ## 6. 卸载
 
@@ -243,3 +283,17 @@ build 34 的应用源码为 `f7589cd`。应用默认英文，在设置中切换�
 私有 R2 已归档，公开 ZIP 回读与正式包逐字节一致。
 SHA-256 见[发布信息](../website/release.mjs)。
 全新 Mac 安装和三语界面逐屏实测未验证。
+
+## 0.1.1 自更新发布
+
+2026-11-20 从合并提交 `00d7d59` 归档 build 35。
+宿主与扩展沿用 build 34 的 entitlements。
+Apple 公证通过。最终 ZIP 解压后通过票据、签名和 Gatekeeper 校验。
+正式包为 8,283,597 字节，SHA-256 见[发布信息](../website/release.mjs)。
+
+三语官网和生产更新清单均指向同一下载地址。
+回读官网 ZIP，用宿主内置公钥验证 Ed25519 签名通过。
+R2 和官网的八个安装包均与各自的发布归档逐字节一致。
+其中七个为 0.0.1 至 0.1.0 的历史版本。
+官网 GET 和 HEAD 均已验证。
+此次未在用户正在使用的 Mail 环境执行覆盖安装。

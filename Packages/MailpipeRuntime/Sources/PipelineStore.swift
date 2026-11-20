@@ -161,6 +161,7 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     }
     public var canDisplayInWorkbench: Bool {
         guard excludedFromAuthorizedInbox != true else { return false }
+        if state == .noReply && draftData == nil && (editedBody ?? "").isEmpty { return false }
         // Keep existing substantive content during a transient scope lookup failure.
         return mailKitBody == true || syntheticAuthorized || manualExecutable != nil || excludedFromAuthorizedInbox == false ||
             draft != nil || !input.body.isEmpty || !(editedBody ?? "").isEmpty
@@ -348,7 +349,8 @@ public final class PipelineStore {
             $0.input.subject == capture.subject && $0.state == .awaitingBody
         }
         let hasBodyResult = capture.raw != nil || capture.issue != nil
-        let id = hasBodyResult && candidates.count == 1 ? candidates[0].id : UUID().uuidString
+        let pending = hasBodyResult && candidates.count == 1 ? candidates[0] : nil
+        let id = pending?.id ?? UUID().uuidString
         let evidence = capture.raw.flatMap(MailSourceEvidence.init)
         var body = "", bodyIssue = capture.issue
         if let raw = capture.raw {
@@ -365,6 +367,8 @@ public final class PipelineStore {
         var item = StoredReply(id: id, permissionID: capture.permissionID, capturedAt: capture.capturedAt,
             messageID: capture.messageID, input: MailInput(messageRef: id, subject: capture.subject, body: body),
             state: bodyIssue != nil ? .needsReview : (body.isEmpty && evidence == nil ? .awaitingBody : .awaitingAccount), error: bodyIssue)
+        item.editedSubject = pending?.editedSubject
+        item.editedBody = pending?.editedBody
         item.sourceDigest = capture.raw.flatMap(mailSourceDigest)
         if !body.isEmpty, let raw = capture.raw { item.displayBody = try? PlainMailBody.displayText(raw) }
         item.sourceEvidence = evidence
@@ -401,6 +405,8 @@ public final class PipelineStore {
         var item = StoredReply(id: id, permissionID: capture.permissionID, capturedAt: capture.capturedAt,
             messageID: capture.messageID, input: MailInput(messageRef: id, subject: capture.subject, body: body),
             state: error != nil ? .needsReview : (body.isEmpty ? .awaitingBody : .queued), error: error)
+        item.editedSubject = pending?.editedSubject
+        item.editedBody = pending?.editedBody
         item.mailKitBody = true
         item.level = settings.level; item.revision = settings.revision
         item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
