@@ -34,6 +34,7 @@ enum MailpipeEntryPoint {
         // LSUIElement keeps every read helper out of the Dock from launch.
         // Only the interactive host presents a regular application.
         NSApplication.shared.setActivationPolicy(.regular)
+        AppAppearance.saved.apply()
         MailpipeApp.main()
     }
 }
@@ -194,6 +195,7 @@ private struct InitialSetupSettings: View {
     var body: some View {
         VStack(spacing: 16) {
             LanguagePicker()
+            AppearancePicker()
             Text(L("Connect your agent, then choose which messages it can draft replies for."))
             if model.settings.permission != nil {
                 // Older versions could leave an active grant alongside an unfinished setup draft.
@@ -217,6 +219,7 @@ struct MailpipeSettings: View {
         TabView(selection: $selectedTab) {
             Form {
                 LanguagePicker()
+                AppearancePicker()
                 Section(L("Reply drafts")) {
                     Text(model.settings.paused ? L("Sending messages to the agent is paused.") : L("Your agent can draft replies only for authorized messages."))
                     Button(model.settings.paused ? L("Resume processing") : L("Pause processing"), action: model.togglePause)

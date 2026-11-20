@@ -33,3 +33,33 @@ struct LanguagePicker: View {
         }
     }
 }
+
+enum AppAppearance: String, CaseIterable {
+    case system = "Follow System", light = "Light", dark = "Dark"
+    static let key = "interfaceAppearance"
+
+    static var saved: Self {
+        UserDefaults.standard.string(forKey: key).flatMap(Self.init(rawValue:)) ?? .system
+    }
+
+    @MainActor func apply() {
+        switch self {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
+struct AppearancePicker: View {
+    @AppStorage(AppAppearance.key) private var appearance = AppAppearance.system
+
+    var body: some View {
+        Picker(L("Appearance"), selection: $appearance) {
+            ForEach(AppAppearance.allCases, id: \.self) { option in
+                Text(verbatim: L(option.rawValue)).tag(option)
+            }
+        }
+        .onChange(of: appearance) { $0.apply() }
+    }
+}
