@@ -1,5 +1,6 @@
 import { messages } from "./messages.mjs";
 import { release } from "./release.mjs";
+import { appcast } from "./appcast.mjs";
 
 const origin = "https://mailpipeai.com";
 const agents = [
@@ -183,6 +184,7 @@ export default {
       return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
     }
     const routes = {
+      "/appcast.xml": ["application/xml", () => appcast(release)],
       "/": ["text/html", homepage],
       "/es/": ["text/html", () => homepage("es")],
       "/zh/": ["text/html", () => homepage("zh-CN")],

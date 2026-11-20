@@ -3,7 +3,7 @@
 本地测试包沿用 Apple Development 签名。
 官网下载包使用 Developer ID 签名并通过 Apple 公证。
 静态下载与校验流程见[官网发布说明](../website/README.md#下载状态)。
-更新于 2026-11-19。
+更新于 2026-11-20。
 
 ## 1. 当前限制
 
@@ -72,6 +72,46 @@ Apple 配置来源见 [来源](sources.md)。
 不兼容的新 schema 禁止让旧版本直接写入。
 回滚应恢复匹配的软件与备份，并核对外部动作。
 备份恢复不能撤回 Mail 中已经发生的变化。
+
+### 官网自更新
+
+0.1.1 build 35 起，交互宿主启动 Sparkle 2。
+菜单栏和应用菜单都提供「检查更新…」。
+后台自动检查，由用户确认下载和安装。
+默认更新地址为 `https://mailpipeai.com/appcast.xml`。
+隔离队列和 Mail 读取子进程不启动更新器。
+
+安装器通过 AppKit 请求宿主正常退出。
+宿主核对在途起草、连接测试和写信操作，并保存草稿。
+任务仍在运行或草稿保存失败时，用户可稍后重试。
+Mail 占用旧扩展曾导致 PlugInKit Code=16。
+安装前须正常退出 Mail，更新后重新打开。
+更新器仅替换应用包，权限与队列沿用原数据目录。
+
+发行包通过 Xcode 归档并导出到本地。
+在导出 plist 中将 `method` 设为 `developer-id`。
+`destination` 设为 `export`，`signingStyle` 设为 `manual`。
+`teamID` 填签名团队，`signingCertificate` 填 `Developer ID Application`。
+
+```sh
+xcodebuild -project Mailpipe.xcodeproj -scheme Mailpipe -configuration Release \
+  -destination 'generic/platform=macOS' -derivedDataPath .build/xcode \
+  -archivePath "$MAILPIPE_ARCHIVE" CODE_SIGN_STYLE=Manual \
+  'CODE_SIGN_IDENTITY=Developer ID Application' DEVELOPMENT_TEAM="$TEAM_ID" archive
+xcodebuild -exportArchive -archivePath "$MAILPIPE_ARCHIVE" \
+  -exportOptionsPlist "$EXPORT_OPTIONS" -exportPath "$MAILPIPE_EXPORT"
+codesign --verify --deep --strict --all-architectures "$MAILPIPE_EXPORT/Mailpipe.app"
+```
+
+导出后逐项核验宿主、扩展和嵌套组件。
+Sparkle 的 Autoupdate、Updater.app 和两个 XPC 服务都需核对签名。
+公证装订后，再对最终 ZIP 生成 Ed25519 签名。
+更新包在解压前由内置公钥校验。
+签名私钥保存在发布机钥匙串 `com.mailpipe.app` 账户中。
+保留该密钥的受控备份，供后续正式发行使用。
+操作步骤见[官网自更新发布](../website/README.md#自更新发布)。
+首个带更新器的版本需用户从官网手动安装。
+候选包验证范围见[自更新验收](validation/2026-11-20-self-update.md)。
 
 ## 6. 卸载
 

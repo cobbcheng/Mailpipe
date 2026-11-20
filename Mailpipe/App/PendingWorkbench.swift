@@ -5,6 +5,10 @@ import MailpipeRuntime
 import HarnessAdapters
 import MailBridge
 
+enum UpdateRestartBlocker {
+    case workInProgress, unsavedDraft
+}
+
 @MainActor
 final class PendingModel: ObservableObject {
     @Published var records: [StoredReply] = []
@@ -354,6 +358,14 @@ final class PendingModel: ObservableObject {
             if let problem = try pipeline.store.issue() { issue = L("Capture notice: %1$@", String(describing: problem)) }
         } catch { issue = Self.code(error) }
     }
+    func terminationBlocker() -> UpdateRestartBlocker? {
+        guard pipeline?.pumping != true, !onboardingBusy, !composeBusy else { return .workInProgress }
+        for (id, buffer) in editorBuffers where buffer.state != .saved {
+            guard flushEditor(id) else { return .unsavedDraft }
+        }
+        return nil
+    }
+
     private func start() {
         worker = Task { [weak self] in
             while !Task.isCancelled {
@@ -396,6 +408,7 @@ final class PendingModel: ObservableObject {
 
 struct PendingMenu: View {
     @ObservedObject var model: PendingModel
+    let updates: AppUpdates
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -415,6 +428,7 @@ struct PendingMenu: View {
             Button(L("Continue Mailpipe setup")) { openWindow.openMailpipe() }
         }
         Divider()
+        CheckForUpdatesButton(updates: updates)
         Button(L("Quit Mailpipe")) { NSApp.terminate(nil) }
     }
 }

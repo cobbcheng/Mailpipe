@@ -67,6 +67,28 @@
         }
       }
     },
+    "A draft could not be saved. Review your edits before installing the update.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A draft could not be saved. Review your edits before installing the update."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有一封草稿保存失败。请先检查编辑内容，再安装更新。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo guardar un borrador. Revisa los cambios antes de instalar la actualización."
+          }
+        }
+      }
+    },
     "Advanced diagnostics": {
       "localizations": {
         "en": {
@@ -679,6 +701,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Falló la comprobación: %1$@"
+          }
+        }
+      }
+    },
+    "Check for Updates…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for Updates…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查更新…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar actualizaciones…"
           }
         }
       }
@@ -2047,6 +2091,28 @@
         }
       }
     },
+    "Let the current Mailpipe task finish, then try installing again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Let the current Mailpipe task finish, then try installing again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请等当前任务完成，再安装更新。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Espera a que termine la tarea actual de Mailpipe y vuelve a instalar la actualización."
+          }
+        }
+      }
+    },
     "Let your agent draft your replies": {
       "localizations": {
         "en": {
@@ -2263,6 +2329,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mailpipe guarda los mensajes y borradores en tu Mac. El agente que elijas solo recibe el contenido autorizado. Revisa cada borrador y decide si quieres enviarlo."
+          }
+        }
+      }
+    },
+    "Mailpipe update is waiting": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe update is waiting"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe 正在等待安装更新"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La actualización de Mailpipe está en espera"
           }
         }
       }
@@ -2835,6 +2923,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Privacidad y datos"
+          }
+        }
+      }
+    },
+    "Quit Apple Mail, then try installing again. You can reopen Mail after the update to load the new extension.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit Apple Mail, then try installing again. You can reopen Mail after the update to load the new extension."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先退出 Apple Mail，再安装更新。更新后重新打开 Mail 即可加载新版扩展。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sal de Apple Mail y vuelve a instalar la actualización. Después puedes abrir Mail para cargar la nueva extensión."
           }
         }
       }

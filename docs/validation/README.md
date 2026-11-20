@@ -2,6 +2,7 @@
 
 当前已有工程与签名验证记录，尚无完整功能验收。
 
+- [自更新与安装前退出保护](2026-11-20-self-update.md)
 - [移除手动添加来信](2026-11-19-remove-manual-intake.md)
 - [工作台布局与窗口缩放](2026-11-19-workbench-layout.md)
 - [紧凑新手引导与工作台入口](2026-11-19-compact-onboarding.md)

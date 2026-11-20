@@ -48,7 +48,52 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
 页面与构建脚本共用[发布信息](release.mjs)中的版本、文件名和校验值。
 
 在仓库根目录执行 `node website/build-pages.mjs <含已公证App的ZIP> <全新输出目录>`。
-脚本核对包大小与 SHA-256，生成三语首页、robots.txt 和 sitemap.xml。
+脚本核对包大小与 SHA-256，生成三语首页和更新源。
+输出还包括 robots.txt 和 sitemap.xml。
 根路径默认英文。中文使用 /zh/，西班牙语使用 /es/。
 将输出目录的内容部署到现有 Pages 生产项目 `mailpipe-official`。
 发布流程与验收门槛见[部署方法](../docs/deployment.md)。
+
+## 自更新发布
+
+更新源固定为 `https://mailpipeai.com/appcast.xml`。
+官网和更新源分发同一个 ZIP。
+0.1.0 build 34 是首个自更新版本之前的安装包。
+以该包构建官网时，生成的更新源为空。
+已有用户需从官网安装带更新器的版本一次。
+
+在仓库根目录运行 `node --test website/appcast.test.mjs`。
+离线回归覆盖旧版空更新源、签名归档构建和错签拒绝。
+测试使用临时目录和一次性密钥。
+
+1. 递增宿主与扩展的 build，保持两者版本一致。
+2. 按[部署方法](../docs/deployment.md)完成签名、公证和装订。
+3. 用 `ditto` 归档已装订的 App。以下命令在仓库根目录运行。
+
+   ```sh
+   ditto -c -k --sequesterRsrc --keepParent "$MAILPIPE_RELEASE_APP" "$MAILPIPE_RELEASE_ZIP"
+   SPARKLE_BIN=.build/xcode/SourcePackages/artifacts/sparkle/Sparkle/bin
+   "$SPARKLE_BIN/sign_update" --account com.mailpipe.app "$MAILPIPE_RELEASE_ZIP"
+   shasum -a 256 "$MAILPIPE_RELEASE_ZIP"
+   ```
+
+4. 在[发布信息](release.mjs)填写此 ZIP 的版本、build、文件名和 SHA-256。
+   将签名输出的 `sparkle:edSignature` 填入 `edSignature`，`length` 填入 `bytes`。
+   `minimumSystemVersion` 使用三段系统版本，如 `13.0.0`。
+   私钥保存在发布机钥匙串，构建官网只需公钥。
+5. 构建并核对静态文件。输出目录必须是新路径。
+
+   ```sh
+   node website/build-pages.mjs "$MAILPIPE_RELEASE_ZIP" "$MAILPIPE_PAGES_OUTPUT"
+   xmllint --noout "$MAILPIPE_PAGES_OUTPUT/appcast.xml"
+   ```
+
+   构建使用 Node.js 和 Python 3 标准库。
+   它核对 ZIP 内宿主及扩展的标识与版本。
+   它还核对宿主的系统下限、更新地址和公钥。
+   最后用源码中的 `SUPublicEDKey` 验证归档签名。
+6. 获得发布授权后，整体部署输出目录。
+   回读线上更新源和其中的 ZIP，分别与本地产物比对。
+   用上一版带更新器的 App 验收安装和重启。
+
+归档格式与签名参数见 [Sparkle 发布说明](https://sparkle-project.org/documentation/publishing/)。
