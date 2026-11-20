@@ -8,6 +8,8 @@ Mailpipe 把来信和草稿保存在你的 Mac 上。只有你授权的来信内
 
 **[下载 Mac 版](https://mailpipeai.com/)**
 
+Mailpipe 自有代码采用 [MIT 许可证](LICENSE)。第三方组件和素材保留各自的许可与标识权利，见 [Lottie 动画](Mailpipe/App/OnboardingArt/Lottie-LICENSE.txt)、[字体](website/public/fonts/LICENSE.txt)和 [Agent 标识](website/public/agents/NOTICES.txt)的声明。
+
 ## 产品与边界
 
 | 项目 | 设计目标 |
