@@ -1,9 +1,9 @@
 export const release = {
-  "version": "0.1.6",
-  "build": 40,
-  "filename": "Mailpipe-0.1.6-build40-aea9f96.zip",
-  "bytes": 8397819,
-  "sha256": "02fa06eedfd9a7ce58e3320c284fa695dbb7999c7fda40bc486335655a29629c",
+  "version": "0.2.0",
+  "build": 50,
+  "filename": "Mailpipe-0.2.0-build50-3427852.zip",
+  "bytes": 8807681,
+  "sha256": "ef75ad6b5da6f6d9206508314d4b09d11d28d6ae7f76626e3b29c9de7537aaf6",
   "minimumSystemVersion": "13.0.0",
-  "edSignature": "Kan/uG2ZimqU9MCLUy92HncDQc4qK+CFIx0RFMq1Ul+qat0Udz/x+NzM9ejBlI88qWsWKOUz2JUrOouOmZBoCg=="
+  "edSignature": "32htZ60posMSRaUnYQtnHlIS5MH6+GQ1U6ZMwY1ubfHUMulCXQmQmtmmmgFOGWzhA+zpLN92sKhsfQ9nWFghCg=="
 };

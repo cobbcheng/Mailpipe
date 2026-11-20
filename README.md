@@ -48,6 +48,14 @@ DeepSeek Harness 可只读核对 GitHub PR 变更。Codex CLI、Claude Code、Op
 草稿可在工作台查看、修改。发送前由你在 Apple Mail 核对收件人和正文。
 验证范围见[紧凑引导验收](docs/validation/2026-11-19-compact-onboarding.md)和[手动来信入口移除验收](docs/validation/2026-11-19-remove-manual-intake.md)。
 
+### 在 Apple Mail 中使用回复草稿
+
+回复或转发一封邮件时，点撰写窗口工具栏里的 Mailpipe。
+已有草稿会显示在面板里，可以直接修改或点「重新生成」。
+尚无草稿时，点「生成草稿」。准备好后点「复制回复」，
+粘贴到 Mail 的正文，在 Mail 中确认并发送。
+重新打开已保存的转发时，也可以点「选取已有草稿」。
+
 ### 自定义回复提示词
 
 完成首次设置后，在「设置 → 回复」中填写提示词并保存。

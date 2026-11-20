@@ -6,11 +6,14 @@
 
 ## 图片来源
 
-- 截图来自 0.1.0（build 34，源码 `f7589cd`）的隔离预览副本。
+- `compose-ready.png` 和 `compose-empty.png` 是 0.2.0 的回复面板截图。
+- 隔离预览使用正式扩展的 SwiftUI 视图、工具栏图标和本地化资源。
+- 三种语言使用合成草稿，通过 macOS 原生弹出面板截图。
+- 工作台和首次设置截图来自 0.1.0（build 34，源码 `f7589cd`）的隔离预览副本。
 - `public/screenshots/` 按 en、zh、es 存放三种语言的实拍图。
 - `detail.jpg` 展示工作台，`detail-mobile.jpg` 展示窄窗口的草稿详情。
 - `scope.jpg` 展示首次设置时按完整主题限定来信的步骤。
-- 每种语言使用独立队列、本地化合成邮件和 example.com 地址。
+- 工作台的每种语言使用独立队列、本地化合成邮件和 example.com 地址。
 - 图标来自仓库的 `design/icon/png/icon_128.png`。
 
 ### Agent 标识
@@ -43,7 +46,7 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
 
 ## 下载状态
 
-0.1.6（build 40）已通过 Apple 公证并装订票据。
+0.2.0（build 50）已通过 Apple 公证并装订票据。
 官网与 Sparkle 通过同一个 `/downloads/` 地址从私有 R2 下载。
 页面与构建脚本共用[发布信息](release.mjs)中的版本、文件名和校验值。
 

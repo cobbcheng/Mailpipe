@@ -19,7 +19,7 @@ const languages = { en: ["/", "English"], "zh-CN": ["/zh/", "中文"], es: ["/es
 function homepage(language = "en") {
   const copy = messages[language];
   const screenshots = `/screenshots/${language === "zh-CN" ? "zh" : language}`;
-  const previewImage = `${origin}${screenshots}/detail.jpg`;
+  const previewImage = `${origin}${screenshots}/compose-ready.png`;
   const pageURL = origin + languages[language][0];
   const description = copy.description.replace("{agents}", agents.map(agent => agent.name).join(", "));
   const app = {
@@ -32,7 +32,7 @@ function homepage(language = "en") {
     operatingSystem: "macOS 13+",
     softwareVersion: release.version,
     downloadUrl: origin + downloadURL,
-    screenshot: previewImage,
+    screenshot: [previewImage, `${origin}${screenshots}/compose-empty.png`, `${origin}${screenshots}/detail.jpg`],
     inLanguage: language,
   };
   return `<!doctype html>
@@ -62,9 +62,9 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
 <meta property="og:description" content="${description}">
 <meta property="og:url" content="${pageURL}">
 <meta property="og:image" content="${previewImage}">
-<meta property="og:image:alt" content="${copy.previewAlt}">
+<meta property="og:image:alt" content="${copy.readyAlt}">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image:alt" content="${copy.previewAlt}">
+<meta name="twitter:image:alt" content="${copy.readyAlt}">
 <script type="application/ld+json">${JSON.stringify(app)}</script>
 </head>
 <body>
@@ -72,7 +72,7 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
 <header class="site-header">
   <div class="rails">
     <a class="brand" href="${languages[language][0]}"><img src="/icon.png" width="28" height="28" alt="">Mailpipe</a>
-    <nav aria-label="${copy.nav}"><a href="#workbench">${copy.workbench}</a><a href="#agents">${language === "es" ? "Agentes" : "Agents"}</a><a href="#release">${copy.download}</a></nav>
+    <nav aria-label="${copy.nav}"><a href="#apple-mail">Apple Mail</a><a href="#workbench">${copy.workbench}</a><a href="#agents">${language === "es" ? "Agentes" : "Agents"}</a><a href="#release">${copy.download}</a></nav>
     <select aria-label="${copy.language}" onchange="location.href=this.value+location.hash">
       ${Object.entries(languages).map(([id,[path,name]]) => `<option value="${path}" ${id === language ? "selected" : ""}>${name}</option>`).join("")}
     </select>
@@ -87,14 +87,39 @@ ${Object.entries(languages).map(([id,[path]]) => `<link rel="alternate" hreflang
         <p class="lead">${copy.lead}</p>
         <div class="actions">
           <a class="button button-primary" download href="${downloadURL}">${copy.downloadMac}</a>
-          <a class="button button-secondary" href="#workbench">${copy.example}</a>
+          <a class="button button-secondary" href="#apple-mail">${copy.example}</a>
         </div>
       </div>
-      <figure id="workbench" class="showcase">
+      <section id="apple-mail" class="compose-showcase" aria-labelledby="compose-title">
+        <div class="compose-intro">
+          <h2 id="compose-title">${copy.composeTitle}</h2>
+          <p>${copy.composeIntro}</p>
+        </div>
+        <div class="compose-gallery">
+          <figure>
+            <img src="${screenshots}/compose-ready.png" width="832" height="704" alt="${copy.readyAlt}" fetchpriority="high">
+            <figcaption><h3>${copy.readyTitle}</h3><p>${copy.readyBody}</p></figcaption>
+          </figure>
+          <figure>
+            <img src="${screenshots}/compose-empty.png" width="832" height="704" alt="${copy.emptyAlt}">
+            <figcaption><h3>${copy.emptyTitle}</h3><p>${copy.emptyBody}</p></figcaption>
+          </figure>
+        </div>
+        <details class="compose-restore">
+          <summary>${copy.restoredTitle}</summary>
+          <p>${copy.restoredBody}</p>
+        </details>
+      </section>
+    </div>
+  </section>
+  <section id="workbench" class="workbench" aria-labelledby="workbench-title">
+    <div class="rails">
+      <h2 id="workbench-title">${copy.workbenchTitle}</h2>
+      <figure class="showcase">
         <div class="app-window">
           <picture>
             <source media="(max-width: 600px)" srcset="${screenshots}/detail-mobile.jpg" width="838" height="790">
-            <img src="${screenshots}/detail.jpg" width="1648" height="864" alt="${copy.detailAlt}" fetchpriority="high">
+            <img src="${screenshots}/detail.jpg" width="1648" height="864" alt="${copy.detailAlt}" loading="lazy">
           </picture>
         </div>
         <figcaption>${copy.caption}</figcaption>
