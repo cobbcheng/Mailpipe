@@ -1,8 +1,10 @@
 import SwiftUI
 import AppKit
+import UserNotifications
 import HarnessAdapters
 import MailBridge
 import MailpipeCore
+import MailpipeRuntime
 
 @MainActor
 final class WorkbenchModel: ObservableObject {
@@ -37,16 +39,36 @@ enum MailpipeEntryPoint {
 }
 
 @MainActor
-private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate {
-    private var present: (() -> Void)?
-    private var awaitingWindow = false
+private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    private enum Destination { case workbench, readyReply }
+    private var present: ((Destination) -> Void)?
+    private var awaitingWindow: Destination?
 
-    func connect(_ action: OpenWindowAction) {
-        present = { action.openMailpipe() }
-        if awaitingWindow {
-            awaitingWindow = false
-            present?()
+    func connect(_ action: OpenWindowAction, model: PendingModel) {
+        present = { destination in
+            if destination == .readyReply { model.selectLatestReadyReply() }
+            action.openMailpipe()
         }
+        if let destination = awaitingWindow {
+            awaitingWindow = nil
+            present?(destination)
+        }
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if !ProcessInfo.processInfo.arguments.contains("--pipeline-directory") {
+            UNUserNotificationCenter.current().delegate = self
+        }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        notification.request.identifier == ReadyReplyReminders.identifier ? [.banner, .list] : []
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              response.notification.request.identifier == ReadyReplyReminders.identifier else { return }
+        await showMainWindow(.readyReply)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -61,10 +83,10 @@ private final class MailpipeAppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    private func showMainWindow() {
+    private func showMainWindow(_ destination: Destination = .workbench) {
         // AppKit can deliver the event before the menu bar label supplies SwiftUI's window action.
-        if let present { present() }
-        else { awaitingWindow = true }
+        if let present { present(destination) }
+        else if awaitingWindow != .readyReply { awaitingWindow = destination }
     }
 }
 
@@ -84,7 +106,7 @@ struct MailpipeApp: App {
         MenuBarExtra {
             PendingMenu(model: pending).environment(\.locale, Locale(identifier: language)).id(language)
         } label: {
-            LaunchStatusIcon(appDelegate: appDelegate)
+            LaunchStatusIcon(appDelegate: appDelegate, model: pending)
         }.menuBarExtraStyle(.menu)
         Window("Mailpipe", id: "workbench") {
             if pending.onboarding.completed {
@@ -114,10 +136,11 @@ struct MailpipeApp: App {
 
 private struct LaunchStatusIcon: View {
     let appDelegate: MailpipeAppDelegate
+    let model: PendingModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Image("MenuBarIcon").accessibilityLabel("Mailpipe")
-            .onAppear { appDelegate.connect(openWindow) }
+            .onAppear { appDelegate.connect(openWindow, model: model) }
     }
 }
 
@@ -165,6 +188,9 @@ struct MailpipeSettings: View {
                     Button(model.settings.paused ? L("Resume processing") : L("Pause processing"), action: model.togglePause)
                     Text(L("Drafts stay on this Mac. Review them from the menu bar and send from Apple Mail."))
                         .foregroundStyle(.secondary)
+                }
+                if let reminders = model.reminders {
+                    ReplyReminderSettings(reminders: reminders)
                 }
                 configurationFooter()
             }.formStyle(.grouped).tabItem { Label(L("General"), systemImage: "gearshape") }.tag(Tab.general)
@@ -236,6 +262,52 @@ struct MailpipeSettings: View {
                 Button(model.requiresToolConsent || model.needsPermissionRecovery ? L("Allow %1$@ to process new messages", String(describing: model.onboarding.harnessKind.displayName)) : L("Save settings"), action: model.applyConfiguration)
                     .disabled(model.onboardingBusy || !model.onboardingTestPassed || !model.onboarding.extensionAcknowledged || !model.hasSharedInbox)
             }
+        }
+    }
+}
+
+private struct ReplyReminderSettings: View {
+    @ObservedObject var reminders: ReadyReplyReminders
+    @AppStorage(ReplyReminderSchedule.minuteKey) private var minuteOfDay = ReplyReminderSchedule.defaultMinuteOfDay
+
+    // The picker edits a wall-clock time. A fixed zone lets people select even a skipped DST hour.
+    private var time: Binding<Date> {
+        Binding(get: {
+            let minute = (0..<1440).contains(minuteOfDay) ? minuteOfDay : ReplyReminderSchedule.defaultMinuteOfDay
+            return Date(timeIntervalSinceReferenceDate: TimeInterval(minute * 60))
+        }, set: { date in
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = .gmt
+            minuteOfDay = calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
+        })
+    }
+
+    var body: some View {
+        Section {
+            DatePicker(L("Remind me at"), selection: time, displayedComponents: .hourAndMinute)
+                .environment(\.timeZone, .gmt)
+            if reminders.authorization == .notDetermined {
+                Button(L("Allow notifications…")) {
+                    Task { await reminders.requestAuthorization() }
+                }
+            } else if reminders.authorization != nil {
+                if reminders.authorization == .denied {
+                    Text(L("To receive reminders, allow notifications for Mailpipe in System Settings."))
+                        .foregroundStyle(.secondary)
+                }
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                    Link(L("Open notification settings"), destination: url)
+                }
+            }
+            if let issue = reminders.deliveryIssue { Text(issue).foregroundStyle(.secondary) }
+        } header: {
+            Text(L("Daily reply reminder"))
+        } footer: {
+            Text(L("Mailpipe checks for ready replies once a day while running. If it misses the scheduled time, it checks when it next runs that day."))
+        }
+        .task { await reminders.refreshAuthorization() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await reminders.refreshAuthorization() }
         }
     }
 }

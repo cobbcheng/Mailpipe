@@ -23,6 +23,7 @@ final class PendingModel: ObservableObject {
     private var pipeline: ReplyPipeline?
     private var worker: Task<Void, Never>?
     private var display: Task<Void, Never>?
+    let reminders: ReadyReplyReminders?
     private(set) var hasSharedInbox = false
     var needsPermissionRecovery: Bool { onboarding.completed && settings.permission?.delivery != .mailKit }
     var requiresToolConsent: Bool {
@@ -34,6 +35,10 @@ final class PendingModel: ObservableObject {
     }
     var pending: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench && ($0.state.isPending || $0.isPreparing || $0.state == .needsReview || $0.state == .awaitingBody) } }
     var workbenchRecords: [StoredReply] { records.filter { $0.discardedAt == nil && $0.canDisplayInWorkbench } }
+    var readyReplyCount: Int {
+        let now = Date()
+        return records.lazy.filter { $0.isReadyForReplyReminder(settings: self.settings, now: now) }.count
+    }
     var unreadCount: Int { workbenchRecords.lazy.filter { self.isUnread($0) }.count }
 
     func isUnread(_ item: StoredReply) -> Bool {
@@ -159,9 +164,10 @@ final class PendingModel: ObservableObject {
     var selected: StoredReply? { records.first { $0.id == selectedID } }
 
     init() {
+        let args = ProcessInfo.processInfo.arguments
+        let diagnosticIndex = args.firstIndex(of: "--pipeline-directory")
+        reminders = diagnosticIndex == nil ? ReadyReplyReminders() : nil
         do {
-            let args = ProcessInfo.processInfo.arguments
-            let diagnosticIndex = args.firstIndex(of: "--pipeline-directory")
             let root: URL, inboxURL: URL
             if let index = diagnosticIndex, index + 1 < args.count, args[index + 1].hasPrefix("/") {
                 // Isolated visual acceptance only; never changes the system appearance.
@@ -341,8 +347,14 @@ final class PendingModel: ObservableObject {
             }
         }
     }
-    func refresh() {
-        guard let pipeline else { return }
+    func selectLatestReadyReply() {
+        guard refresh() else { return }
+        let now = Date()
+        selectedID = records.last { $0.isReadyForReplyReminder(settings: settings, now: now) }?.id
+    }
+
+    @discardableResult func refresh() -> Bool {
+        guard let pipeline else { return false }
         do {
             extensionObservation = try? ExtensionObservation.read(from: pipeline.inbox)
             records = try pipeline.store.records(); settings = try pipeline.store.settings()
@@ -352,7 +364,12 @@ final class PendingModel: ObservableObject {
                 }
             }
             if let problem = try pipeline.store.issue() { issue = L("Capture notice: %1$@", String(describing: problem)) }
-        } catch { issue = Self.code(error) }
+            if onboarding.completed { reminders?.check(records: records, settings: settings) }
+            return true
+        } catch {
+            issue = Self.code(error)
+            return false
+        }
     }
     private func start() {
         worker = Task { [weak self] in
@@ -409,6 +426,12 @@ struct PendingMenu: View {
                 }
             }
             Text(L("Unread drafts: %1$@", String(describing: model.unreadCount)))
+            let readyCount = model.readyReplyCount
+            Button(L("Ready to reply: %1$@", String(readyCount))) {
+                model.selectLatestReadyReply()
+                openWindow.openMailpipe()
+            }
+            .disabled(readyCount == 0)
             Divider()
             Button(L("Open workbench")) { openWindow.openMailpipe() }
         } else {
