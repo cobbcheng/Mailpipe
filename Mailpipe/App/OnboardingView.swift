@@ -8,7 +8,7 @@ extension HarnessKind {
         switch self {
         case .deepseek, .openclaw, .hermes: L("the DeepSeek cloud model")
         case .claude, .opencode: L("the model service configured in %1$@", String(describing: displayName))
-        case .codex: L("the model service configured in Codex CLI")
+        case .codex: L("OpenAI (GPT-6.2 Sol via Codex CLI)")
         }
     }
 }

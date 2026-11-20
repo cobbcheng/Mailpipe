@@ -21,7 +21,7 @@ public func makeReplyModel(for installation: HarnessInstallation) throws -> any 
     case .opencode: return OpenCodeHarnessAdapter(executable: installation.executable, dialect: OpenCodeDialect(model: installation.openCodeModel))
     case .openclaw: return OpenClawHarnessAdapter(executable: installation.executable, dialect: OpenClawDialect())
     case .hermes: return HermesHarnessAdapter(executable: installation.executable, dialect: HermesDialect())
-    case .codex: throw MailpipeError.unsafeCapability
+    case .codex: return CodexCLIAdapter(executable: installation.executable, dialect: CodexCLIDialect())
     }
 }
 
@@ -463,6 +463,10 @@ public final class ReplyPipeline {
                       installation.openCodeModel == nil || installation.openCodeModel == actual else {
                     throw MailpipeError.invalidOutput
                 }
+            }
+            if installation.kind == .codex {
+                current.runs[last].destination = try DataDestination(messageRef: id, runID: destination.runID, taskKind: .draft,
+                    harness: .codex, vendor: "OpenAI", model: "gpt-6.2-sol", evidence: .declared)
             }
             let modelName = installation.kind == .deepseek ? "deepseek-flash" : output.actualModel
             if let modelName {

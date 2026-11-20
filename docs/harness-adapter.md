@@ -1,12 +1,12 @@
 # Harness Adapter 契约
 
 普通草稿支持 DeepSeek Harness、Claude Code、OpenCode、OpenClaw 和 Hermes Agent。
-Codex CLI 仅提供安装与能力检查。
+Codex CLI 0.169.1 支持普通回复草稿。
 OpenClaw 与 Hermes 的实测范围见[官方 DeepSeek 合成草稿验收](validation/2026-11-19-openclaw-hermes.md)。
 OpenCode 的版本与实机范围见[菜单栏草稿验收](validation/2026-11-19-opencode-drafts.md)。
 Claude Code 的实测范围见[合成草稿验收](validation/2026-11-19-claude-code-drafts.md)。
 证据见 [DeepSeek 实测](validation/2026-11-16-deepseek-harness.md)。
-Codex 证据见 [此前实测](validation/2026-11-16-m0-move-harness.md)。
+Codex 证据见[合成草稿验收](validation/2026-11-20-codex-drafts.md)。
 
 ## 当前实现边界
 
@@ -29,8 +29,9 @@ DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
 正常结束删除临时会话；硬崩溃残留未验证。
 这些限制不构成操作系统级沙盒。
 
-Codex 目前只做发现、版本和参数检查。
-真实邮件调用尚未接入，也没有可用入口。
+Codex 使用临时只读会话和应用内置的模型配置。
+所请求模型为 OpenAI GPT-6.2 Sol。
+CLI 自行使用已有登录；邮件仅通过 stdin 传入。
 各回复工具共用宿主的授权与持久化队列。
 切换工具须试写并重新授权。旧授权不能转投新工具。
 

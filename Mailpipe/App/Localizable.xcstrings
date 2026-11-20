@@ -4753,24 +4753,24 @@
         }
       }
     },
-    "the model service configured in Codex CLI": {
+    "OpenAI (GPT-6.2 Sol via Codex CLI)": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "the model service configured in Codex CLI"
+            "value": "OpenAI (GPT-6.2 Sol via Codex CLI)"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codex CLI 配置的模型服务"
+            "value": "OpenAI（通过 Codex CLI 使用 GPT-6.2 Sol）"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "el servicio de modelos configurado en Codex CLI"
+            "value": "OpenAI (GPT-6.2 Sol mediante Codex CLI)"
           }
         }
       }

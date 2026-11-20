@@ -5,6 +5,7 @@ import { appcast } from "./appcast.mjs";
 
 const origin = "https://mailpipeai.com";
 const agents = [
+  { name: "Codex CLI", version: "0.169.1", repo: "openai/codex", tagPrefix: "rust-v", command: "codex" },
   { name: "DeepSeek Harness", version: "0.2.2-rc.1", repo: "deepseek-ai/deepseek-harness", tagPrefix: "dsh-v", logo: "deepseek-harness.svg" },
   { name: "Claude Code", version: "2.1.296", repo: "anthropics/claude-code", command: "claude" },
   { name: "OpenCode", version: "2.3.0", repo: "anomalyco/opencode", logo: "opencode.svg" },

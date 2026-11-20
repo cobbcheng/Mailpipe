@@ -4,6 +4,27 @@ import MailpipeCore
 
 @MainActor
 final class ReplyModelTests: XCTestCase {
+    func testCodexRequiresCompletedTurnAndRejectsToolEvents() throws {
+        let dialect = CodexCLIDialect()
+        let root = try TemporaryDirectory()
+        let start = [#"{"type":"thread.started","thread_id":"fixture"}"#, #"{"type":"turn.started"}"#]
+        let message = #"{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}"#
+        let end = #"{"type":"turn.completed","usage":{"input_tokens":8,"output_tokens":2}}"#
+        func decode(_ events: [String]) throws -> ReplyModelOutput {
+            try dialect.replyOutput(Data(events.joined(separator: "\n").utf8), task: .triage(ReplySyntheticFixture.triage),
+                                    inputCharacters: 3, directory: root.url)
+        }
+        let output = try decode(start + [message, end])
+        XCTAssertEqual(output.inputTokens, 8)
+        XCTAssertEqual(output.content, Data("{}".utf8))
+        XCTAssertThrowsError(try decode(start + [message]))
+        XCTAssertThrowsError(try decode(start + [message, message, end]))
+        XCTAssertThrowsError(try decode(start + [#"{"type":"item.started","item":{"type":"command_execution"}}"#, message, end])) {
+            XCTAssertEqual($0 as? MailpipeError, .unsafeCapability)
+        }
+        XCTAssertFalse(dialect.acceptsVersion("codex-cli 0.169.2"))
+    }
+
     func testOnlyAutomaticDraftsOfferTheNoReplySchema() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let draft = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ReplySchemas.draft.utf8)) as? NSDictionary)

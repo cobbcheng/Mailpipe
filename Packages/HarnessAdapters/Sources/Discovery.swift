@@ -60,8 +60,12 @@ public enum HarnessDiscovery {
             "/opt/homebrew/bin", "/usr/local/bin"
         ] + nodeBins
         var found: [HarnessInstallation] = [], seen: Set<String> = []
+        let bundledCLI = "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
         for kind in HarnessKind.allCases {
             let searchDirectories = switch kind {
+            case .codex:
+                directories + ["/Applications/" + bundledCLI,
+                               home.appendingPathComponent("Applications/" + bundledCLI).path]
             case .opencode, .openclaw:
                 directories + [home.appendingPathComponent(".\(kind.rawValue)/bin").path]
             default: directories
@@ -69,7 +73,7 @@ public enum HarnessDiscovery {
             for directory in searchDirectories {
                 let launchPath = URL(fileURLWithPath: directory).appendingPathComponent(kind.rawValue)
                 let resolved = launchPath.resolvingSymlinksInPath()
-                let file = kind == .codex ? resolved : launchPath
+                let file = launchPath
                 guard isExecutable(file), seen.insert("\(kind.rawValue):\(resolved.path)").inserted else { continue }
                 found.append(HarnessInstallation(kind: kind, executable: file))
             }

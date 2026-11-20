@@ -43,7 +43,7 @@ public final class OnboardingSession {
         case .opencode: "opencode-2.3.0/restricted-v1/model-pin-v1/reply-fixture-v1"
         case .openclaw: "openclaw-2026.11.5/restricted-v1/reply-fixture-v1"
         case .hermes: "hermes-0.23.2/restricted-v1/reply-fixture-v1"
-        case .codex: nil
+        case .codex: "codex-0.169.1/restricted-v1/reply-fixture-v1"
         }
     }
     public let store: PipelineStore

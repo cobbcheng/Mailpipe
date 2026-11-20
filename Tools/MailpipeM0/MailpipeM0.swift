@@ -48,7 +48,7 @@ struct MailpipeM0 {
                 print("Headless flags: \(report.supportsHeadlessRun ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
                 print(report.realMailStatus)
             case nil, "--help", "-h":
-                print("mailpipe-m0 discover | inspect <dsh|claude|opencode|openclaw|hermes|codex> </absolute/path>\nonboarding-probe [dsh|claude|opencode|openclaw|hermes] </absolute/tool> </new/private/directory> [provider/model] tests one synthetic draft.\npipeline-seed [dsh|claude|opencode|openclaw|hermes] </absolute/tool> </new/private/directory> [provider/model] persists one fixed synthetic input.")
+                print("mailpipe-m0 discover | inspect <dsh|claude|opencode|openclaw|hermes|codex> </absolute/path>\nonboarding-probe [dsh|claude|opencode|openclaw|hermes|codex] </absolute/tool> </new/private/directory> [provider/model] tests one synthetic draft.\npipeline-seed [dsh|claude|opencode|openclaw|hermes|codex] </absolute/tool> </new/private/directory> [provider/model] persists one fixed synthetic input.")
             default: throw MailpipeError.invalidInput
             }
         } catch {

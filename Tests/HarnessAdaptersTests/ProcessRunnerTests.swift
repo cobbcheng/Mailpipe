@@ -79,14 +79,14 @@ final class ProcessRunnerTests: XCTestCase {
         let root = try TemporaryDirectory(), dialect = CodexCLIDialect()
         let file = try root.script("""
         case "$*" in
-          --version) echo 'fake-codex 1.2.3'; exit 0;;
+          --version) echo 'codex-cli 0.169.1'; exit 0;;
           *--help*) echo '\(dialect.requiredFlags.joined(separator: " "))'; exit 0;;
         esac
         exit 1
         """)
         let adapter = CodexCLIAdapter(executable: file, dialect: dialect, temporaryRoot: root.url, environment: [:])
         let report = try await adapter.inspect()
-        XCTAssertEqual(report.version, "fake-codex 1.2.3")
+        XCTAssertEqual(report.version, "codex-cli 0.169.1")
         XCTAssertTrue(report.supportsHeadlessRun)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
     }

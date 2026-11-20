@@ -185,8 +185,18 @@ final class AdapterTests: XCTestCase {
         let found = HarnessDiscovery.find(path: root.url.path, home: root.url)
         let choices = HarnessDiscovery.replyLaunchers(in: found, keeping: launcher.path, kind: .claude)
         XCTAssertEqual(choices.first, HarnessInstallation(kind: .claude, executable: launcher))
-        XCTAssertFalse(choices.contains { $0.kind == .codex })
+        XCTAssertTrue(choices.contains { $0.kind == .codex })
         XCTAssertEqual(choices.filter { $0.executable == launcher }.count, 1)
+    }
+
+    func testDiscoversBundledCodexWithoutShellPATH() throws {
+        let root = try TemporaryDirectory()
+        let bin = root.url.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let binary = try root.script("exit 1", name: "bundled-codex")
+        try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent("codex"), withDestinationURL: binary)
+        let found = HarnessDiscovery.find(path: "", home: root.url)
+        XCTAssertTrue(found.contains { $0.kind == .codex && $0.executable == bin.appendingPathComponent("codex") })
     }
 
     func testDiscoveryWithoutShellPATHKeepsInstalledLauncher() throws {

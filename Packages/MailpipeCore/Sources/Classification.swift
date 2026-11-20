@@ -14,8 +14,7 @@ public enum HarnessKind: String, CaseIterable, Codable, Sendable {
     case deepseek = "dsh", codex, claude, opencode, openclaw, hermes
     public var supportsReplyDrafts: Bool {
         switch self {
-        case .deepseek, .claude, .opencode, .openclaw, .hermes: true
-        case .codex: false
+        case .deepseek, .claude, .opencode, .openclaw, .hermes, .codex: true
         }
     }
 
