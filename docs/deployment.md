@@ -10,6 +10,7 @@
 维护者合并 PR 或直接推送到 main 后，GitHub Actions 运行一次
 [Publish Mailpipe](../.github/workflows/release.yml)。不会自动合并 PR、打标签或回写版本。
 [PR 验证](../.github/workflows/checks.yml)只跑隔离测试、双架构未签名编译和网站构建测试。
+macOS 构建统一使用 GitHub 标准 xcode-27 runner 上的 Xcode 27.2。
 PR 不接收发布密钥，不使用 self-hosted runner 或 `pull_request_target`。
 合并前须审查工作流、脚本与依赖变更。合入 main 即授权该版本使用发布凭据。
 

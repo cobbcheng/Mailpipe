@@ -55,7 +55,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.state == 'new'
     environment: mailpipe-production
-    runs-on: macos-26
+    # Swift 6.3.3 in Xcode 26.6 crashes emitting optimized MailKit extension IR.
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     timeout-minutes: 60
     steps:
       - name: Refuse a partial release setup before contacting Apple
