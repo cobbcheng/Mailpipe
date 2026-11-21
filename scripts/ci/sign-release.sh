@@ -20,10 +20,8 @@ unset SPARKLE_PRIVATE_KEY
 printf '%s' "$APPLE_DEVELOPER_ID_P12_BASE64" | base64 -D > "$tmp/input.p12"
 unset APPLE_DEVELOPER_ID_P12_BASE64
 # Rewrap using a blank import password inside a mode-0700 runner-only directory.
-# The first stage decrypts to a pipe, not a plaintext private-key file.
 ossl="$(brew --prefix openssl@3)/bin/openssl"
-"$ossl" pkcs12 -legacy -in "$tmp/input.p12" -passin env:APPLE_DEVELOPER_ID_P12_PASSWORD -noenc |
-  "$ossl" pkcs12 -legacy -export -macalg sha1 -out "$tmp/import.p12" -passout pass:
+bash scripts/ci/rewrap-p12.sh "$ossl" "$tmp"
 unset APPLE_DEVELOPER_ID_P12_PASSWORD
 pw=$("$ossl" rand -hex 32)
 security create-keychain -p "$pw" "$kc"
