@@ -15,14 +15,17 @@ public struct DeepSeekHarnessDialect: HarnessDialect {
         let manifest = #"{"name":"mailpipe-headless","private":true,"dependencies":{},"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base","@deepseek-ai/dsh-headless"]}}}"#
         try Data(manifest.utf8).write(to: profile.appendingPathComponent("package.json"), options: .atomic)
         let guardFile = directory.appendingPathComponent("deepseek-guard.mjs")
-        guard let resources = Bundle.module.resourceURL?.appendingPathComponent("Resources") else { throw MailpipeError.unsafeCapability }
-        try Data(contentsOf: resources.appendingPathComponent("deepseek-guard.mjs")).write(to: guardFile, options: .atomic)
+        guard let guardResource = Bundle.module.url(forResource: "deepseek-guard", withExtension: "mjs", subdirectory: "Resources"),
+              let policyResource = Bundle.module.url(forResource: "reply-policy", withExtension: "md", subdirectory: "Resources"),
+              let patchResource = Bundle.module.url(forResource: "deepseek-restricted", withExtension: "yml", subdirectory: "Resources")
+        else { throw MailpipeError.unsafeCapability }
+        try Data(contentsOf: guardResource).write(to: guardFile, options: .atomic)
         let quoted = String(decoding: try JSONEncoder().encode(guardFile.path), as: UTF8.self)
-        let policy = try String(contentsOf: resources.appendingPathComponent("reply-policy.md"), encoding: .utf8)
+        let policy = try String(contentsOf: policyResource, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !policy.isEmpty else { throw MailpipeError.unsafeCapability }
         let quotedPolicy = String(decoding: try JSONEncoder().encode(policy), as: UTF8.self)
-        let patch = try String(contentsOf: resources.appendingPathComponent("deepseek-restricted.yml"), encoding: .utf8)
+        let patch = try String(contentsOf: patchResource, encoding: .utf8)
             .replacingOccurrences(of: "__MAILPIPE_GUARD_PATH__", with: quoted)
             .replacingOccurrences(of: "__MAILPIPE_REPLY_POLICY__", with: quotedPolicy)
         try Data(patch.utf8).write(to: directory.appendingPathComponent("deepseek-restricted.yml"), options: .atomic)
