@@ -19,16 +19,20 @@ sparkle_key=$SPARKLE_PRIVATE_KEY
 unset SPARKLE_PRIVATE_KEY
 printf '%s' "$APPLE_DEVELOPER_ID_P12_BASE64" | base64 -D > "$tmp/input.p12"
 unset APPLE_DEVELOPER_ID_P12_BASE64
-# Rewrap using a blank import password inside a mode-0700 runner-only directory.
+# Normalize legacy and modern inputs using a random, nonempty import password.
 ossl="$(brew --prefix openssl@3)/bin/openssl"
-bash scripts/ci/rewrap-p12.sh "$ossl" "$tmp"
+import_password=$("$ossl" rand -hex 32)
+import_password="$import_password" bash scripts/ci/rewrap-p12.sh "$ossl" "$tmp"
 unset APPLE_DEVELOPER_ID_P12_PASSWORD
 pw=$("$ossl" rand -hex 32)
 security create-keychain -p "$pw" "$kc"
 security set-keychain-settings -lut 3600 "$kc"
 security unlock-keychain -p "$pw" "$kc"
 security list-keychains -d user -s "$kc"
-security import "$tmp/import.p12" -P '' -k "$kc" -T /usr/bin/codesign >&2
+xcrun clang -fobjc-arc -Wno-deprecated-declarations -framework Foundation -framework Security \
+  scripts/ci/import-p12.m -o "$tmp/import-p12"
+printf '%s' "$import_password" | "$tmp/import-p12" "$tmp/import.p12" "$kc"
+unset import_password
 security set-key-partition-list -S apple-tool:,apple: -s -k "$pw" "$kc" >/dev/null
 unset pw
 # Only this short-lived process sees the password in argv on the isolated runner.
