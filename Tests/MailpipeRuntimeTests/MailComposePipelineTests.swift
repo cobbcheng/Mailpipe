@@ -18,7 +18,7 @@ import MailpipeCore
         try store.save(item)
         return (store, inbox, id)
     }
-    func sender(_ account: String, _ preferred: [String]) throws -> String { "me@example.com" }
+    private let sender: @MainActor @Sendable (String, [String]) throws -> String = { _, _ in "me@example.com" }
     func testEachExplicitClickOpensCompose() async throws {
         let (store, inbox, id) = try fixture(); let raw = raw
         let pipeline = ReplyPipeline(store: store, inbox: inbox, resolve: { _, _ in VerifiedMail(accountID: "a", localID: "1", source: raw) })

@@ -47,71 +47,63 @@ Framer 模板的照片底板只有未随仓库提供的库存图引用。
 
 ## 下载状态
 
-0.2.0（build 50）已通过 Apple 公证并装订票据。
+启用 CI 前的基线为 0.2.0（build 50），已通过 Apple 公证并装订票据。
 官网与 Sparkle 通过同一个 `/downloads/` 地址从私有 R2 下载。
-页面与构建脚本共用[发布信息](release.mjs)中的版本、文件名和校验值。
-
-在仓库根目录执行 `node website/build-pages.mjs <含已公证App的ZIP> <全新输出目录>`。
-脚本核对包大小与 SHA-256，生成三语首页和更新源。
-输出还包括 robots.txt 和 sitemap.xml。
-根路径默认英文。中文使用 /zh/，西班牙语使用 /es/。
-将输出目录的内容部署到现有 Pages 生产项目 `mailpipe-official`。
-发布流程与验收门槛见[部署方法](../docs/deployment.md)。
+线上自更新清单是当前版本的依据。
+仓库中的 [release.mjs](release.mjs) 保留为本地预览默认值。
+CI 从最终 ZIP 和其公共签名构建，不改写仓库或手填版本。
 
 ## 自更新发布
 
-更新源固定为 `https://mailpipeai.com/appcast.xml`。
-官网和更新源分发同一个 ZIP。
-0.1.0 build 34 是首个自更新版本之前的安装包。
-以该包构建官网时，生成的更新源为空。
-已有用户需从官网安装带更新器的版本一次。
+CI 在上游 main 收到 push 后运行。PR 检查不发布。
+生产环境名为 `mailpipe-production`。
+下列步骤不创建项目、桶、公开桶地址或 DNS 记录，不修改套餐。
 
-在仓库根目录运行 `node --test website/appcast.test.mjs`。
-离线回归覆盖旧版空更新源、签名归档构建和错签拒绝。
-测试使用临时目录和一次性密钥。
+1. 在 macOS 签名任务中完成 Developer ID 签名、Apple 公证、装订、Gatekeeper 和 Sparkle 签名。
+2. 将最终 ZIP 和单行公签名 `signature.txt` 传给网站任务。
+   文件名必须是 `Mailpipe-<版本>-build<号>-<7位提交>.zip`。
+3. 离线构建，从两个 plist 核对宿主及扩展标识、版本、系统下限、更新 URL 和源码公钥。
+   静态生成器验证 SHA-256、长度和最终 ZIP 的 Ed25519 签名。
+   三语下载按钮、结构化数据、CSS 版本和更新清单使用同一份发布信息。
+4. 核对线上清单未前进、Pages 项目 `mailpipe-official` 生产分支为 `main`，
+   以及生产 `RELEASES` 绑定对应目标桶。通过 S3 条件写入新版本路径。
+   如果路径已存在，只接受与原包完全一致的对象；不删除、不覆盖旧包。
+   从私有桶下载并比较完整字节，再将预生成目录上传至 Pages。
+   目录中的 `_worker.js` 仍从 R2 提供下载。官网和 Sparkle 共用同一 URL。
+5. 回读官网清单和 ZIP 全文、HEAD 长度、三语下载按钮和结构化数据、robots、sitemap 及 CSS。
+   另测上一版下载 URL。回读重试不重复发布。部署状态不代表已在干净 Mac 上完成升级。
 
-1. 递增宿主与扩展的 build，保持两者版本一致。
-2. 按[部署方法](../docs/deployment.md)完成签名、公证和装订。
-3. 用 `ditto` 归档已装订的 App。以下命令在仓库根目录运行。
+### 离线检查与公开回读
 
-   ```sh
-   ditto -c -k --sequesterRsrc --keepParent "$MAILPIPE_RELEASE_APP" "$MAILPIPE_RELEASE_ZIP"
-   SPARKLE_BIN=.build/xcode/SourcePackages/artifacts/sparkle/Sparkle/bin
-   "$SPARKLE_BIN/sign_update" --account com.mailpipe.app "$MAILPIPE_RELEASE_ZIP"
-   shasum -a 256 "$MAILPIPE_RELEASE_ZIP"
-   ```
+在仓库根目录运行。输出目录必须不存在。前两条命令无需网络、凭据或 Apple 签名服务。
 
-4. 在[发布信息](release.mjs)填写此 ZIP 的版本、build、文件名和 SHA-256。
-   将签名输出的 `sparkle:edSignature` 填入 `edSignature`，`length` 填入 `bytes`。
-   `minimumSystemVersion` 使用三段系统版本，如 `13.0.0`。
-   私钥保存在发布机钥匙串，构建官网只需公钥。
-5. 构建并核对静态文件。输出目录必须是新路径。
+```sh
+node --test website/appcast.test.mjs
+python3 scripts/ci/publish-site.py build "$ZIP" "$SIGNATURE_TXT" "$NEW_OUTPUT"
+python3 scripts/ci/publish-site.py verify "$ZIP" "$NEW_OUTPUT"
+python3 scripts/ci/publish-site.py probe "$PUBLISHED_GIT_SHA"
+```
 
-   ```sh
-   node website/build-pages.mjs "$MAILPIPE_RELEASE_ZIP" "$MAILPIPE_PAGES_OUTPUT"
-   xmllint --noout "$MAILPIPE_PAGES_OUTPUT/appcast.xml"
-   ```
+`probe` 独立下载线上公签名和 ZIP，核验源码中的 Sparkle 公钥及三语页面。
+如果站点已前进，它拒绝将其他提交的发布当作成功。
+本地预览旧版仍可用 `node website/build-pages.mjs "$ZIP" "$NEW_OUTPUT"`。
 
-   构建使用 Node.js 和 Python 3 标准库。
-   它核对 ZIP 内宿主及扩展的标识与版本。
-   它还核对宿主的系统下限、更新地址和公钥。
-   最后用源码中的 `SUPublicEDKey` 验证归档签名。
-6. 在 Pages 项目 `mailpipe-official` 的生产环境绑定私有 R2 桶，变量名设为 `RELEASES`。
-   桶内 `downloads/` 前缀只存放已批准公开的版本包。
-   首次切换时，先将当前 build 34 和需保留的历史 ZIP 放入此前缀。
-   每个版本使用唯一文件名。获得发布授权后，在仓库根目录上传并回读核验。
+### 发布环境输入
 
-   ```sh
-   filename=$(node --input-type=module -e "import { release } from './website/release.mjs'; console.log(release.filename)")
-   key="$MAILPIPE_RELEASE_BUCKET/downloads/$filename"
-   npx wrangler@4 r2 object put "$key" --remote --file "$MAILPIPE_RELEASE_ZIP"
-   npx wrangler@4 r2 object get "$key" --remote --file "$MAILPIPE_READBACK_ZIP"
-   cmp "$MAILPIPE_RELEASE_ZIP" "$MAILPIPE_READBACK_ZIP"
-   ```
+| 名称 | 类型与用途 |
+|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | 环境变量：现有 Pages 与 R2 账户 ID |
+| `MAILPIPE_RELEASE_BUCKET` | 环境变量：现有 Pages 生产绑定 `RELEASES` 的桶名，不是本地开发桶 |
+| `CLOUDFLARE_API_TOKEN` | 环境 secret：限定目标账户的 Cloudflare Pages Edit |
+| `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY` | 环境 secrets：限定此 R2 桶的 S3 Object Read & Write 密钥对，不使用 AWS 账户密钥 |
 
-7. 回读一致后，将输出目录部署到 Pages。该目录包含更新清单及下载处理程序。
-   官网下载按钮和更新器均请求 `/downloads/<文件名>`，处理程序从 R2 流式返回 ZIP。
-   回读线上更新源和其中的 ZIP，分别与本地产物比对。
-   用上一版带更新器的 App 验收安装和重启。
+工具为 Node 22.12+、Python 3、支持条件写的 AWS CLI v2 和锁定版本的 Wrangler。
+在没有生产凭据的步骤运行 `npm ci --ignore-scripts --prefix website/ci-tools`。
+真实发布只在受保护的 main push 步骤调用 `publish-site.py deploy "$ZIP" "$NEW_OUTPUT"`。
+Apple 材料不传给网站任务；PR 不获得生产环境。
+若 R2 写入后 Pages 上传失败，保留同一 run 的原 ZIP，重试失败任务，
+不要重新公证并以同名覆盖。若回读失败，先验证线上状态，不直接重复发布。
 
-归档格式与签名参数见 [Sparkle 发布说明](https://sparkle-project.org/documentation/publishing/)。
+参考：[Pages Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)、
+[R2 条件写](https://developers.cloudflare.com/r2/api/s3/conditional-operations/)、
+[Sparkle 签名](https://sparkle-project.org/documentation/publishing/)。

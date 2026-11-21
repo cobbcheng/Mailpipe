@@ -518,6 +518,8 @@
       "name" = "Debug";
       "buildSettings" = {
         "SDKROOT" = "macosx";
+        "MARKETING_VERSION" = "0.2.0";
+        "CURRENT_PROJECT_VERSION" = "50";
         "CLANG_ENABLE_MODULES" = "YES";
         "SWIFT_VERSION" = "6.0";
         "SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
@@ -530,6 +532,8 @@
       "name" = "Release";
       "buildSettings" = {
         "SDKROOT" = "macosx";
+        "MARKETING_VERSION" = "0.2.0";
+        "CURRENT_PROJECT_VERSION" = "50";
         "CLANG_ENABLE_MODULES" = "YES";
         "SWIFT_VERSION" = "6.0";
         "SWIFT_OPTIMIZATION_LEVEL" = "-O";

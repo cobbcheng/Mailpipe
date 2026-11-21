@@ -125,7 +125,7 @@ for label, source_dir, product, product_type in (
 products = obj('products', 'PBXGroup', children=[app_product, ext_product], name='Products', sourceTree='<group>')
 main = obj('main', 'PBXGroup', children=source_groups + [asset_catalog, app_icon, products], sourceTree='<group>')
 project = obj('project', 'PBXProject', attributes={'LastUpgradeCheck':'1600','BuildIndependentTargetsInParallel':'YES'},
-              buildConfigurationList=configs('project', {'SDKROOT':'macosx', 'CLANG_ENABLE_MODULES':'YES', 'SWIFT_VERSION':'6.0'}),
+              buildConfigurationList=configs('project', {'SDKROOT':'macosx', 'MARKETING_VERSION':'0.2.0', 'CURRENT_PROJECT_VERSION':'50', 'CLANG_ENABLE_MODULES':'YES', 'SWIFT_VERSION':'6.0'}),
               compatibilityVersion='Xcode 14.0', developmentRegion='en', hasScannedForEncodings='0', knownRegions=['en','Base'],
               mainGroup=main, productRefGroup=products, projectDirPath='', projectRoot='', packageReferences=[package, lottie, sparkle], targets=target_ids)
 

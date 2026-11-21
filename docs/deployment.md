@@ -5,6 +5,58 @@
 静态下载与校验流程见[官网发布说明](../website/README.md#下载状态)。
 更新于 2026-11-20。
 
+## 主分支自动发布
+
+维护者合并 PR 或直接推送到 main 后，GitHub Actions 运行一次
+[Publish Mailpipe](../.github/workflows/release.yml)。不会自动合并 PR、打标签或回写版本。
+[PR 验证](../.github/workflows/checks.yml)只跑隔离测试、双架构未签名编译和网站构建测试。
+macOS 构建统一使用 GitHub 标准 xcode-27 runner 上的 Xcode 27.2。
+PR 不接收发布密钥，不使用 self-hosted runner 或 `pull_request_target`。
+合并前须审查工作流、脚本与依赖变更。合入 main 即授权该版本使用发布凭据。
+
+**版本。** 独立 push 工作流的第 N 次运行分配 `0.2.N` / `50+N`。
+首个主分支推送是 0.2.1（51）。同一次重跑不增号；失败或取消可能留空号。
+宿主及扩展均从 Xcode 的 `MARKETING_VERSION` 与 `CURRENT_PROJECT_VERSION` 取值。
+本地默认仍为 0.2.0（50）。排队执行，不取消运行中的发布。
+计划与写入前均查线上版本；不能降级或覆盖冲突版本。
+修改 workflow 文件名、重建计数器或换主次版本前，须迁移发布基线。
+
+**凭据。** 在 GitHub 仓库 Settings → Environments 建立 `mailpipe-production`。
+Deployment branches/tags 仅允许 **branch main**，不允许 tag。
+不把凭据放在仓库、PR、聊天或普通仓库级别 Secrets 中。
+只在以下签名、上传步骤传入所需值。GitHub token 无代码或发布写权限。
+
+| 环境配置 | 类型与来源 |
+|---|---|
+| `APPLE_TEAM_ID` | Variable。与现有正式包相同的 Apple Developer 团队。 |
+| `APPLE_DEVELOPER_ID_P12_BASE64`、`APPLE_DEVELOPER_ID_P12_PASSWORD` | Secrets。只导出该团队授权的单个 Developer ID Application 身份（证书与对应私钥），P12 的 Base64 及其强密码。不要导出整个钥匙串。 |
+| `APPLE_NOTARY_APPLE_ID` | Variable。填写已确认属于上述团队、可用于公证的 Apple 账户登录名，不从签名证书名称推断。 |
+| `APPLE_NOTARY_APP_PASSWORD` | Secret。该 Apple 账户为公证生成的 App 专用密码，不是账户登录密码。runner 在临时钥匙串中验证并保存凭据，退出时删除钥匙串。 |
+| `SPARKLE_PRIVATE_KEY` | Secret。与已发行 App 内置公钥匹配的 Sparkle 导出私钥文本。不要生成新密钥替换它。 |
+| `CLOUDFLARE_ACCOUNT_ID`、`MAILPIPE_RELEASE_BUCKET` | Variables。现有 Pages 项目所属账户，以及其生产 `RELEASES` 绑定的 R2 桶名。 |
+| `CLOUDFLARE_API_TOKEN` | Secret。仅目标账户的 Cloudflare Pages Edit API token。不能用 Global API Key 或个人 Wrangler 登录令牌。 |
+| `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY` | Secrets。**Cloudflare R2** 的 S3 兼容访问密钥，仅该桶的对象读写；不是 AWS 账户凭据。 |
+
+维护者可在环境的 Secrets / Variables 表单填入，或从本机私密文件通过 stdin 提交，例如：
+
+```sh
+base64 < "$MAILPIPE_SIGNING_P12" | gh secret set APPLE_DEVELOPER_ID_P12_BASE64 --repo cobbcheng/Mailpipe --env mailpipe-production
+```
+
+**交付与恢复。** 自动流程先编译测试，再执行 Developer ID 归档与导出、
+Apple 公证和装订、Gatekeeper 校验，最后为最终 ZIP 生成 Sparkle 签名。
+只把这个 ZIP 和公开签名作为 Actions artifact 保留一天。
+官网从同一 ZIP 构建，校验包内双版本、哈希及 Sparkle 签名。
+确认 R2 不覆盖旧对象且回读一致后，才上传到原 Pages 项目。
+最后回读三语官网、更新源、新旧下载路径。不创建新项目、桶或收费服务。
+
+失败先查看 Actions 中失败的步骤。补齐配置后优先重跑失败的 jobs。
+一天内可复用该 run 的签名制品，避免重复公证。
+已上线的同版本只回读；旧版本重跑会拒绝发布。
+若 R2 已有同名但不同字节的文件，保留原物、不要覆盖；
+取回经验证的原始制品恢复，或用下一次主分支推送分配新版本。
+网站详细校验和原手动恢复步骤见[官网说明](../website/README.md)。
+
 ## 1. 当前限制
 
 运行 `./scripts/build-app.sh` 构建宿主与嵌入扩展。
@@ -18,7 +70,7 @@
 扩展声明沙盒，宿主声明 Apple Events 权限。
 开发签名与实机进展见 [验收记录](validation/2026-11-15-m0-signed-identity.md)。
 工程 Bundle ID 为开发占位，签名前须确定团队和标识。
-没有安装或发布命令。
+本地不提供安装命令。自动发布由下方主分支工作流执行。
 MailKit API 下限是 macOS 12，不等于产品支持下限。
 产品最低系统、CPU 架构和签名团队在 M0 冻结。
 本轮只读核查环境不代表目标支持矩阵。
