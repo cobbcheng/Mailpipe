@@ -30,7 +30,8 @@ Deployment branches/tags 仅允许 **branch main**，不允许 tag。
 |---|---|
 | `APPLE_TEAM_ID` | Variable。与现有正式包相同的 Apple Developer 团队。 |
 | `APPLE_DEVELOPER_ID_P12_BASE64`、`APPLE_DEVELOPER_ID_P12_PASSWORD` | Secrets。只导出该团队授权的单个 Developer ID Application 身份（证书与对应私钥），P12 的 Base64 及其强密码。不要导出整个钥匙串。 |
-| `APPLE_NOTARY_KEY_P8_BASE64`、`APPLE_NOTARY_KEY_ID`、`APPLE_NOTARY_ISSUER_ID` | Secrets。Apple 公证可用的专用 App Store Connect 团队 API 密钥、Key ID 和 Issuer ID。P8 文件内容使用 Base64。 |
+| `APPLE_NOTARY_APPLE_ID` | Variable。填写已确认属于上述团队、可用于公证的 Apple 账户登录名，不从签名证书名称推断。 |
+| `APPLE_NOTARY_APP_PASSWORD` | Secret。该 Apple 账户为公证生成的 App 专用密码，不是账户登录密码。runner 在临时钥匙串中验证并保存凭据，退出时删除钥匙串。 |
 | `SPARKLE_PRIVATE_KEY` | Secret。与已发行 App 内置公钥匹配的 Sparkle 导出私钥文本。不要生成新密钥替换它。 |
 | `CLOUDFLARE_ACCOUNT_ID`、`MAILPIPE_RELEASE_BUCKET` | Variables。现有 Pages 项目所属账户，以及其生产 `RELEASES` 绑定的 R2 桶名。 |
 | `CLOUDFLARE_API_TOKEN` | Secret。仅目标账户的 Cloudflare Pages Edit API token。不能用 Global API Key 或个人 Wrangler 登录令牌。 |
