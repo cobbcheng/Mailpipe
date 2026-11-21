@@ -216,6 +216,9 @@ struct OnboardingView: View {
 
     private var mailExtension: some View {
         VStack(spacing: 12) {
+            Text(L("When replying or forwarding, click Mailpipe in the compose toolbar to review or generate a draft."))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Button(L("Open Mail extension settings"), action: model.openMailAndExtensionSettings)
                 .modifier(WorkbenchActionStyle())
             Toggle(L("I enabled Mailpipe in Mail"), isOn: $model.onboarding.extensionAcknowledged)

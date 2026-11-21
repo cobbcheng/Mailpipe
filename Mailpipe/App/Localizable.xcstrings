@@ -4797,6 +4797,28 @@
         }
       }
     },
+    "When replying or forwarding, click Mailpipe in the compose toolbar to review or generate a draft.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When replying or forwarding, click Mailpipe in the compose toolbar to review or generate a draft."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复或转发邮件时，点按写信窗口工具栏中的 Mailpipe，即可查看或生成草稿。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Al responder o reenviar un mensaje, haz clic en Mailpipe en la barra de herramientas de la ventana de redacción para revisar o generar un borrador."
+          }
+        }
+      }
+    },
     "Which messages can your agent read?": {
       "localizations": {
         "en": {
