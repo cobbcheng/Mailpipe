@@ -3,12 +3,13 @@ import { createHash, createPublicKey, verify } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
-import worker from './worker.mjs';
-import { release } from './release.mjs';
+import { render } from './worker.mjs';
+import { release as publishedRelease } from './release.mjs';
 import { appcast, feedURL, predatesUpdater } from './appcast.mjs';
 
-const [source, destination] = process.argv.slice(2);
-if (!source || !destination) throw new Error('Usage: node build-pages.mjs <release.zip> <new-output-dir>');
+const [source, destination, metadata] = process.argv.slice(2);
+if (!source || !destination) throw new Error('Usage: node build-pages.mjs <release.zip> <new-output-dir> [release.json]');
+const release = metadata ? JSON.parse(await readFile(metadata, 'utf8')) : publishedRelease;
 const bytes = await readFile(source);
 if (bytes.length !== release.bytes || createHash('sha256').update(bytes).digest('hex') !== release.sha256) {
   throw new Error('Release ZIP does not match the published size and SHA-256');
@@ -37,7 +38,7 @@ await cp(fileURLToPath(new URL('./public/', import.meta.url)), out, {recursive:t
 await writeFile(join(out, 'appcast.xml'), feed);
 for (const [route,file] of [['/','index.html'],['/zh/','zh/index.html'],['/es/','es/index.html'],['/robots.txt','robots.txt'],['/sitemap.xml','sitemap.xml']]) {
   await mkdir(resolve(out,file,".."),{recursive:true});
-  await writeFile(join(out,file), await worker.fetch(new Request('https://mailpipeai.com'+route)).text());
+  await writeFile(join(out,file), await render(new Request('https://mailpipeai.com'+route), {}, release).text());
 }
 await cp(fileURLToPath(new URL('./downloads.mjs', import.meta.url)), join(out, '_worker.js'));
 await writeFile(join(out, '_routes.json'), JSON.stringify({ version: 1, include: ['/downloads/*'], exclude: [] }));

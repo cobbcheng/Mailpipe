@@ -1,6 +1,6 @@
 import downloads from './downloads.mjs';
 import { messages } from "./messages.mjs";
-import { release } from "./release.mjs";
+import { release as publishedRelease } from "./release.mjs";
 import { appcast } from "./appcast.mjs";
 
 const origin = "https://mailpipeai.com";
@@ -13,11 +13,10 @@ const agents = [
   { name: "OpenClaw", version: "2026.11.5", repo: "openclaw/openclaw", logo: "openclaw.svg" },
   { name: "Hermes Agent", version: "0.23.2", repo: "NousResearch/hermes-agent", logo: "hermes-agent.png" },
 ];
-const downloadURL = `/downloads/${release.filename}`;
-const fileSize = `${(release.bytes / 1_000_000).toFixed(2)} MB`;
-
 const languages = { en: ["/", "English"], "zh-CN": ["/zh/", "中文"], es: ["/es/", "Español"] };
-function homepage(language = "en") {
+function homepage(language, release) {
+  const downloadURL = `/downloads/${release.filename}`;
+  const fileSize = `${(release.bytes / 1_000_000).toFixed(2)} MB`;
   const copy = messages[language];
   const screenshots = `/screenshots/${language === "zh-CN" ? "zh" : language}`;
   const previewImage = `${origin}${screenshots}/compose-window-ready.png`;
@@ -254,25 +253,25 @@ picker.addEventListener("change", event => {
 </html>`;
 }
 
-export default {
-  fetch(request, env) {
-    const path = new URL(request.url).pathname;
-    if (!["GET", "HEAD"].includes(request.method)) {
-      return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
-    }
-    if (path.startsWith('/downloads/')) return downloads.fetch(request, env);
-    const routes = {
-      "/appcast.xml": ["application/xml", () => appcast(release)],
-      "/": ["text/html", homepage],
-      "/es/": ["text/html", () => homepage("es")],
-      "/zh/": ["text/html", () => homepage("zh-CN")],
-      "/robots.txt": ["text/plain", () => `User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n`],
-      "/sitemap.xml": ["application/xml", () => `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${Object.values(languages).map(([path]) => `<url><loc>${origin}${path}</loc></url>`).join("")}</urlset>`]
-    };
-    const route = routes[path];
-    if (!route) return new Response("Page not found", { status: 404 });
-    return new Response(request.method === "HEAD" ? null : route[1](), {
-      headers: { "Content-Type": route[0] + "; charset=utf-8", "X-Content-Type-Options": "nosniff" }
-    });
+export function render(request, env, release) {
+  const path = new URL(request.url).pathname;
+  if (!["GET", "HEAD"].includes(request.method)) {
+    return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
   }
-};
+  if (path.startsWith('/downloads/')) return downloads.fetch(request, env);
+  const routes = {
+    "/appcast.xml": ["application/xml", () => appcast(release)],
+    "/": ["text/html", () => homepage("en", release)],
+    "/es/": ["text/html", () => homepage("es", release)],
+    "/zh/": ["text/html", () => homepage("zh-CN", release)],
+    "/robots.txt": ["text/plain", () => `User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n`],
+    "/sitemap.xml": ["application/xml", () => `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${Object.values(languages).map(([path]) => `<url><loc>${origin}${path}</loc></url>`).join("")}</urlset>`]
+  };
+  const route = routes[path];
+  if (!route) return new Response("Page not found", { status: 404 });
+  return new Response(request.method === "HEAD" ? null : route[1](), {
+    headers: { "Content-Type": route[0] + "; charset=utf-8", "X-Content-Type-Options": "nosniff" }
+  });
+}
+
+export default { fetch: (request, env) => render(request, env, publishedRelease) };

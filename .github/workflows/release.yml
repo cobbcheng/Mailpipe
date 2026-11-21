@@ -1,0 +1,135 @@
+name: Publish Mailpipe
+# The run_number of THIS push-only workflow is the version ledger. Do not rename/recreate it
+# or add PR/dispatch triggers without migrating the release baseline (see docs/deployment.md).
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mailpipe-production-release
+  queue: max
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  plan:
+    needs: checks
+    if: github.repository == 'cobbcheng/Mailpipe'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    timeout-minutes: 10
+    outputs:
+      state: ${{ steps.plan.outputs.state }}
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+      filename: ${{ steps.plan.outputs.filename }}
+      reuse: ${{ steps.artifact.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Validate the version against production before signing
+        id: plan
+        run: |
+          curl --proto '=https' -fsS --retry 3 --max-time 60 https://mailpipeai.com/appcast.xml -o "$RUNNER_TEMP/feed"
+          python3 scripts/ci/release-plan.py "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" "$RUNNER_TEMP/feed" >> "$GITHUB_OUTPUT"
+      - name: Verify an already-published rerun without publishing again
+        if: steps.plan.outputs.state == 'published'
+        run: python3 scripts/ci/publish-site.py probe "$GITHUB_SHA"
+      - name: Look for this run's immutable signed ZIP (never from another run or a PR)
+        id: artifact
+        if: steps.plan.outputs.state == 'new'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          reuse=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=notarized-release" --jq 'any(.artifacts[]; .name == "notarized-release" and (.expired | not))')
+          echo "reuse=$reuse" >> "$GITHUB_OUTPUT"
+
+  sign:
+    needs: plan
+    if: needs.plan.outputs.state == 'new'
+    environment: mailpipe-production
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Refuse a partial release setup before contacting Apple
+        if: needs.plan.outputs.reuse != 'true'
+        env:
+          PUBLISH_CONFIGURED: ${{ vars.CLOUDFLARE_ACCOUNT_ID != '' && vars.MAILPIPE_RELEASE_BUCKET != '' && secrets.CLOUDFLARE_API_TOKEN != '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != '' }}
+        run: |
+          [[ "$PUBLISH_CONFIGURED" == "true" ]] || { echo "Configure the production Pages and R2 credentials and variables; nothing was signed or published." >&2; exit 1; }
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: needs.plan.outputs.reuse != 'true'
+        with:
+          persist-credentials: false
+      - name: Sign, notarize, staple, verify and Sparkle-sign the final universal ZIP
+        if: needs.plan.outputs.reuse != 'true'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          BUILD: ${{ needs.plan.outputs.build }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: scripts/ci/sign-release.sh "$VERSION" "$BUILD" "$RUNNER_TEMP/signed"
+      - name: Save only the final public ZIP and its public signature
+        if: needs.plan.outputs.reuse != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notarized-release
+          path: |
+            ${{ runner.temp }}/signed/${{ needs.plan.outputs.filename }}
+            ${{ runner.temp }}/signed/signature.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    needs: [plan, sign]
+    environment: mailpipe-production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      FILENAME: ${{ needs.plan.outputs.filename }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notarized-release
+          path: ${{ runner.temp }}/signed
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Build and validate the site from the exact signed ZIP
+        run: |
+          python3 scripts/ci/publish-site.py build "$RUNNER_TEMP/signed/$FILENAME" "$RUNNER_TEMP/signed/signature.txt" "$RUNNER_TEMP/pages"
+          npm ci --ignore-scripts --no-audit --no-fund --prefix website/ci-tools
+      - name: Recheck production before any external write
+        id: recheck
+        run: |
+          curl --proto '=https' -fsS --retry 3 --max-time 60 https://mailpipeai.com/appcast.xml -o "$RUNNER_TEMP/feed"
+          python3 scripts/ci/release-plan.py "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" "$RUNNER_TEMP/feed" >> "$GITHUB_OUTPUT"
+      - name: Archive with immutable R2 key, publish Pages, verify production
+        if: steps.recheck.outputs.state == 'new'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          MAILPIPE_RELEASE_BUCKET: ${{ vars.MAILPIPE_RELEASE_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: python3 scripts/ci/publish-site.py deploy "$RUNNER_TEMP/signed/$FILENAME" "$RUNNER_TEMP/pages"
+      - name: Verify already-live deployment after a retry
+        if: steps.recheck.outputs.state == 'published'
+        run: python3 scripts/ci/publish-site.py probe "$GITHUB_SHA"

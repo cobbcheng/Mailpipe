@@ -50,10 +50,11 @@ with zipfile.ZipFile(Path(root, filename), "w") as archive:
     bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
     edSignature: sign(null, bytes, privateKey).toString('base64'),
   };
-  async function build(metadata, output) {
+  async function build(metadata, output, generated) {
     await writeFile(join(site, 'release.mjs'), 'export const release = ' + JSON.stringify(metadata));
     execFileSync(process.execPath, [
       '--preserve-symlinks-main', '--preserve-symlinks', join(site, 'build-pages.mjs'), archive, output,
+      ...(generated ? [generated] : []),
     ], { stdio: 'pipe' });
   }
   const out = join(root, 'good');
@@ -67,6 +68,19 @@ with zipfile.ZipFile(Path(root, filename), "w") as archive:
   await assert.rejects(readFile(join(out, 'downloads', filename)), { code: 'ENOENT' });
   assert.deepEqual(await readFile(join(out, '_worker.js')), await readFile(new URL('./downloads.mjs', import.meta.url)));
   assert.ok((await readFile(join(out, 'index.html'), 'utf8')).includes(`href="/downloads/${filename}"`));
+
+  // CI passes generated JSON without mutating the legacy preview metadata.
+  const next = join(root, 'injected');
+  const json = join(root, 'generated-release.json');
+  await writeFile(json, JSON.stringify(release));
+  await build({ ...release, filename: 'preview-only.zip', version: '0.0.0' }, next, json);
+  assert.equal(await readFile(join(next, 'appcast.xml'), 'utf8'), feed);
+  for (const html of ['index.html', 'zh/index.html', 'es/index.html']) {
+    const page = await readFile(join(next, html), 'utf8');
+    assert.ok(page.includes(`href="/downloads/${filename}"`));
+    assert.ok(page.includes(`"softwareVersion":"${release.version}"`));
+    assert.ok(!page.includes('preview-only.zip'));
+  }
 
   const wrongKey = generateKeyPairSync('ed25519').privateKey;
   const bad = join(root, 'bad');
