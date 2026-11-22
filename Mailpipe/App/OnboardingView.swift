@@ -110,7 +110,7 @@ struct OnboardingView: View {
                 VStack(spacing: 18) {
                     VStack(spacing: 8) {
                         OnboardingArtwork(step: step)
-                            .frame(width: 168, height: 100)
+                            .frame(width: step == 4 ? 320 : 168, height: step == 4 ? 192 : 100)
                         Text(title)
                             .font(.title.bold())
                             .accessibilityAddTraits(.isHeader)
@@ -145,7 +145,7 @@ struct OnboardingView: View {
         case 1: return L("Let your agent draft your replies")
         case 2: return L("Connect your agent")
         case 3: return L("Receive new messages from Apple Mail")
-        case 4: return L("Which messages can your agent read?")
+        case 4: return L("Use Mailpipe while you write")
         default: return L("Authorize replies to new messages")
         }
     }
@@ -159,7 +159,7 @@ struct OnboardingView: View {
         case 3:
             return L("In Apple Mail, open Mail → Settings → Extensions, enable Mailpipe, then return here.")
         case 4:
-            return L("New messages come from all Apple Mail accounts. Limit them by subject and confirm what %1$@ can read in the next step.", String(describing: toolName))
+            return L("When replying or forwarding, click Mailpipe in the compose toolbar to review or generate a draft.")
         default:
             return L("Choose Get started to allow Mailpipe to share the subjects and bodies of new messages in the scope below with your agent for drafting. Attachment contents are excluded.")
         }
@@ -178,7 +178,7 @@ struct OnboardingView: View {
             .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary) }
         case 2: connection
         case 3: mailExtension
-        case 4: scope
+        case 4: EmptyView()
         default: review
         }
     }
@@ -254,10 +254,11 @@ struct OnboardingView: View {
                         .help(model.onboarding.executable)
                 }
             }
-            LabeledContent(L("Message scope"), value: L("Future messages in all Apple Mail accounts"))
-            if !model.onboarding.exactSubject.isEmpty {
-                LabeledContent(L("Exact subject"), value: model.onboarding.exactSubject)
-            }
+            scope
+            LabeledContent(L("Message scope"), value: model.onboarding.exactSubject.isEmpty
+                ? L("Future messages in all Apple Mail accounts")
+                : L("Only new messages with the subject “%1$@”", model.onboarding.exactSubject))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
