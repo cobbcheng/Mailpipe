@@ -21,16 +21,26 @@ final class OnboardingTests: XCTestCase {
         XCTAssertNil(try reopened.settings().permission)
         XCTAssertTrue(try reopened.settings().paused)
     }
+    func testResumesFormerSixthStepAtFinalReview() throws {
+        let store = try PipelineStore(directory: root())
+        var draft = OnboardingDraft()
+        draft.step = 6
+        draft.exactSubject = "Project update"
+        try store.saveOnboarding(draft)
+        draft.step = 5
+        XCTAssertEqual(try store.onboarding(), draft)
+    }
+
     func testOnlyFinalReviewCanCompleteInitialSetup() async throws {
         let store = try PipelineStore(directory: root())
         let session = try OnboardingSession(store: store, model: { _ in FakeReplyModel() })
         var draft = OnboardingDraft()
-        draft.step = 6
+        draft.step = 5
         draft.executable = "/fake/dsh"
         draft.extensionAcknowledged = true
         draft.completed = true
         try session.save(draft)
-        XCTAssertEqual(try store.onboarding().step, 6)
+        XCTAssertEqual(try store.onboarding().step, 5)
         _ = try session.beginTest()
         try await session.testPipeline.pump()
 

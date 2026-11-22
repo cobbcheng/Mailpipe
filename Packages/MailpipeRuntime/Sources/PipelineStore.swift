@@ -345,6 +345,7 @@ public final class PipelineStore {
     }
     public func onboarding() throws -> OnboardingDraft {
         var draft = try values(OnboardingDraft.self, table: "metadata", id: "onboarding").first ?? OnboardingDraft()
+        draft.step = min(draft.step, 5)
         if draft.suggestionsOnly == true {
             draft.extensionAcknowledged = false
             if !draft.completed { draft.step = min(draft.step, 3) }

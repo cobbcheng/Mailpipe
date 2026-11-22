@@ -2949,6 +2949,28 @@
         }
       }
     },
+    "Only new messages with the subject “%1$@”": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only new messages with the subject “%1$@”"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅限主题为「%1$@」的新邮件"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo mensajes nuevos con el asunto «%1$@»"
+          }
+        }
+      }
+    },
     "Only new messages with this exact subject will be processed.": {
       "localizations": {
         "en": {
@@ -4071,24 +4093,24 @@
         }
       }
     },
-    "Step %1$@ of 6": {
+    "Step %1$@ of 5": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Step %1$@ of 6"
+            "value": "Step %1$@ of 5"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "第 %1$@ 步，共 6 步"
+            "value": "第 %1$@ 步，共 5 步"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Paso %1$@ de 6"
+            "value": "Paso %1$@ de 5"
           }
         }
       }
