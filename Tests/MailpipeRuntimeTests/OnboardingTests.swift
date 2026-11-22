@@ -25,11 +25,12 @@ final class OnboardingTests: XCTestCase {
         let store = try PipelineStore(directory: root())
         let session = try OnboardingSession(store: store, model: { _ in FakeReplyModel() })
         var draft = OnboardingDraft()
-        draft.step = 5
+        draft.step = 6
         draft.executable = "/fake/dsh"
         draft.extensionAcknowledged = true
         draft.completed = true
         try session.save(draft)
+        XCTAssertEqual(try store.onboarding().step, 6)
         _ = try session.beginTest()
         try await session.testPipeline.pump()
 

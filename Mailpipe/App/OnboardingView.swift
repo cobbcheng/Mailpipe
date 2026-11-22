@@ -110,7 +110,7 @@ struct OnboardingView: View {
                 VStack(spacing: 18) {
                     VStack(spacing: 8) {
                         OnboardingArtwork(step: step)
-                            .frame(width: 168, height: 100)
+                            .frame(width: step == 5 ? 320 : 168, height: step == 5 ? 192 : 100)
                         Text(title)
                             .font(.title.bold())
                             .accessibilityAddTraits(.isHeader)
@@ -146,6 +146,7 @@ struct OnboardingView: View {
         case 2: return L("Connect your agent")
         case 3: return L("Receive new messages from Apple Mail")
         case 4: return L("Which messages can your agent read?")
+        case 5: return L("Use Mailpipe while you write")
         default: return L("Authorize replies to new messages")
         }
     }
@@ -160,6 +161,8 @@ struct OnboardingView: View {
             return L("In Apple Mail, open Mail → Settings → Extensions, enable Mailpipe, then return here.")
         case 4:
             return L("New messages come from all Apple Mail accounts. Limit them by subject and confirm what %1$@ can read in the next step.", String(describing: toolName))
+        case 5:
+            return L("When replying or forwarding, click Mailpipe in the compose toolbar to review or generate a draft.")
         default:
             return L("Choose Get started to allow Mailpipe to share the subjects and bodies of new messages in the scope below with your agent for drafting. Attachment contents are excluded.")
         }
@@ -179,6 +182,7 @@ struct OnboardingView: View {
         case 2: connection
         case 3: mailExtension
         case 4: scope
+        case 5: EmptyView()
         default: review
         }
     }
@@ -216,9 +220,6 @@ struct OnboardingView: View {
 
     private var mailExtension: some View {
         VStack(spacing: 12) {
-            Text(L("When replying or forwarding, click Mailpipe in the compose toolbar to review or generate a draft."))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
             Button(L("Open Mail extension settings"), action: model.openMailAndExtensionSettings)
                 .modifier(WorkbenchActionStyle())
             Toggle(L("I enabled Mailpipe in Mail"), isOn: $model.onboarding.extensionAcknowledged)
@@ -266,7 +267,7 @@ struct OnboardingView: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            Text(L("Step %1$@ of 5", String(describing: step)))
+            Text(L("Step %1$@ of 6", String(describing: step)))
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(.secondary)
             Spacer()
@@ -292,8 +293,8 @@ struct OnboardingView: View {
         case 3:
             Button(L("Continue")) { go(to: 4) }
                 .disabled(!model.onboarding.extensionAcknowledged || !model.hasSharedInbox)
-        case 4:
-            Button(L("Continue")) { go(to: 5) }
+        case 4, 5:
+            Button(L("Continue")) { go(to: step + 1) }
         default:
             Button(L("Get started"), action: model.finishOnboarding)
                 .disabled(!tested || !model.onboarding.extensionAcknowledged || !model.hasSharedInbox)

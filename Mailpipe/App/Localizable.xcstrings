@@ -4071,24 +4071,24 @@
         }
       }
     },
-    "Step %1$@ of 5": {
+    "Step %1$@ of 6": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Step %1$@ of 5"
+            "value": "Step %1$@ of 6"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "第 %1$@ 步，共 5 步"
+            "value": "第 %1$@ 步，共 6 步"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Paso %1$@ de 5"
+            "value": "Paso %1$@ de 6"
           }
         }
       }
@@ -4793,6 +4793,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Destino de los datos del mensaje"
+          }
+        }
+      }
+    },
+    "Use Mailpipe while you write": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use Mailpipe while you write"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在写信窗口使用 Mailpipe"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa Mailpipe mientras redactas"
           }
         }
       }

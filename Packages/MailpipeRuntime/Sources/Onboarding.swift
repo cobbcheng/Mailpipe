@@ -58,7 +58,7 @@ public final class OnboardingSession {
         var draft = value
         // Progress edits cannot complete initial setup or clear a prior consent receipt.
         draft.completed = try store.onboarding().completed
-        draft.step = min(5, max(1, draft.step))
+        draft.step = min(6, max(1, draft.step))
         if draft.testedExecutable != draft.executable || draft.testedOpenCodeModel != draft.requestedModel || draft.evidenceVersion != Self.evidenceVersion(for: draft.harnessKind) || (draft.testedLevel ?? .l2) != draft.level {
             draft.testID = nil; draft.testedExecutable = nil; draft.testedOpenCodeModel = nil; draft.evidenceVersion = nil
         }
