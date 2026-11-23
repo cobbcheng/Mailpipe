@@ -596,7 +596,8 @@ private struct WorkbenchMessageRow: View {
 
     var body: some View {
         let subject = item.input.subject
-        let sender = item.correspondents?.sender ?? L("Sender address unavailable")
+        let sender = item.displayCorrespondents?.sender ?? (item.state == .awaitingBody
+            ? L("Waiting for message body") : L("Sender address unavailable"))
         let date = item.capturedAt
         VStack(alignment: .leading, spacing: 3) {
             Text(subject.isEmpty ? L("(No subject)") : subject).lineLimit(1).truncationMode(.tail)
@@ -654,7 +655,7 @@ private struct DraftDetail: View {
     private var contentExpired: Bool { item.capturedAt < Date().addingTimeInterval(-7 * 86_400) || item.error == "contentExpired" }
     private var isExpired: Bool { contentExpired || ["policyChanged", "identityUnresolved", "identitySourceMismatch"].contains(item.error ?? "") }
     private var recipientAddresses: String {
-        guard let recipients = item.correspondents?.recipients, !recipients.isEmpty else { return L("Recipient address unavailable") }
+        guard let recipients = item.displayCorrespondents?.recipients, !recipients.isEmpty else { return L("Recipient address unavailable") }
         return recipients.joined(separator: "、")
     }
     private var canRegenerate: Bool {
@@ -677,9 +678,9 @@ private struct DraftDetail: View {
                             .disabled(originalMessageURL == nil)
                     }
                     Grid(alignment: .leading, horizontalSpacing: 4, verticalSpacing: 4) {
-                        addressRow(L("From:"), item.correspondents?.sender ?? L("Sender address unavailable"))
+                        addressRow(L("From:"), item.displayCorrespondents?.sender ?? L("Sender address unavailable"))
                         addressRow(L("To:"), recipientAddresses)
-                        if let cc = item.correspondents?.cc, !cc.isEmpty {
+                        if let cc = item.displayCorrespondents?.cc, !cc.isEmpty {
                             addressRow(L("Cc:"), cc.joined(separator: "、"))
                         }
                     }
@@ -746,8 +747,17 @@ private struct DraftDetail: View {
             if error != nil { Task { @MainActor in model.notify(L("Apple Mail could not open the original message.")) } }
         }
     }
+    private var unreadableMIME: Bool {
+        incoming.isEmpty && item.error == MailBodyRejection.malformedMIME.rawValue
+    }
+    private var originalMessageText: String {
+        if !incoming.isEmpty { return incoming }
+        if unreadableMIME { return L("Message received. Mailpipe could not read its MIME structure.") }
+        if item.state == .awaitingBody { return L("Waiting for Apple Mail to provide the message body before drafting.") }
+        return L("No readable message body available.")
+    }
     private var originalText: some View {
-        Text(verbatim: incoming.isEmpty ? (item.state == .awaitingBody ? L("Waiting for Apple Mail to provide the message body before drafting.") : L("No readable body yet. Check Mail permissions and the message format.")) : incoming)
+        Text(verbatim: originalMessageText)
             .font(.callout).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -793,7 +803,7 @@ private struct DraftDetail: View {
     private var draftCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
-                if let error = item.error, let description = errorDescription(error) {
+                if !unreadableMIME, let error = item.error, let description = errorDescription(error) {
                     Text(description).font(.caption).foregroundStyle(.secondary)
                 }
                 if item.isPreparing {

@@ -2597,6 +2597,28 @@
         }
       }
     },
+    "Message received. Mailpipe could not read its MIME structure.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message received. Mailpipe could not read its MIME structure."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已收到邮件，但 Mailpipe 无法解析其 MIME 结构。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se recibió el mensaje, pero Mailpipe no pudo interpretar su estructura MIME."
+          }
+        }
+      }
+    },
     "Message body": {
       "localizations": {
         "en": {
@@ -2883,24 +2905,24 @@
         }
       }
     },
-    "No readable body yet. Check Mail permissions and the message format.": {
+    "No readable message body available.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "No readable body yet. Check Mail permissions and the message format."
+            "value": "No readable message body available."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "尚未取得可阅读的正文，请核对 Mail 权限和邮件格式。"
+            "value": "暂无可阅读的邮件正文。"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aún no hay texto legible. Revisa los permisos de Mail y el formato del mensaje."
+            "value": "No hay texto legible para este mensaje."
           }
         }
       }
@@ -4771,6 +4793,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Esperando un mensaje nuevo de Mail"
+          }
+        }
+      }
+    },
+    "Waiting for message body": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for message body"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待正文"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esperando el cuerpo del mensaje"
           }
         }
       }

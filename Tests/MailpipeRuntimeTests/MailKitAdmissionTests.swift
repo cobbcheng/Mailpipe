@@ -46,6 +46,7 @@ final class MailKitAdmissionTests: XCTestCase {
             headers["Message-ID"] = ["<sample-\(index)@example.com>"]
             for raw in [nil, Data("Content-Type: text/plain\r\n\r\nSynthetic".utf8)] as [Data?] {
                 let decision = try pipeline.inbox.receiveMailKitMessage(subject: subject, sender: sender,
+                    recipients: unexpectedRead(["to@example.com"]), cc: unexpectedRead(["copy@example.com"]),
                     headers: headers, rawData: unexpectedRead(raw))
                 XCTAssertEqual(decision, .finished, subject)
             }
@@ -194,6 +195,89 @@ final class MailKitAdmissionTests: XCTestCase {
         XCTAssertEqual(calls, 2)
     }
 
+    func testMailKitDisplayAddressesSurviveFailedBodyAndDoNotEstablishComposeIdentity() async throws {
+        let pipeline = try pipeline()
+        let subject = "Synthetic address projection"
+        let headers = ["Message-ID": ["<display@example.com>"]]
+        let expected = MailCorrespondents(sender: "from@example.com", recipients: ["to@example.com"], cc: ["copy@example.com"])
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: subject, sender: expected.sender,
+            recipients: ["to@example.com", "invalid", "extra@example.com\n"], cc: ["copy@example.com"],
+            headers: headers, rawData: nil), .requestBody)
+        try await pipeline.importInbox()
+        let waiting = try XCTUnwrap(pipeline.store.records().first)
+        XCTAssertEqual(waiting.state, .awaitingBody)
+        XCTAssertEqual(waiting.displayCorrespondents, expected)
+        XCTAssertNil(waiting.composeIdentity(includingBody: false))
+
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: subject, sender: nil, headers: headers,
+            rawData: Data("unreadable".utf8)), .finished)
+        try await pipeline.importInbox()
+        let unreadable = try XCTUnwrap(pipeline.store.record(waiting.id))
+        XCTAssertEqual(unreadable.state, .needsReview)
+        XCTAssertEqual(unreadable.displayCorrespondents, expected)
+
+        let raw = Data("To: source@example.com\r\nContent-Type: text/plain\r\n\r\nReadable".utf8)
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: subject, sender: nil, headers: headers, rawData: raw), .finished)
+        try await pipeline.importInbox()
+        let readable = try XCTUnwrap(pipeline.store.record(waiting.id))
+        XCTAssertEqual(readable.input.body, "Readable")
+        XCTAssertEqual(readable.displayCorrespondents, MailCorrespondents(sender: "from@example.com",
+            recipients: ["source@example.com"], cc: ["copy@example.com"]))
+        XCTAssertNil(readable.composeIdentity(includingBody: true))
+        XCTAssertEqual(try pipeline.store.records().count, 1)
+    }
+
+    func testLateHeaderOnlyFillsMissingDisplayFieldsAfterBodyResult() async throws {
+        let model = FakeReplyModel()
+        let pipeline = try pipeline(model: model)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        for (index, source) in ["Content-Type: text/plain\r\n\r\nPlease review", "unreadable"].enumerated() {
+            let id = "late-\(index)@example.com"
+            let headers = ["Message-ID": ["<\(id)>"]]
+            XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Synthetic", sender: nil,
+                recipients: ["first@example.com"], headers: headers, rawData: Data(source.utf8)), .finished)
+            try await pipeline.pump()
+            var expected = try XCTUnwrap(pipeline.store.records().first { $0.messageID == id })
+            XCTAssertEqual(expected.state, index == 0 ? .draftReady : .needsReview)
+            expected.mailKitAddresses = MailCorrespondents(sender: "from@example.com", recipients: ["first@example.com"],
+                cc: ["copy@example.com"])
+            XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Synthetic", sender: "from@example.com",
+                recipients: ["later@example.com"], cc: ["copy@example.com"], headers: headers, rawData: nil), .requestBody)
+            try await pipeline.pump()
+            let enriched = try XCTUnwrap(pipeline.store.record(expected.id))
+            XCTAssertEqual(try encoder.encode(enriched), try encoder.encode(expected))
+            XCTAssertNil(enriched.composeIdentity(includingBody: false))
+        }
+        let calls = await model.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testLateHeaderDoesNotEnrichAmbiguousDiscardedChangedOrRevokedRecord() async throws {
+        for mode in ["ambiguous", "discarded", "changedSubject", "newPermission"] {
+            let pipeline = try pipeline()
+            let headers = ["Message-ID": ["<late@example.com>"]]
+            XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Synthetic", sender: nil,
+                headers: headers, rawData: Data("Content-Type: text/plain\r\n\r\nPlease review".utf8)), .finished)
+            try await pipeline.pump()
+            let first = try XCTUnwrap(pipeline.store.records().first)
+            switch mode {
+            case "ambiguous":
+                var other = StoredReply(id: UUID().uuidString, permissionID: first.permissionID, capturedAt: first.capturedAt,
+                    messageID: first.messageID, input: first.input, state: first.state, error: nil)
+                other.mailKitBody = true
+                try pipeline.store.save(other)
+            case "discarded": try pipeline.store.discard(first.id)
+            case "newPermission": try pipeline.updateSettings { $0.permission = CapturePermission(delivery: .mailKit) }
+            default: break
+            }
+            XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: mode == "changedSubject" ? "Different" : "Synthetic",
+                sender: "later@example.com", headers: headers, rawData: nil), .requestBody)
+            try await pipeline.importInbox()
+            XCTAssertTrue(try pipeline.store.records().allSatisfy { $0.displayCorrespondents?.sender == nil }, mode)
+        }
+    }
+
     func testAdditionalHeadersOnBodyCallbackDoNotStrandAdmittedMessage() async throws {
         let model = FakeReplyModel()
         let pipeline = try pipeline(model: model)
@@ -228,7 +312,8 @@ final class MailKitAdmissionTests: XCTestCase {
                 if !paused { $0.permission = nil }
             }
             let decision = try pipeline.inbox.receiveMailKitMessage(subject: "Synthetic",
-                sender: unexpectedRead("person@example.com"), headers: unexpectedRead(headers),
+                sender: unexpectedRead("person@example.com"), recipients: unexpectedRead(["to@example.com"]),
+                cc: unexpectedRead(["copy@example.com"]), headers: unexpectedRead(headers),
                 rawData: unexpectedRead(Data()))
             XCTAssertEqual(decision, .finished)
             XCTAssertTrue(try pipeline.inbox.files().isEmpty)

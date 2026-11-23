@@ -33,6 +33,56 @@ final class MailBodyTests: XCTestCase {
         }
     }
 
+    func testMixedEnvelopeAndPartLineEndingsUseFirstHeaderSeparator() throws {
+        for (outer, inner) in [("\n", "\r\n"), ("\r\n", "\n")] {
+            let headers = ["From: sender@example.com", "To: reader@example.com", "Message-ID: <original@example.com>",
+                           "Content-Type: multipart/alternative; boundary=part", "", ""].joined(separator: outer)
+            let body = ["--part", "Content-Type: text/plain", "", "Readable.", "--part--", ""].joined(separator: inner)
+            let raw = Data((headers + body).utf8)
+            XCTAssertEqual(try PlainMailBody.decode(raw, fromMailKit: true), "Readable.")
+            XCTAssertEqual(try PlainMailBody.displayText(raw), "Readable.")
+            XCTAssertEqual(MailCorrespondents(raw)?.sender, "sender@example.com")
+            XCTAssertEqual(MailHeaderCodec.messageID(in: raw), "<original@example.com>")
+        }
+        // A later empty paragraph in a single-part body is not the envelope separator either.
+        let single = Data("From: sender@example.com\n\nFirst\r\n\r\nSecond".utf8)
+        XCTAssertEqual(try PlainMailBody.displayText(single), "First\n\nSecond")
+    }
+
+    func testMailKitMixedWithoutBoundaryRecoversSingleInlineHTMLPart() throws {
+        let child = "Content-Type: text/html; charset=utf-8\r\n\r\n<p>Readable.</p>"
+        let payload = "--part\r\n" + child + "\r\n--part--\r\n"
+        func raw(_ type: String, _ payload: String) -> Data {
+            Data(("Content-Type: " + type + "\r\n\r\n" + payload).utf8)
+        }
+        let projected = raw("multipart/mixed", payload)
+        XCTAssertEqual(try PlainMailBody.decode(projected, fromMailKit: true), "Readable.")
+        XCTAssertEqual(try PlainMailBody.displayText(projected, fromMailKit: true), "Readable.")
+        XCTAssertThrowsError(try PlainMailBody.decode(projected))
+        for excluded in [
+            raw("multipart/mixed; boundary=other", payload), raw("multipart/related", payload),
+            raw("multipart/mixed", "Preamble\r\n" + payload), raw("multipart/mixed", payload + "Epilogue"),
+            raw("multipart/mixed", payload + "--part--"), raw("multipart/mixed", payload.replacingOccurrences(of: "--part--", with: "--other--")),
+            raw("multipart/mixed", payload.replacingOccurrences(of: "<p>", with: "--other\r\n<p>")),
+            raw("multipart/mixed", payload.replacingOccurrences(of: "Content-Type:", with: "Content-Disposition: attachment\r\nContent-Type:")),
+            raw("multipart/mixed", payload.replacingOccurrences(of: "text/html;", with: "text/html; name=archive.html;"))
+        ] {
+            XCTAssertThrowsError(try PlainMailBody.decode(excluded, fromMailKit: true))
+        }
+
+        let withAttachment = payload.replacingOccurrences(of: "--part--", with:
+            "--part\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=log.txt\r\n\r\nPRIVATE\r\n--part--")
+        XCTAssertThrowsError(try PlainMailBody.decode(raw("multipart/mixed", withAttachment), fromMailKit: true))
+        let declared = try PlainMailBody.extract(raw("multipart/mixed; boundary=part", withAttachment), fromMailKit: true)
+        XCTAssertEqual(declared.text, "Readable.\n[attachments: log.txt (text/plain)]")
+    }
+
+    func testMailKitAlternativeStillAcceptsForwardedTextSeparator() throws {
+        let body = "Forwarded note\n---------- Forwarded message ----------\nPrevious message."
+        let raw = Data(("Content-Type: multipart/alternative\n\n--alt\nContent-Type: text/plain\n\n" + body + "\n--alt--\n").utf8)
+        XCTAssertEqual(try PlainMailBody.decode(raw, fromMailKit: true), body)
+    }
+
     func testPlainUTF8QuotedPrintableAndBase64() throws {
         XCTAssertEqual(try text("plain-utf8"), "Please reply about Friday.")
         XCTAssertEqual(try text("plain-qp"), "Please reply")

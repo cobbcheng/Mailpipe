@@ -125,6 +125,12 @@ public struct StoredReply: Codable, Identifiable, Sendable {
     public var sourceEvidence: MailSourceEvidence?
     public var displayBody: String?
     public var correspondents: MailCorrespondents?
+    /// Projected MailKit addresses are only for the workbench. Compose identity uses the source fields.
+    var mailKitAddresses: MailCorrespondents?
+    public var displayCorrespondents: MailCorrespondents? {
+        guard let mailKitAddresses else { return correspondents }
+        return correspondents?.fillingMissingFields(from: mailKitAddresses) ?? mailKitAddresses
+    }
     public var composeHandoff: MailComposeHandoff?
     public var accountID: String?
     public var localID: String?
@@ -505,15 +511,25 @@ public final class PipelineStore {
             capture.messageID?.isEmpty == false && $0.messageID == capture.messageID &&
             !$0.syntheticAuthorized && $0.manualExecutable == nil
         }
-        if let first = matching.first(where: { !$0.input.body.isEmpty }) {
-            return try commitIngest(capture.id, recordID: first.id, saving: nil)
-        }
         let pending = matching.first { $0.mailKitBody == true && $0.permissionID == capture.permissionID &&
             $0.discardedAt == nil && $0.runs.isEmpty && [.awaitingBody, .needsReview].contains($0.state) }
-        guard pending != nil || rows.count < 1_000 else { throw PipelineError.quota }
-        if let pending, capture.raw == nil, capture.issue == nil {
-            return try commitIngest(capture.id, recordID: pending.id, saving: nil)
+        let completed = matching.first { !$0.input.body.isEmpty }
+        let previous = completed ?? pending
+        let sameMessage = matching.count == 1 && previous?.mailKitBody == true && previous?.discardedAt == nil &&
+            previous?.permissionID == capture.permissionID && previous?.input.subject == capture.subject
+        var addresses = capture.mailKitAddresses
+        if sameMessage, let earlier = previous?.mailKitAddresses {
+            addresses = addresses.map { earlier.fillingMissingFields(from: $0) } ?? earlier
         }
+        if var existing = previous, completed != nil || (capture.raw == nil && capture.issue == nil) {
+            // Callbacks may arrive in either order. A duplicate can only fill missing display fields.
+            guard sameMessage, addresses != existing.mailKitAddresses else {
+                return try commitIngest(capture.id, recordID: existing.id, saving: nil)
+            }
+            existing.mailKitAddresses = addresses
+            return try commitIngest(capture.id, recordID: existing.id, saving: existing)
+        }
+        guard pending != nil || rows.count < 1_000 else { throw PipelineError.quota }
         let id = pending?.id ?? UUID().uuidString
         var body = "", error = capture.issue
         if let raw = capture.raw {
@@ -528,6 +544,7 @@ public final class PipelineStore {
         item.mailKitBody = true
         item.level = settings.level; item.revision = settings.revision
         item.correspondents = capture.raw.flatMap(MailCorrespondents.init)
+        item.mailKitAddresses = pending == nil || sameMessage ? addresses : nil
         if let raw = capture.raw, !body.isEmpty { item.displayBody = try? PlainMailBody.displayText(raw, fromMailKit: true) }
         return try commitIngest(capture.id, recordID: id, saving: item)
     }
