@@ -7,7 +7,9 @@ public struct DeepSeekHarnessDialect: HarnessDialect {
     public var kind: HarnessKind { .deepseek }
     public var helpArguments: [String] { ["--profile", "headless", "--help"] }
     public var requiredFlags: [String] { ["--json", "--permission-mode", "--approval-policy"] }
-    public func acceptsVersion(_ version: String) -> Bool { version == "0.2.2-rc.1" }
+    public func acceptsVersion(_ version: String) -> Bool {
+        version == "0.2.2-rc.1" || version == "0.2.2-rc.5"
+    }
     public func prepare(directory: URL, executable: URL, environment: [String: String]) throws -> [String: String] {
         let home = directory.appendingPathComponent("dsh-home", isDirectory: true)
         let profile = home.appendingPathComponent("profiles/headless", isDirectory: true)

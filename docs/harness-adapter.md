@@ -1,7 +1,8 @@
 # Harness Adapter 契约
 
 普通草稿支持 DeepSeek Harness、Claude Code、OpenCode、OpenClaw 和 Hermes Agent。
-Codex CLI 0.169.1 支持普通回复草稿。
+Codex CLI 0.169.1 和 0.171.0-alpha.13 支持普通回复草稿。
+新版 CLI 的权限及连接验收见[连接测试记录](validation/2026-11-23-agent-connections.md)。
 OpenClaw 与 Hermes 的实测范围见[官方 DeepSeek 合成草稿验收](validation/2026-11-19-openclaw-hermes.md)。
 OpenCode 的版本与实机范围见[菜单栏草稿验收](validation/2026-11-19-opencode-drafts.md)。
 Claude Code 的实测范围见[合成草稿验收](validation/2026-11-19-claude-code-drafts.md)。
@@ -16,7 +17,7 @@ Codex 证据见[合成草稿验收](validation/2026-11-20-codex-drafts.md)。
 | `inspect()` | 执行版本和帮助，检查完整参数名 |
 | `run(ReplyModelTask, route, authorize)` | 所选工具起草回复；调用前重查宿主授权 |
 
-DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
+DeepSeek 支持 `dsh 0.2.2-rc.1` 和 `0.2.2-rc.5`。
 每次创建独立 DSH_HOME，加载应用自有配置。
 普通草稿禁用内置工具、MCP、skills 和子代理。
 个人措辞参考见[原生上下文验收](validation/2026-11-18-native-harness-memory.md)。
@@ -31,7 +32,9 @@ DeepSeek 仅接受已验证的 `dsh 0.2.2-rc.1`。
 
 Codex 使用临时只读会话和应用内置的模型配置。
 所请求模型为 OpenAI GPT-6.2 Sol。
-CLI 自行使用已有登录；邮件仅通过 stdin 传入。
+CLI 自行使用已有登录。邮件通过 stdin 传入。
+宿主对该子进程隐藏 AGENTS 指令文件。
+起草配置同时关闭技能指令注入。
 各回复工具共用宿主的授权与持久化队列。
 切换工具须试写并重新授权。旧授权不能转投新工具。
 
@@ -64,7 +67,7 @@ Claude Code、OpenCode、OpenClaw 和 Hermes Agent 普通起草均使用空工�
 | 直连模型 API | 可自建简单调用 | 引入凭据与计费管理 | 不采用 |
 
 原有回复入口为 `dsh`、`claude --print` 和 `opencode run --standalone`。
-Claude 仅支持已验收的 CLI 2.1.296。
+Claude 支持已验收的 CLI 2.1.296 和 2.1.330。
 Claude 的模型与认证由 CLI 从用户配置加载。
 App 从成功回执记录模型名和 token。
 代理的模型名不足以确定供应方或实付费用。

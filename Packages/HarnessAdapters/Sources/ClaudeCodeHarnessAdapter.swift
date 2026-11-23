@@ -1,7 +1,7 @@
 import Foundation
 import MailpipeCore
 
-/// This invocation and its stream contract are verified together for this CLI release.
+/// Each supported release uses the same restricted invocation and stream contract.
 public struct ClaudeCodeDialect: ReplyHarnessDialect {
     public init() {}
     public var kind: HarnessKind { .claude }
@@ -11,7 +11,9 @@ public struct ClaudeCodeDialect: ReplyHarnessDialect {
          "--disable-slash-commands", "--permission-mode", "--setting-sources", "--verbose",
          "--output-format", "--system-prompt"]
     }
-    public func acceptsVersion(_ version: String) -> Bool { version == "2.1.296 (Claude Code)" }
+    public func acceptsVersion(_ version: String) -> Bool {
+        ["2.1.296 (Claude Code)", "2.1.330 (Claude Code)"].contains(version)
+    }
 
     public func prepare(directory: URL, executable: URL, environment: [String: String]) throws -> [String: String] {
         var result = environment

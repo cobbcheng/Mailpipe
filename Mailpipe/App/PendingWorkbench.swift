@@ -281,7 +281,15 @@ final class PendingModel: ObservableObject {
                 onboarding = try session.store.onboarding()
                 try await session.testPipeline.pump()
                 if let code = try session.testResult()?.error {
-                    onboardingIssue = L("Sample draft test incomplete (%1$@).", String(describing: code))
+                    let agent = onboarding.harnessKind.displayName
+                    switch MailpipeError(rawValue: code) {
+                    case .unsupportedVersion:
+                        onboardingIssue = L("Mailpipe could not verify the version or required arguments for %1$@. Check the installation in Settings → Agent → Advanced diagnostics.", agent)
+                    case .quotaExhausted:
+                        onboardingIssue = L("The model service used by %1$@ reported that its quota is exhausted. Check your available quota before testing again.", agent)
+                    default:
+                        onboardingIssue = L("Sample draft test incomplete (%1$@).", code)
+                    }
                 }
             } catch { onboardingIssue = L("Test incomplete: %1$@", String(describing: Self.code(error))) }
         }
@@ -325,10 +333,7 @@ final class PendingModel: ObservableObject {
     }
 
     var onboardingTestPassed: Bool {
-        selectedTool != nil && onboarding.testedExecutable == onboarding.executable &&
-            onboarding.testedOpenCodeModel == onboarding.requestedModel &&
-            onboardingResult?.runs.last?.destination.harness == onboarding.harnessKind &&
-            OnboardingSession.testPassed(onboardingResult, level: onboarding.level)
+        selectedTool != nil && OnboardingSession.testPassed(onboardingResult, for: onboarding)
     }
     var connectionLabel: String {
         let tool = onboarding.harnessKind.displayName

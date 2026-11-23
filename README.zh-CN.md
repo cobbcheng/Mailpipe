@@ -136,7 +136,7 @@ PNG 与 ICNS 保留为旧版设计导出。
 
 `inspect <dsh|claude|opencode|openclaw|hermes|codex> /absolute/path` 只检查版本和帮助。
 工具诊断只发现本机工具并检查参数，不调用模型。
-Codex CLI 0.169.1 使用已有登录，通过 GPT-6.2 Sol 起草。
+Codex CLI 使用已有登录，通过 GPT-6.2 Sol 起草。
 
 ## 验证状态
 

@@ -107,7 +107,7 @@ After changing project targets, run `python3 scripts/generate-project.py`. Maint
 
 The menu bar icon lives in `Mailpipe/Assets.xcassets`. The app uses `design/icon/AppIcon.icon`. The icon sources and build script are in `design/icon/`. To regenerate the icon, install CairoSVG and the Cairo shared library, then run `python3 design/icon/build.py`. The background and envelope are separate layers; the system mask supplies the rounded corners. The PNG and ICNS files are retained as legacy design exports.
 
-`inspect <dsh|claude|opencode|openclaw|hermes|codex> /absolute/path` checks only the tool’s version and help output. Diagnostics discover local tools and inspect their arguments without calling a model. Codex CLI 0.169.1 uses your existing sign-in to draft with GPT-6.2 Sol.
+`inspect <dsh|claude|opencode|openclaw|hermes|codex> /absolute/path` checks only the tool’s version and help output. Diagnostics discover local tools and inspect their arguments without calling a model. Codex CLI uses your existing sign-in to draft with GPT-6.2 Sol.
 
 ## Verification status
 

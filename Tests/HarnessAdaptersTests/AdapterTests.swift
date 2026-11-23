@@ -71,7 +71,7 @@ final class AdapterTests: XCTestCase {
     }
     func testMissingFlagBlocksRunAndDoesNotRetry() async throws {
         let root = try TemporaryDirectory()
-        let runner = RecordingRunner([ProcessOutput(stdout: Data("0.2.2-rc.1".utf8)),
+        let runner = RecordingRunner([ProcessOutput(stdout: Data("0.2.2-rc.5".utf8)),
                                       ProcessOutput(stdout: Data("--tools-extra --print --output-format".utf8))])
         let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("dsh"), dialect: DeepSeekHarnessDialect(), runner: runner, temporaryRoot: root.url)
         do {
@@ -95,9 +95,21 @@ final class AdapterTests: XCTestCase {
         XCTAssertEqual(calls.count, 3)
         for call in calls { XCTAssertFalse(FileManager.default.fileExists(atPath: call.workingDirectory.path)) }
     }
+    func testDiagnosticsReportOnlyTheVersionNumberForAnUnknownLauncher() async throws {
+        let root = try TemporaryDirectory()
+        let runner = RecordingRunner([ProcessOutput(stdout: Data("private-banner 0.2.2-rc.6 private-suffix".utf8))])
+        let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("dsh"), dialect: DeepSeekHarnessDialect(),
+                                             runner: runner, temporaryRoot: root.url, environment: ["HOME": root.url.path])
+        let report = try await adapter.inspect()
+        XCTAssertEqual(report.version, "0.2.2-rc.6")
+        XCTAssertFalse(report.versionSupported)
+        XCTAssertFalse(report.supportsHeadlessRun)
+        let calls = await runner.calls
+        XCTAssertEqual(calls.map(\.arguments), [["--version"]])
+    }
     func testDeepSeekVersionChangeStopsBeforeHelpOrModel() async throws {
         let root = try TemporaryDirectory()
-        let runner = RecordingRunner([ProcessOutput(stdout: Data("0.2.3".utf8))])
+        let runner = RecordingRunner([ProcessOutput(stdout: Data("0.2.2-rc.6".utf8))])
         let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("dsh"), dialect: DeepSeekHarnessDialect(), runner: runner, temporaryRoot: root.url)
         do {
             _ = try await adapter.run(.triage(ReplySyntheticFixture.triage),

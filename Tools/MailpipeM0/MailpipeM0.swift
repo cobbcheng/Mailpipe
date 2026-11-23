@@ -45,6 +45,7 @@ struct MailpipeM0 {
                 let path = URL(fileURLWithPath: args[2])
                 let report = try await HarnessInstallation(kind: kind, executable: path).inspect()
                 print("\(kind.displayName): \(report.version)")
+                guard report.versionSupported else { throw MailpipeError.unsupportedVersion }
                 print("Headless flags: \(report.supportsHeadlessRun ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
                 print(report.realMailStatus)
             case nil, "--help", "-h":

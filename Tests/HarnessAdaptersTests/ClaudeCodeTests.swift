@@ -26,14 +26,16 @@ final class ClaudeCodeTests: XCTestCase {
         }
     }
 
-    private var probe: [ProcessOutput] {
-        [ProcessOutput(stdout: Data("2.1.296 (Claude Code)\n".utf8)),
+    private func probe(version: String = "2.1.296") -> [ProcessOutput] {
+        [ProcessOutput(stdout: Data("\(version) (Claude Code)\n".utf8)),
          ProcessOutput(stdout: Data(dialect.requiredFlags.joined(separator: "\n").utf8))]
     }
 
     func testRestrictedDraftAcceptsWarningAndEscapesFileMentionsBeforeClaudeSeesInput() async throws {
         let root = try TemporaryDirectory()
-        let runner = RecordingRunner(probe + [ProcessOutput(stdout: try stream([initEvent, result]), stderr: Data("unrecognized_model".utf8))])
+        let runner = RecordingRunner(probe(version: "2.1.330") + [
+            ProcessOutput(stdout: try stream([initEvent, result]), stderr: Data("unrecognized_model".utf8))
+        ])
         let adapter = ClaudeCodeHarnessAdapter(executable: root.url.appendingPathComponent("fake-claude"), dialect: dialect,
                                               runner: runner, temporaryRoot: root.url)
         let triage = ReplySyntheticFixture.triage
@@ -84,7 +86,7 @@ final class ClaudeCodeTests: XCTestCase {
 
     func testRevokedPRAndWrongRouteNeverLaunchInference() async throws {
         let root = try TemporaryDirectory()
-        let runner = RecordingRunner(probe + probe)
+        let runner = RecordingRunner(probe() + probe())
         let adapter = ClaudeCodeHarnessAdapter(executable: root.url.appendingPathComponent("fake-claude"), dialect: dialect,
                                               runner: runner, temporaryRoot: root.url)
         var request = try ReplyDraftRequest(message: ReplySyntheticFixture.triage.message)
