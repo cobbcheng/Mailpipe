@@ -30,18 +30,23 @@ public struct CLIAdapter<Dialect: HarnessDialect>: Sendable {
                 directory: directory, environment: environment, outputLimit: 16_384))
             guard version.exitCode == 0, let versionText = String(data: version.stdout, encoding: .utf8),
                   versionText.count <= 200,
-                  versionText.range(of: #"\d+\.\d+\.\d+"#, options: .regularExpression) != nil else {
+                  let number = versionText.range(of: #"[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)[.-]?[0-9]+)?"#, options: .regularExpression) else {
                 throw MailpipeError.unsupportedVersion
             }
-            guard dialect.acceptsVersion(versionText.trimmingCharacters(in: .whitespacesAndNewlines)) else { throw MailpipeError.unsupportedVersion }
+            let installation = HarnessInstallation(kind: dialect.kind, executable: executable)
+            let banner = versionText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard dialect.acceptsVersion(banner) else {
+                // Report only the version number from an unrecognized launcher's output.
+                return CapabilityReport(installation: installation, version: String(versionText[number]),
+                                        versionSupported: false, missingFlags: [])
+            }
             let help = try await runner.run(dialect.probeInvocation(executable: executable, arguments: dialect.helpArguments,
                 directory: directory, environment: environment, outputLimit: 262_144))
             guard help.exitCode == 0 else { throw MailpipeError.unsupportedVersion }
             let text = String(decoding: help.stdout, as: UTF8.self)
             // Match complete option tokens, not prefixes such as --tools-extra.
             let tokens = Set(text.components(separatedBy: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ",="))))
-            return CapabilityReport(installation: HarnessInstallation(kind: dialect.kind, executable: executable),
-                                    version: versionText.trimmingCharacters(in: .whitespacesAndNewlines),
+            return CapabilityReport(installation: installation, version: banner, versionSupported: true,
                                     missingFlags: dialect.requiredFlags.filter { !tokens.contains($0) })
         }
     }

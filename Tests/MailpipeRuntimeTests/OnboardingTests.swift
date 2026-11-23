@@ -100,6 +100,26 @@ final class OnboardingTests: XCTestCase {
         XCTAssertEqual(try store.settings().permission?.delivery, .mailKit)
         XCTAssertTrue(try store.settings().authorizedScopes.isEmpty)
     }
+    func testOlderAdapterEvidenceRequiresANewConnectionTest() async throws {
+        let store = try PipelineStore(directory: root())
+        let session = try OnboardingSession(store: store, model: { _ in FakeReplyModel(harness: .claude, actualModel: "fixture-claude") })
+        var draft = OnboardingDraft()
+        draft.harnessKind = .claude
+        draft.executable = "/fake/claude"
+        try session.save(draft)
+        _ = try session.beginTest()
+        try await session.testPipeline.pump()
+        draft = try store.onboarding()
+        let result = try session.testResult()
+        XCTAssertTrue(OnboardingSession.testPassed(result, for: draft))
+        draft.evidenceVersion = "claude-2.1.296/restricted-v1/reply-fixture-v1"
+        try store.saveOnboarding(draft)
+        XCTAssertFalse(OnboardingSession.testPassed(result, for: draft))
+        XCTAssertThrowsError(try session.activate())
+        try session.save(draft)
+        XCTAssertNil(try store.onboarding().testID)
+    }
+
     func testChangingToolInvalidatesEvidence() async throws {
         let store = try PipelineStore(directory: root()), fake = FakeReplyModel()
         let session = try OnboardingSession(store: store, model: { _ in fake })

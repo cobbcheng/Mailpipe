@@ -1,4 +1,4 @@
-# Validated only with dsh 0.2.2-rc.1. Loaded in a fresh DSH_HOME.
+# Validated with dsh 0.2.2-rc.1 and 0.2.2-rc.5. Loaded in a fresh DSH_HOME.
 - id: tool-plugin-manager
   disabled: true
 - id: plugin-manager

@@ -90,6 +90,30 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertTrue(report.supportsHeadlessRun)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
     }
+    func testCodexDraftHidesGlobalInstructionsAndUsesTheSelectedLauncher() async throws {
+        let root = try TemporaryDirectory(), dialect = CodexCLIDialect()
+        let instructions = root.url.appendingPathComponent("agents.md")
+        let target = root.url.appendingPathComponent("private-instruction.txt")
+        try Data("private instructions".utf8).write(to: instructions)
+        try Data("symlink target".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: root.url.appendingPathComponent("AGENTS.override.md"), withDestinationURL: target)
+        let file = try root.script("""
+        set -eu
+        test ! -e "$HOME/agents.md"
+        test ! -e "$HOME/AGENTS.override.md"
+        test -r "$HOME/private-instruction.txt"
+        /bin/cat
+        """)
+        let input = Data("synthetic mail".utf8)
+        let invocation = try dialect.replyInvocation(task: .triage(ReplySyntheticFixture.triage), schema: ReplySchemas.triage,
+            stdin: input, directory: root.url, executable: file, environment: ["HOME": root.url.path])
+        XCTAssertTrue(invocation.arguments.contains("skills.include_instructions=false"))
+        let result = try await POSIXProcessRunner().run(invocation)
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, input)
+        XCTAssertTrue(dialect.acceptsVersion("codex-cli 0.171.0-alpha.13"))
+        XCTAssertFalse(dialect.acceptsVersion("codex-cli 0.171.0-alpha.14"))
+    }
     func testDeepSeekAdapterAgainstFakeExecutable() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let response = String(decoding: try deepseekEvents(ReplySyntheticFixture.decision), as: UTF8.self)

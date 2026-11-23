@@ -85,8 +85,9 @@ public enum HarnessDiscovery {
 public struct CapabilityReport: Sendable {
     public let installation: HarnessInstallation
     public let version: String
+    public let versionSupported: Bool
     public let missingFlags: [String]
-    public var supportsHeadlessRun: Bool { missingFlags.isEmpty }
+    public var supportsHeadlessRun: Bool { versionSupported && missingFlags.isEmpty }
     /// CLI flags alone are never a safety certification.
     public var realMailStatus: String { "此检查仅核验 CLI 版本和参数；回复授权与示例试写见 App 设置。" }
 }

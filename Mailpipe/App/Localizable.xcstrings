@@ -2465,6 +2465,28 @@
         }
       }
     },
+    "Mailpipe could not verify the version or required arguments for %1$@. Check the installation in Settings → Agent → Advanced diagnostics.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe could not verify the version or required arguments for %1$@. Check the installation in Settings → Agent → Advanced diagnostics."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe 未能验证 %1$@ 的版本或起草所需参数。请在「设置 → Agent → 高级诊断」中检查该安装。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mailpipe no pudo verificar la versión o los argumentos necesarios de %1$@. Comprueba la instalación en Ajustes → Agent → Diagnóstico avanzado."
+          }
+        }
+      }
+    },
     "Mailpipe saves messages and drafts on this Mac. Use the reply arrow to review and send in Apple Mail.": {
       "localizations": {
         "en": {
@@ -4445,6 +4467,28 @@
         }
       }
     },
+    "The model service used by %1$@ reported that its quota is exhausted. Check your available quota before testing again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model service used by %1$@ reported that its quota is exhausted. Check your available quota before testing again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 使用的模型服务提示额度已用尽。请先到模型服务查看可用额度，再测试连接。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El servicio de modelos que utiliza %1$@ indica que se ha agotado la cuota. Comprueba la cuota disponible antes de repetir la prueba."
+          }
+        }
+      }
+    },
     "The response contains invalid fields, types or values.": {
       "localizations": {
         "en": {
@@ -4595,6 +4639,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Este mensaje ha caducado."
+          }
+        }
+      }
+    },
+    "This release of Mailpipe does not support version %1$@.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This release of Mailpipe does not support version %1$@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检测到版本 %1$@，当前 Mailpipe 尚未支持。"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta versión de Mailpipe no admite la versión %1$@ del agente."
           }
         }
       }

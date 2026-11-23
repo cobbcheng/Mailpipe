@@ -19,7 +19,13 @@ final class WorkbenchModel: ObservableObject {
             defer { busyIDs.remove(installation.id) }
             do {
                 let report = try await installation.inspect()
-                reports[installation.id] = "\(report.version) · \(report.supportsHeadlessRun ? L("All required arguments available") : L("Required arguments missing"))"
+                if !report.versionSupported {
+                    reports[installation.id] = L("This release of Mailpipe does not support version %1$@.", report.version)
+                } else if report.missingFlags.isEmpty {
+                    reports[installation.id] = "\(report.version) · \(L("All required arguments available"))"
+                } else {
+                    reports[installation.id] = "\(report.version) · \(L("Required arguments missing")) · \(report.missingFlags.joined(separator: ", "))"
+                }
             } catch {
                 reports[installation.id] = L("Check failed: %1$@", String(describing: (error as? MailpipeError)?.rawValue ?? "operationFailed"))
             }

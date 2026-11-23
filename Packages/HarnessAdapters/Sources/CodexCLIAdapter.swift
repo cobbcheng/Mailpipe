@@ -8,7 +8,9 @@ public struct CodexCLIDialect: ReplyHarnessDialect {
     public var requiredFlags: [String] {
         ["--json", "--strict-config", "--sandbox", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules"]
     }
-    public func acceptsVersion(_ version: String) -> Bool { version == "codex-cli 0.169.1" }
+    public func acceptsVersion(_ version: String) -> Bool {
+        ["codex-cli 0.169.1", "codex-cli 0.171.0-alpha.13"].contains(version)
+    }
 
     public func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                                 executable: URL, environment: [String: String]) throws -> ProcessInvocation {
@@ -25,14 +27,24 @@ public struct CodexCLIDialect: ReplyHarnessDialect {
                         "multi_agent", "multi_agent_v2", "tool_suggest", "skill_search", "remote_plugin", "goals"]
         let config = try ["model_provider=\"openai\"", "mcp_servers={}", "approval_policy=\"never\"", "web_search=\"disabled\"", "tools.update_plan.enabled=false",
                           "tools.experimental_request_user_input.enabled=false", "features.skip_host_skill_discovery=true",
+                          "skills.include_instructions=false",
                           "suppress_unstable_features_warning=true", "project_doc_max_bytes=0",
                           "model_catalog_json=" + quoted(catalog.path), "model_instructions_file=" + quoted(policy.path)]
             + disabled.map { "features." + $0 + "=false" }
         let args = ["exec", "--strict-config", "--json", "--sandbox", "read-only", "--ephemeral",
                     "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "-m", "gpt-6.2-sol"]
             + config.flatMap { ["-c", $0] } + ["-"]
-        return ProcessInvocation(executable: executable, arguments: args, stdin: stdin, workingDirectory: directory,
-                                 environment: environment, timeout: 120)
+        // Codex still opens global AGENTS files with --ignore-user-config and a zero project
+        // document budget. Hide those files from this process while keeping its native login.
+        let profile = #"""
+        (version 1)
+        (allow default)
+        (deny file-read* (with errno ENOENT)
+            (regex #"/[Aa][Gg][Ee][Nn][Tt][Ss]([.][Oo][Vv][Ee][Rr][Rr][Ii][Dd][Ee])?[.][Mm][Dd]$"))
+        """#
+        return ProcessInvocation(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
+                                 arguments: ["-p", profile, executable.path] + args, stdin: stdin,
+                                 workingDirectory: directory, environment: environment, timeout: 120)
     }
 
     public func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int, directory: URL) throws -> ReplyModelOutput {
