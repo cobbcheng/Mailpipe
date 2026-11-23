@@ -49,14 +49,28 @@ public struct InboundCapture: Codable, Sendable {
     public let messageID: String?
     public let raw: Data?
     public let issue: String?
-    public init(permissionID: UUID, subject: String, messageID: String?, raw: Data?, issue: String? = nil) {
+    public let mailKitAddresses: MailCorrespondents?
+    public init(permissionID: UUID, subject: String, messageID: String?, raw: Data?, issue: String? = nil,
+                mailKitAddresses: MailCorrespondents? = nil) {
         version = 1; id = UUID(); self.permissionID = permissionID; capturedAt = Date()
         self.subject = subject; self.messageID = messageID; self.raw = raw; self.issue = issue
+        self.mailKitAddresses = mailKitAddresses
     }
     public func validate() throws {
         guard version == 1, subject.utf8.count <= 2_048, (messageID?.utf8.count ?? 0) <= 998,
               (raw?.count ?? 0) <= MailBodyLimits.rawCeiling, (issue?.count ?? 0) <= 64,
               capturedAt.timeIntervalSinceNow <= 60 else { throw PipelineError.invalidCapture }
+        if let fields = mailKitAddresses {
+            guard fields.recipients.count <= 100, fields.cc.count <= 100,
+                  fields.sender.map(Self.validDisplayAddress) ?? true,
+                  fields.recipients.allSatisfy(Self.validDisplayAddress),
+                  fields.cc.allSatisfy(Self.validDisplayAddress) else { throw PipelineError.invalidCapture }
+        }
+    }
+
+    fileprivate static func validDisplayAddress(_ address: String) -> Bool {
+        address.utf8.count <= 254 && address.rangeOfCharacter(from: .controlCharacters) == nil &&
+            MailComposeRequest.validAddress(address)
     }
 }
 
@@ -82,6 +96,7 @@ public struct CaptureInbox: Sendable {
 
     /// Production MailKit entry point. Read only the authorized headers until a message is admitted.
     public func receiveMailKitMessage(subject: String, sender: @autoclosure () -> String?,
+                                      recipients: @autoclosure () -> [String] = [], cc: @autoclosure () -> [String] = [],
                                       headers: @autoclosure () -> [String: [String]],
                                       rawData: @autoclosure () -> Data?) throws -> MailKitDecision {
         guard let permission = try permission(), permission.accepts(subject) else { return .finished }
@@ -89,19 +104,30 @@ public struct CaptureInbox: Sendable {
         let ids = fields.filter { $0.key.lowercased() == "message-id" }.flatMap(\.value)
         let messageID = ids.count == 1 ? ids[0].trimmingCharacters(in: CharacterSet(charactersIn: "<> ")) : nil
 
-        if InboundMailFilter.shouldSkip(subject: subject, sender: sender(), headers: fields) {
+        let from = sender()
+        if InboundMailFilter.shouldSkip(subject: subject, sender: from, headers: fields) {
             // Mail can provide more headers on re-entry. Finish an already admitted capture.
             guard let messageID, !messageID.isEmpty,
                   FileManager.default.fileExists(atPath: bodyClaimURL(permission, messageID, subject).path) else { return .finished }
         }
+        func displayAddresses() -> MailCorrespondents? {
+            guard permission.delivery == .mailKit else { return nil }
+            let sender = from.flatMap { InboundCapture.validDisplayAddress($0) ? $0 : nil }
+            let to = recipients().prefix(100).filter(InboundCapture.validDisplayAddress)
+            let copies = cc().prefix(100).filter(InboundCapture.validDisplayAddress)
+            guard sender != nil || !to.isEmpty || !copies.isEmpty else { return nil }
+            return MailCorrespondents(sender: sender, recipients: to, cc: copies)
+        }
         if let raw = rawData() {
             let oversized = raw.count > MailBodyLimits.rawCeiling
             try publish(InboundCapture(permissionID: permission.id, subject: subject, messageID: messageID,
-                raw: oversized ? nil : raw, issue: oversized ? MailBodyRejection.messageTooLarge.rawValue : nil))
+                raw: oversized ? nil : raw, issue: oversized ? MailBodyRejection.messageTooLarge.rawValue : nil,
+                mailKitAddresses: displayAddresses()))
             return .finished
         }
         let published = try publishBodyRequest(permission: permission, subject: subject, messageID: messageID) {
-            try publish(InboundCapture(permissionID: permission.id, subject: subject, messageID: messageID, raw: nil))
+            try publish(InboundCapture(permissionID: permission.id, subject: subject, messageID: messageID, raw: nil,
+                mailKitAddresses: displayAddresses()))
         }
         if published || permission.delivery == .mailKit { return .requestBody }
         if messageID == nil {

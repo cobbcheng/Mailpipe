@@ -40,6 +40,8 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
         do {
             let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
             if try inbox.receiveMailKitMessage(subject: message.subject, sender: message.fromAddress.addressString,
+                                               recipients: message.toAddresses.prefix(100).compactMap(\.addressString),
+                                               cc: message.ccAddresses.prefix(100).compactMap(\.addressString),
                                                headers: message.headers ?? [:], rawData: message.rawData) == .requestBody {
                 decision = .invokeAgainWithBody
             }
