@@ -1,60 +1,19 @@
 import Foundation
 
-public enum ServiceLevel: String, Codable, CaseIterable, Sendable {
-    case l0, l1, l2
-    public static let `default`: Self = .l2
-    public func disposition(for decision: ReplyDecision) -> ReplyDisposition {
-        guard self != .l0, decision.shouldReply == .yes else { return .none }
-        return self == .l1 ? .needsReply : .generateDraft
-    }
+/// Optional read-only external context granted explicitly by the host for a single draft run.
+/// Adapters must reject any context they do not explicitly support.
+public enum DraftExternalContext: Equatable, Sendable {
+    case gitHubPullRequest(url: String, authenticated: Bool)
 }
-public enum ReplyDisposition: String, Sendable { case none, needsReply, generateDraft }
 
-/// Classification remains context; only shouldReply permits draft preparation.
-public struct ReplyDecision: Codable, Equatable, Sendable {
-    public let schemaVersion: Int
-    public let requestID: String
-    public let messageRef: String
-    public let shouldReply: ActionNeed
-    internal var validatedMessage: MailInput? = nil
-    public let category: MailCategory
-    public let needsAction: ActionNeed
-    public let summary: [String]
-    public let evidence: [Evidence]
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version", requestID = "request_id", messageRef = "message_ref"
-        case shouldReply = "should_reply", needsAction = "needs_action", category, summary, evidence
-    }
-    public static func validated(_ data: Data, for request: ReplyTriageRequest) throws -> Self {
-        try request.validate()
-        let object = try closedObject(data, keys: ["schema_version", "request_id", "message_ref", "should_reply", "category", "needs_action", "summary", "evidence"])
-        do {
-            var value = try JSONDecoder().decode(Self.self, from: data)
-            guard value.schemaVersion == 1, value.requestID == request.requestID,
-                  value.messageRef == request.message.messageRef else { throw MailpipeError.outputReference }
-            var row = object
-            for key in ["schema_version", "request_id", "should_reply"] { row.removeValue(forKey: key) }
-            let legacy = try JSONSerialization.data(withJSONObject: ["schema_version": 1, "request_id": request.requestID, "results": [row]])
-            _ = try ClassificationResponse.validateFields(legacy, for: ClassificationRequest(requestID: request.requestID, messages: [request.message]))
-            value.validatedMessage = request.message
-            return value
-        } catch let error as MailpipeError { throw error }
-        catch { throw MailpipeError.outputFields }
+public enum GitHubPullRequestLink {
+    public static func first(in body: String) -> String? {
+        let pattern = #"https://github[.]com/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*(?![A-Za-z0-9_/-])"#
+        guard let range = body.range(of: pattern, options: .regularExpression) else { return nil }
+        return String(body[range])
     }
 }
-public struct ReplyTriageRequest: Encodable, Sendable {
-    public let schemaVersion = 1
-    public let taskKind = "reply_triage"
-    public let requestID: String
-    public let message: MailInput
-    public init(requestID: String, message: MailInput) { self.requestID = requestID; self.message = message }
-    enum CodingKeys: String, CodingKey {
-        case schemaVersion = "schema_version", taskKind = "task_kind", requestID = "request_id", message
-    }
-    public func validate() throws {
-        try ClassificationRequest(requestID: requestID, messages: [message]).validate()
-    }
-}
+
 public struct ReplyDraftRequest: Encodable, Sendable {
     public static let maxReplyInstructionLength = 4_000
     public let schemaVersion = 1
@@ -65,54 +24,40 @@ public struct ReplyDraftRequest: Encodable, Sendable {
     public let replyInstructions: String?
     /// Selects the output contract supplied by the host, independently of the mail content.
     public let allowsNoReply: Bool
-    // Host-only grant. Never decoded from model output or email.
-    public var approvedPullRequest: String?
-    /// The host chooses whether this action may offer the existing message-scoped PR reader.
-    private let allowsPullRequestReview: Bool
-    public var pullRequestReviewTarget: String? { allowsPullRequestReview ? Self.linkedPullRequest(in: message.body) : nil }
-    public static func linkedPullRequest(in body: String) -> String? {
-        let pattern = #"https://github[.]com/[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*(?![A-Za-z0-9_/-])"#
-        guard let range = body.range(of: pattern, options: .regularExpression) else { return nil }
-        return String(body[range])
-    }
+    /// Host-only optional capability grant. Never decoded from model output or email.
+    public var externalContext: DraftExternalContext?
+
     public static func normalizedReplyInstructions(_ value: String?) throws -> String? {
         guard let text = value?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
         guard text.unicodeScalars.count <= maxReplyInstructionLength else { throw MailpipeError.invalidInput }
         return text
     }
+
     public init(message: MailInput, allowsNoReply: Bool = false, replyInstructions: String? = nil,
-                allowsPullRequestReview: Bool = true) throws {
+                externalContext: DraftExternalContext? = nil) throws {
         requestID = message.messageRef + "-draft"
         // Schema v1 retains this correlation field for stored drafts and adapters.
         triageRequestID = message.messageRef + "-triage"
         self.message = message
         self.replyInstructions = try Self.normalizedReplyInstructions(replyInstructions)
-        self.allowsPullRequestReview = allowsPullRequestReview
         self.allowsNoReply = allowsNoReply
+        self.externalContext = externalContext
         try validate()
     }
-    public init(requestID: String, triage: ReplyTriageRequest, decision: ReplyDecision, level: ServiceLevel = .default) throws {
-        try triage.validate()
-        guard level.disposition(for: decision) == .generateDraft,
-              decision.requestID == triage.requestID, decision.messageRef == triage.message.messageRef,
-              decision.validatedMessage == triage.message else {
-            throw MailpipeError.invalidInput
-        }
-        self.requestID = requestID; self.triageRequestID = triage.requestID; self.message = triage.message
-        self.replyInstructions = nil
-        self.allowsPullRequestReview = true
-        self.allowsNoReply = false
-        try validate()
-    }
+
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version", taskKind = "task_kind", requestID = "request_id"
         case triageRequestID = "triage_request_id", message, replyInstructions = "reply_instructions"
     }
+
     public func validate() throws {
-        try ClassificationRequest(requestID: requestID, messages: [message]).validate()
-        guard requestID != triageRequestID else { throw MailpipeError.invalidInput }
+        guard !requestID.isEmpty, requestID.utf8.count <= 128, requestID != triageRequestID else {
+            throw MailpipeError.invalidInput
+        }
+        try message.validate()
     }
 }
+
 /// Local pending content only. No recipients, executable actions, or send operation.
 public struct ReplyDraft: Codable, Equatable, Sendable {
     public let schemaVersion: Int
@@ -177,7 +122,9 @@ private func closedObject(_ data: Data, keys: Set<String>) throws -> [String: An
 }
 
 public enum DestinationEvidence: String, Codable, Sendable { case detected, declared, unknown }
+/// `.triage` is retained only so historical persisted runs remain decodable.
 public enum ReplyTaskKind: String, Codable, Sendable { case triage, draft }
+
 public struct DataDestination: Codable, Equatable, Sendable {
     public let messageRef: String
     public let runID: String
@@ -212,18 +159,6 @@ public struct DataDestination: Codable, Equatable, Sendable {
 }
 
 public enum ReplySchemas {
-    public static var triage: String {
-        var root = try! JSONSerialization.jsonObject(with: Data(ClassificationSchema.json.utf8)) as! [String: Any]
-        let properties = root["properties"] as! [String: Any]
-        let results = properties["results"] as! [String: Any]
-        root = results["items"] as! [String: Any]
-        var fields = root["properties"] as! [String: Any]
-        fields["schema_version"] = ["type": "integer", "enum": [1]]
-        fields["request_id"] = ["type": "string"]
-        fields["should_reply"] = ["type": "string", "enum": ["yes", "no", "unknown"]]
-        root["properties"] = fields; root["required"] = fields.keys.sorted()
-        return String(decoding: try! JSONSerialization.data(withJSONObject: root, options: [.sortedKeys]), as: UTF8.self)
-    }
     public static let draft = #"{"type":"object","additionalProperties":false,"required":["schema_version","request_id","triage_request_id","message_ref","subject","body"],"properties":{"schema_version":{"type":"integer","enum":[1]},"request_id":{"type":"string"},"triage_request_id":{"type":"string"},"message_ref":{"type":"string"},"subject":{"type":"string"},"body":{"type":"string"}}}"#
     private static let noReply = #"{"type":"object","additionalProperties":false,"required":["schema_version","request_id","triage_request_id","message_ref","disposition"],"properties":{"schema_version":{"type":"integer","enum":[1]},"request_id":{"type":"string"},"triage_request_id":{"type":"string"},"message_ref":{"type":"string"},"disposition":{"type":"string","enum":["no_reply"]}}}"#
     public static let automaticDraft = #"{"oneOf":[\#(draft),\#(noReply)]}"#

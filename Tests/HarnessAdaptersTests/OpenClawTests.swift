@@ -6,7 +6,9 @@ import MailpipeCore
 @MainActor
 final class OpenClawTests: XCTestCase {
     private let dialect = OpenClawDialect()
-    private let task = ReplyModelTask.triage(ReplySyntheticFixture.triage)
+    private func syntheticTask() throws -> ReplyModelTask {
+        .draft(try ReplyDraftRequest(message: ReplySyntheticFixture.message))
+    }
     private var receipt: [String: Any] {
         let draft = String(decoding: ReplySyntheticFixture.draft, as: UTF8.self)
         return ["ok": true, "status": "ok", "final": draft, "payloads": [["text": draft, "mediaUrl": NSNull()]],
@@ -26,9 +28,7 @@ final class OpenClawTests: XCTestCase {
         let adapter = OpenClawHarnessAdapter(executable: fake, dialect: dialect, runner: runner, temporaryRoot: root.url,
                                              environment: ["HOME": root.url.path, "OPENCLAW_STATE_DIR": "/untrusted",
                                                            "DEEPSEEK_API_KEY": "synthetic", "NODE_OPTIONS": "--inspect"])
-        let triage = ReplySyntheticFixture.triage
-        let decision = try ReplyDecision.validated(ReplySyntheticFixture.decision, for: triage)
-        let request = try ReplyDraftRequest(requestID: "synthetic-draft", triage: triage, decision: decision)
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         let output = try await adapter.run(.draft(request), route: .init(accountID: "example", allowedHarnesses: [.openclaw])) {}
         XCTAssertNotNil(try ReplyDraft.validated(output.content, for: request))
         XCTAssertEqual(output.actualModel, "deepseek/deepseek-flash")
@@ -54,6 +54,7 @@ final class OpenClawTests: XCTestCase {
     }
 
     func testRejectsWrongModelToolsMediaAndUnverifiedCompletion() throws {
+        let task = try syntheticTask()
         let mutations: [[String: Any]] = [
             ["codeModeEngaged": true], ["assistantTurns": 2], ["toolSummary": ["calls": 1]],
             ["bridgeCalls": ["call": 1]], ["model": "other"], ["provider": "other"], ["ok": false],
@@ -64,10 +65,13 @@ final class OpenClawTests: XCTestCase {
             let data = try JSONSerialization.data(withJSONObject: receipt.merging(mutation) { $1 })
             XCTAssertThrowsError(try dialect.replyOutput(data, task: task, inputCharacters: 4, directory: FileManager.default.temporaryDirectory))
         }
-        XCTAssertFalse(dialect.acceptsVersion("OpenClaw 2026.11.6"))
+        XCTAssertTrue(dialect.acceptsVersion("OpenClaw 2026.11.6"))
+        XCTAssertFalse(dialect.acceptsVersion("OpenClaw 2026.11.4"))
+        XCTAssertFalse(dialect.acceptsVersion("OpenClaw 2027.1.0"))
     }
 
     func testNativeFailureClassificationAndPayloadTrailingWhitespace() throws {
+        let task = try syntheticTask()
         func failure(_ status: String, _ kind: String, _ message: String, exitCode: Int32) throws -> MailpipeError {
             let event: [String: Any] = ["ok": false, "status": status, "error": ["kind": kind, "message": message]]
             return dialect.runFailure(ProcessOutput(stdout: try JSONSerialization.data(withJSONObject: event), exitCode: exitCode))
@@ -84,8 +88,8 @@ final class OpenClawTests: XCTestCase {
 
     func testExplicitPullRequestReadIsUnsupportedBeforeInference() throws {
         let root = try TemporaryDirectory()
-        var request = try ReplyDraftRequest(message: ReplySyntheticFixture.triage.message)
-        request.approvedPullRequest = "https://github.com/example/repository/pull/1"
+        var request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
+        request.externalContext = .gitHubPullRequest(url: "https://github.com/example/repository/pull/1", authenticated: true)
         XCTAssertThrowsError(try dialect.replyInvocation(task: .draft(request), schema: "", stdin: Data(), directory: root.url,
                                                          executable: root.url.appendingPathComponent("fake"), environment: [:])) {
             XCTAssertEqual($0 as? MailpipeError, .unsafeCapability)

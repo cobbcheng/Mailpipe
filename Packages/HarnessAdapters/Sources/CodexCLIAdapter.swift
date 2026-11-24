@@ -9,12 +9,15 @@ public struct CodexCLIDialect: ReplyHarnessDialect {
         ["--json", "--strict-config", "--sandbox", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--ignore-rules"]
     }
     public func acceptsVersion(_ version: String) -> Bool {
-        ["codex-cli 0.169.1", "codex-cli 0.171.0-alpha.13"].contains(version)
+        SemVer.matchesBanner(version, pattern: #"^codex-cli ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$"#,
+                             minimum: SemVer(major: 0, minor: 169, patch: 1), major: 0)
     }
 
     public func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                                 executable: URL, environment: [String: String]) throws -> ProcessInvocation {
-        if case .draft(let request) = task, request.approvedPullRequest != nil { throw MailpipeError.unsafeCapability }
+        if case .draft(let request) = task, let context = request.externalContext, !supports(context) {
+            throw MailpipeError.unsafeCapability
+        }
         guard let catalog = Bundle.module.url(forResource: "codex-model", withExtension: "json", subdirectory: "Resources"),
               let policy = Bundle.module.url(forResource: "reply-policy", withExtension: "md", subdirectory: "Resources")
         else { throw MailpipeError.unsafeCapability }

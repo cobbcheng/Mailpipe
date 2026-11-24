@@ -25,8 +25,13 @@ final class PendingModel: ObservableObject {
     private var onboardingTask: Task<Void, Never>?
     private var configurationSave: Task<Void, Never>?
     private var pipeline: ReplyPipeline?
-    private var worker: Task<Void, Never>?
-    private var display: Task<Void, Never>?
+    private var pumpTask: Task<Void, Never>?
+    private var pumpPending = false
+    private var isPumping = false
+    private var fallbackTimer: Task<Void, Never>?
+    private var inboxWatcher: DirectoryWatcher?
+    private var panelWatcher: DirectoryWatcher?
+    private var lastStoreGeneration: UInt64?
     private var panelExchange: ComposePanelExchange?
     private var panelTasks: [UUID: (request: ComposePanelRequest, task: Task<Void, Never>)] = [:]
     let reminders: ReadyReplyReminders?
@@ -75,7 +80,7 @@ final class PendingModel: ObservableObject {
             addressLoads.remove(key)
             return
         }
-        if let updated = try? pipeline.store.record(item.id), let index = records.firstIndex(where: { $0.id == item.id }) {
+        if let updated = try? await pipeline.store.record(item.id), let index = records.firstIndex(where: { $0.id == item.id }) {
             records[index] = updated
         }
     }
@@ -94,83 +99,88 @@ final class PendingModel: ObservableObject {
             await Task.yield()
             guard !Task.isCancelled, let self else { return }
             self.editTasks[item.id] = nil
-            _ = self.flushEditor(item.id)
+            _ = await self.flushEditor(item.id)
         }
     }
-    @discardableResult func flushEditor(_ id: String) -> Bool {
+    @discardableResult func flushEditor(_ id: String) async -> Bool {
         editTasks.removeValue(forKey: id)?.cancel()
-        guard var buffer = editorBuffers[id] else { return true }
-        let saved = buffer.persist { body in
-            guard let pipeline, let item = try pipeline.store.record(id) else { throw PipelineError.storage }
-            try pipeline.store.saveEdits(id, subject: item.displayedSubject, body: body)
+        while let buffer = editorBuffers[id], buffer.body != buffer.savedBody {
+            let targetBody = buffer.body
+            do {
+                guard let pipeline, let item = try await pipeline.store.record(id) else { throw PipelineError.storage }
+                try await pipeline.store.saveEdits(id, subject: item.displayedSubject, body: targetBody)
+                editorBuffers[id]?.markSaved(targetBody)
+            } catch {
+                editorBuffers[id]?.markFailed()
+                return false
+            }
         }
-        editorBuffers[id] = buffer
-        if saved { refresh() }
-        return saved
+        await refresh()
+        return true
     }
     func discard(_ id: String) {
-        guard flushEditor(id) else { return }
-        do {
-            try pipeline?.store.discard(id); undoDiscardID = id; notice = L("Discarded")
-            refresh(); noticeTask?.cancel()
-            noticeTask = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(15))
-                guard !Task.isCancelled else { return }
-                self?.undoDiscardID = nil; self?.notice = nil
-            }
-        } catch { issue = L("Could not discard the draft. Try again.") }
+        Task {
+            guard await flushEditor(id), let pipeline else { return }
+            do {
+                try await pipeline.store.discard(id); undoDiscardID = id; notice = L("Discarded")
+                await refresh(); noticeTask?.cancel()
+                noticeTask = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(15))
+                    guard !Task.isCancelled else { return }
+                    self?.undoDiscardID = nil; self?.notice = nil
+                }
+            } catch { issue = L("Could not discard the draft. Try again.") }
+        }
     }
     func undoDiscard() {
         guard let id = undoDiscardID else { return }
-        do { try pipeline?.store.restoreDiscard(id); selectedID = id; undoDiscardID = nil; notice = L("Draft restored"); refresh() }
-        catch { issue = L("Undo expired. The draft record remains on this Mac.") }
+        Task {
+            do { try await pipeline?.store.restoreDiscard(id); selectedID = id; undoDiscardID = nil; notice = L("Draft restored"); await refresh() }
+            catch { issue = L("Undo expired. The draft record remains on this Mac.") }
+        }
     }
     func regenerate(_ id: String) {
-        do {
-            guard let pipeline, let item = try pipeline.store.record(id) else { throw PipelineError.storage }
-            guard item.canRequestRegeneration(settings: try pipeline.store.settings()) else {
-                issue = item.state == .awaitingBody ? L("Waiting for the message body from Mail before drafting.") : L("Check mail authorization, pause status and message expiry.")
-                return
+        Task {
+            do {
+                guard let pipeline, let item = try await pipeline.store.record(id) else { throw PipelineError.storage }
+                let currentSettings = try await pipeline.store.settings()
+                guard item.canRequestRegeneration(settings: currentSettings) else {
+                    issue = item.state == .awaitingBody ? L("Waiting for the message body from Mail before drafting.") : L("Check mail authorization, pause status and message expiry.")
+                    return
+                }
+                guard await flushEditor(id) else { return }
+                let approved = currentSettings.harnessKind == .deepseek ? GitHubPullRequestLink.first(in: item.input.body) : nil
+                try await pipeline.regenerate(id, approvedPullRequest: approved)
+                await refresh()
+                schedulePump()
             }
-            guard flushEditor(id) else { return }
-            let approved = settings.harnessKind == .deepseek ? ReplyDraftRequest.linkedPullRequest(in: item.input.body) : nil
-            try pipeline.regenerate(id, approvedPullRequest: approved); refresh()
+            catch { issue = L("Could not regenerate. Check pause status, authorization, agent connection and message expiry. Each message allows three retries.") }
         }
-        catch { issue = L("Could not regenerate. Check pause status, authorization, agent connection and message expiry. Each message allows three retries.") }
     }
     @Published var composeBusy = false
-    func prepareCompose(_ item: StoredReply) async -> MailComposeRequest? {
-        guard !composeBusy, flushEditor(item.id), let pipeline else { return nil }
+    func composeReply(_ item: StoredReply) async {
+        guard !composeBusy, await flushEditor(item.id), let pipeline else { return }
         composeBusy = true; defer { composeBusy = false }
         do {
-            return try await pipeline.prepareMailCompose(id: item.id, subject: item.displayedSubject, body: editorBody(item),
-                senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) })
-        } catch {
+            _ = try await pipeline.composeReply(id: item.id, subject: item.displayedSubject, body: editorBody(item),
+                senderAddress: { try await MailReadBridge.shared.senderAddress(accountID: $0, preferredRecipients: $1) },
+                open: { try await MailReadBridge.shared.openCompose($0) })
+            await refresh()
+        } catch MailComposeError.unavailable, MailComposeError.invalidRecipient {
             notify(L("Could not prepare a Mail compose window. Check the original message, addresses and automation permission. Your edits were kept."))
-            return nil
-        }
-    }
-    func openCompose(_ request: MailComposeRequest) async -> Bool {
-        guard !composeBusy, let pipeline else { return false }
-        composeBusy = true; defer { composeBusy = false }
-        do {
-            _ = try await pipeline.openMailCompose(confirmedRequest: request,
-                senderAddress: { try AppleMailComposer.senderAddress(accountID: $0, preferredRecipients: $1) },
-                open: { try AppleMailComposer.open($0) })
-            refresh(); return true
         } catch {
             notify(L("Check Mail before trying again to avoid opening a duplicate compose window. Changes to the original or authorization require confirmation. Your edits were kept."))
-            refresh(); return false
+            await refresh()
         }
     }
     func applyConfiguration() {
         guard onboarding.completed, !onboardingBusy else { return }
         saveConfiguration(updating: true)
     }
-    func saveReplyInstructions(_ value: String) throws {
+    func saveReplyInstructions(_ value: String) async throws {
         guard let pipeline else { throw PipelineError.storage }
-        try pipeline.store.saveReplyInstructions(value)
-        settings = try pipeline.store.settings()
+        try await pipeline.store.saveReplyInstructions(value)
+        settings = try await pipeline.store.settings()
     }
     var selected: StoredReply? { records.first { $0.id == selectedID } }
 
@@ -193,17 +203,18 @@ final class PendingModel: ObservableObject {
                 } else { inboxURL = root.appendingPathComponent("inbox") }
             }
             let store = try PipelineStore(directory: root)
+            let panelURL = inboxURL.deletingLastPathComponent().appendingPathComponent("compose-panel")
             if diagnosticIndex != nil || hasSharedInbox {
-                let panel = inboxURL.deletingLastPathComponent().appendingPathComponent("compose-panel")
-                panelExchange = try? ComposePanelExchange(directory: panel)
+                panelExchange = try? ComposePanelExchange(directory: panelURL)
             }
-            pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: inboxURL), resolve: { item, scope in
-                let expected = try store.settings()
+            let captureInbox = try CaptureInbox(directory: inboxURL)
+            let createdPipeline = ReplyPipeline(store: store, inbox: captureInbox, resolve: { item, scope in
+                let expected = try await store.settings()
                 guard let messageID = item.messageID, expected.permission?.id == item.permissionID,
                       (item.mailKitBody == true ? expected.permission?.delivery == .mailKit : expected.authorizedScopes.contains(scope)) else { return nil }
                 let match = try await MailReadBridge.shared.resolve(accountID: scope.accountID, mailboxName: scope.mailboxName,
                     messageID: messageID, subject: item.input.subject, mailboxPath: scope.mailboxPath, firstMatch: item.mailKitBody == true) {
-                    guard try store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
+                    guard try await store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
                 }
                 guard let match else { return nil }
                 let source = Data(match.source.utf8)
@@ -217,29 +228,56 @@ final class PendingModel: ObservableObject {
                                      mailboxName: $0.path.last!, mailboxPath: $0.path)
                 }
             })
-            onboardingSession = try OnboardingSession(store: store)
-            onboarding = try store.onboarding()
-            onboardingResult = try onboardingSession?.testResult()
-            settings = try store.settings()
-            // Reconcile a crash between authoritative policy and extension snapshot updates.
-            try pipeline?.inbox.setPermission(settings.paused || settings.permission?.delivery != .mailKit ? nil : settings.permission)
-            rediscoverTools()
-            refresh(); start()
-            display = Task { [weak self] in
-                while !Task.isCancelled {
-                    self?.serviceComposePanels()
-                    self?.refresh()
-                    try? await Task.sleep(for: .seconds(1))
+            pipeline = createdPipeline
+            let session = try OnboardingSession(store: store)
+            onboardingSession = session
+            inboxWatcher = DirectoryWatcher(directory: inboxURL, label: "com.mailpipe.inbox-watcher") { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.schedulePump()
+                    await self?.refresh(forceObservation: true)
+                }
+            }
+            if panelExchange != nil {
+                panelWatcher = DirectoryWatcher(directory: panelURL, label: "com.mailpipe.panel-watcher") { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.serviceComposePanels()
+                    }
+                }
+            }
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    onboarding = try await store.onboarding()
+                    onboardingResult = try await session.testResult()
+                    settings = try await store.settings()
+                    // Reconcile a crash between authoritative policy and extension snapshot updates.
+                    try createdPipeline.inbox.setPermission(settings.paused || settings.permission?.delivery != .mailKit ? nil : settings.permission)
+                    rediscoverTools()
+                    await refresh(forceObservation: true)
+                    schedulePump()
+                    serviceComposePanels()
+                    startFallbackTimer()
+                } catch {
+                    issue = L("Could not open the local reply queue (%1$@).", String(describing: Self.code(error)))
                 }
             }
         } catch { issue = L("Could not open the local reply queue (%1$@).", String(describing: Self.code(error))) }
     }
-    @discardableResult func saveOnboarding() -> Bool {
+
+    func saveOnboarding() {
+        let draft = onboarding
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await saveOnboardingNow(draft)
+        }
+    }
+
+    @discardableResult private func saveOnboardingNow(_ draft: OnboardingDraft? = nil) async -> Bool {
         do {
             guard let session = onboardingSession else { throw PipelineError.storage }
-            try session.save(onboarding)
-            onboarding = try session.store.onboarding()
-            onboardingResult = try session.testResult()
+            try await session.save(draft ?? onboarding)
+            onboarding = try await session.store.onboarding()
+            onboardingResult = try await session.testResult()
             return true
         } catch {
             onboardingIssue = L("Could not save settings: %1$@", String(describing: Self.code(error)))
@@ -267,20 +305,23 @@ final class PendingModel: ObservableObject {
     func testOnboarding() {
         guard !onboardingBusy, let session = onboardingSession,
               selectedTool != nil else { return }
-        guard saveOnboarding() else { return }
         onboardingBusy = true; onboardingIssue = nil
         onboardingTask = Task {
             defer {
                 onboardingBusy = false
-                onboarding = (try? session.store.onboarding()) ?? onboarding
-                onboardingResult = try? session.testResult()
+                Task { [weak self] in
+                    guard let self else { return }
+                    onboarding = (try? await session.store.onboarding()) ?? onboarding
+                    onboardingResult = try? await session.testResult()
+                }
             }
+            guard await saveOnboardingNow() else { return }
             do {
-                if onboarding.testID != nil { try session.resetTest() }
-                _ = try session.beginTest()
-                onboarding = try session.store.onboarding()
+                if onboarding.testID != nil { try await session.resetTest() }
+                _ = try await session.beginTest()
+                onboarding = try await session.store.onboarding()
                 try await session.testPipeline.pump()
-                if let code = try session.testResult()?.error {
+                if let code = try await session.testResult()?.error {
                     let agent = onboarding.harnessKind.displayName
                     switch MailpipeError(rawValue: code) {
                     case .unsupportedVersion:
@@ -296,7 +337,9 @@ final class PendingModel: ObservableObject {
     }
     func cancelOnboardingTest() {
         onboardingTask?.cancel()
-        if let id = onboarding.testID { try? onboardingSession?.testPipeline.cancel(id) }
+        if let id = onboarding.testID {
+            Task { try? await onboardingSession?.testPipeline.cancel(id) }
+        }
     }
     func finishOnboarding() {
         guard !onboarding.completed else { return }
@@ -308,23 +351,23 @@ final class PendingModel: ObservableObject {
             onboardingIssue = L("Cannot access the Mail extension’s shared folder. Check your installation."); return
         }
         guard onboarding.extensionAcknowledged else { return }
-        guard saveOnboarding() else { return }
         onboardingIssue = nil; onboardingBusy = true
-        let snapshot = onboarding
         configurationSave = Task {
             defer { onboardingBusy = false; configurationSave = nil }
+            guard await saveOnboardingNow() else { return }
+            let snapshot = onboarding
             do {
                 let report = try await tool.inspect()
                 try Task.checkCancellation()
                 guard report.supportsHeadlessRun, onboarding == snapshot else { throw MailpipeError.unsupportedVersion }
                 try Task.checkCancellation()
-                worker?.cancel()
-                defer { start() }
-                try session.activate(updatingConfiguration: updating)
-                let active = try session.store.settings()
+                pumpTask?.cancel()
+                defer { schedulePump() }
+                try await session.activate(updatingConfiguration: updating)
+                let active = try await session.store.settings()
                 try pipeline.inbox.setPermission(active.paused ? nil : active.permission)
-                onboarding = try session.store.onboarding()
-                refresh()
+                onboarding = try await session.store.onboarding()
+                await refresh()
                 onboardingIssue = active.paused ? L("Settings saved. Processing remains paused.") : L("Drafting authorized. Waiting for the first matching message.")
             } catch is CancellationError {
                 return
@@ -369,22 +412,32 @@ final class PendingModel: ObservableObject {
         }
     }
     func selectLatestReadyReply() {
-        guard refresh() else { return }
-        let now = Date()
-        selectedID = records.last { $0.isReadyForReplyReminder(settings: settings, now: now) }?.id
+        Task { [weak self] in
+            guard let self else { return }
+            guard await refresh() else { return }
+            let now = Date()
+            selectedID = records.last { $0.isReadyForReplyReminder(settings: settings, now: now) }?.id
+        }
     }
 
-    @discardableResult func refresh() -> Bool {
+    @discardableResult func refresh(forceObservation: Bool = false) async -> Bool {
         guard let pipeline else { return false }
         do {
-            extensionObservation = try? ExtensionObservation.read(from: pipeline.inbox)
-            records = try pipeline.store.records(); settings = try pipeline.store.settings()
-            for item in records where item.draft != nil && item.editedBody == nil {
-                if let buffer = editorBuffers[item.id], buffer.body != item.displayedBody && buffer.state == .saved {
-                    editorBuffers[item.id] = DraftEditBuffer(body: item.displayedBody)
-                }
+            if forceObservation || !onboarding.completed {
+                let observed = try? ExtensionObservation.read(from: pipeline.inbox)
+                if observed != extensionObservation { extensionObservation = observed }
             }
-            if let problem = try pipeline.store.issue() { issue = L("Capture notice: %1$@", String(describing: problem)) }
+            if let snapshot = try await pipeline.store.snapshot(ifChangedSince: lastStoreGeneration) {
+                lastStoreGeneration = snapshot.generation
+                records = snapshot.records
+                settings = snapshot.settings
+                for item in records where item.draft != nil && item.editedBody == nil {
+                    if let buffer = editorBuffers[item.id], buffer.body != item.displayedBody && buffer.state == .saved {
+                        editorBuffers[item.id] = DraftEditBuffer(body: item.displayedBody)
+                    }
+                }
+                if let problem = snapshot.issue { issue = L("Capture notice: %1$@", String(describing: problem)) }
+            }
             if onboarding.completed { reminders?.check(records: records, settings: settings) }
             return true
         } catch {
@@ -393,9 +446,13 @@ final class PendingModel: ObservableObject {
         }
     }
     func terminationBlocker() -> UpdateRestartBlocker? {
-        guard pipeline?.pumping != true, !onboardingBusy, !composeBusy, panelTasks.isEmpty else { return .workInProgress }
+        guard !isPumping, !onboardingBusy, !composeBusy, panelTasks.isEmpty else { return .workInProgress }
         for (id, buffer) in editorBuffers where buffer.state != .saved {
-            guard flushEditor(id) else { return .unsavedDraft }
+            if buffer.state == .saving {
+                Task { [weak self] in _ = await self?.flushEditor(id) }
+                return .workInProgress
+            }
+            return .unsavedDraft
         }
         return nil
     }
@@ -415,52 +472,85 @@ final class PendingModel: ObservableObject {
                     return
                 }
                 let response = await pipeline.handleComposePanelRequest(request, prepareRecord: { [weak self] id in
-                    guard let self else { return false }
-                    guard let buffer = editorBuffers[id], buffer.state != .saved else { return true }
-                    return flushEditor(id)
+                    await MainActor.run { [weak self] in
+                        guard let self else { return false }
+                        guard let buffer = editorBuffers[id], buffer.state != .saved else { return true }
+                        return false
+                    } ? true : await self?.flushEditor(id) ?? false
                 }) {
                     !Task.isCancelled && exchange.isActive(request)
                 }
                 try? exchange.respond(response, to: request)
+                await refresh()
             }
             panelTasks[request.id] = (request, task)
         }
     }
 
-    private func start() {
-        worker = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let pipeline = self?.pipeline else { return }
+    private func schedulePump() {
+        guard pipeline != nil else { return }
+        if isPumping {
+            pumpPending = true
+            return
+        }
+        pumpTask = Task { [weak self] in
+            guard let self, let pipeline = self.pipeline else { return }
+            isPumping = true
+            defer { isPumping = false }
+            repeat {
+                pumpPending = false
                 do { try await pipeline.pump() }
                 catch is CancellationError { return }
-                catch { self?.issue = Self.code(error) }
-                self?.refresh()
-                try? await Task.sleep(for: .seconds(2))
+                catch { self.issue = Self.code(error) }
+                await self.refresh()
+            } while pumpPending && !Task.isCancelled
+        }
+    }
+
+    /// Low-frequency safety tick for daily reminder clock checks, expired panel cleanup,
+    /// and recovery if a directory watch event is ever coalesced or missed.
+    private func startFallbackTimer() {
+        fallbackTimer?.cancel()
+        fallbackTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                guard !Task.isCancelled, let self else { return }
+                self.serviceComposePanels()
+                self.schedulePump()
+                await self.refresh(forceObservation: !self.onboarding.completed)
             }
         }
     }
-    private func change(_ edit: (inout PipelineSettings) -> Void) throws {
-        guard let pipeline else { throw PipelineError.storage }
-        configurationSave?.cancel()
-        worker?.cancel()
-        defer { start(); refresh() }
-        try pipeline.updateSettings(edit)
+
+    private func change(_ edit: @escaping @Sendable (inout PipelineSettings) -> Void) {
+        Task { [weak self] in
+            guard let self, let pipeline else { return }
+            configurationSave?.cancel()
+            pumpTask?.cancel()
+            defer { schedulePump() }
+            do {
+                try await pipeline.updateSettings(edit)
+                await refresh()
+            } catch { issue = Self.code(error) }
+        }
     }
     func togglePause() {
-        do { try change { $0.paused.toggle() } }
-        catch { issue = Self.code(error) }
+        change { $0.paused.toggle() }
     }
     func revoke() {
-        do { try change { $0.permission = nil; $0.scope = nil; $0.scopes = nil } }
-        catch { issue = Self.code(error) }
+        change { $0.permission = nil; $0.scope = nil; $0.scopes = nil }
     }
     func recheck(_ id: String) {
-        do { try pipeline?.recheckIdentity(id); refresh() }
-        catch { issue = Self.code(error) }
+        Task {
+            do { try await pipeline?.recheckIdentity(id); await refresh(); schedulePump() }
+            catch { issue = Self.code(error) }
+        }
     }
     func cancel(_ id: String) {
-        do { try pipeline?.cancel(id); refresh() }
-        catch { issue = Self.code(error) }
+        Task {
+            do { try await pipeline?.cancel(id); await refresh() }
+            catch { issue = Self.code(error) }
+        }
     }
     static func code(_ error: Error) -> String {
         (error as? MailpipeError)?.rawValue ?? (error as? PipelineError)?.rawValue ?? "operationFailed"
@@ -719,9 +809,9 @@ private struct DraftDetail: View {
             Button(L("Cancel"), role: .cancel) { }
             Button(L("Regenerate")) { model.regenerate(item.id) }
         } message: {
-            if model.settings.harnessKind == .deepseek, let link = ReplyDraftRequest.linkedPullRequest(in: item.input.body) {
+            if model.settings.harnessKind == .deepseek, let link = GitHubPullRequestLink.first(in: item.input.body) {
                 Text(L("Continuing lets Mailpipe use your GitHub account to read changes at %1$@ and share them with DeepSeek Harness for review and drafting. The new draft replaces your reply.", String(describing: link)))
-            } else if ReplyDraftRequest.linkedPullRequest(in: item.input.body) != nil {
+            } else if GitHubPullRequestLink.first(in: item.input.body) != nil {
                 Text(L("%1$@ cannot verify PR changes. The new draft will replace your reply.", String(describing: model.settings.harnessKind.displayName)))
             } else {
                 Text(L("The agent will use your model quota again and replace the current reply."))
@@ -825,7 +915,7 @@ private struct DraftDetail: View {
                     .accessibilityLabel(L("Reply drafts"))
                 replyEditor
                 if model.saveState(item) == .failed {
-                    Button(L("Save failed. Click to retry.")) { model.flushEditor(item.id) }
+                    Button(L("Save failed. Click to retry.")) { Task { _ = await model.flushEditor(item.id) } }
                         .font(.caption).buttonStyle(.link)
                 }
             }
@@ -854,9 +944,7 @@ private struct DraftDetail: View {
     private var actions: some View {
         HStack(spacing: 8) {
             Button {
-                Task {
-                    if let request = await model.prepareCompose(item) { _ = await model.openCompose(request) }
-                }
+                Task { await model.composeReply(item) }
             } label: { actionIcon(L("Compose reply in Apple Mail"), "arrowshape.turn.up.left") }
             .help(L("Compose reply in Apple Mail"))
             .disabled(item.manualExecutable != nil || model.composeBusy || item.isPreparing || isExpired || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -903,7 +991,19 @@ private struct DraftDetail: View {
         } else { model.notify(L("Could not copy. Try again.")) }
     }
     private func errorDescription(_ code: String) -> String? {
-        if let rejection = MailBodyRejection(rawValue: code) { return rejection.reviewLabel }
+        if let rejection = MailBodyRejection(rawValue: code) {
+            switch rejection {
+            case .messageTooLarge: return L("Message exceeds 4 MiB and was not parsed.")
+            case .encryptedContent: return L("Encrypted content cannot be read.")
+            case .signedOpaque: return L("Signed opaque content cannot be read.")
+            case .attachmentOnly: return L("No readable body found; only attachments are present.")
+            case .calendarOnly: return L("Calendar invitation; no reply body extracted.")
+            case .malformedMIME: return L("MIME structure could not be parsed.")
+            case .unsupportedCharset: return L("Message character set is not supported.")
+            case .unsupportedContent: return L("Message content type is not supported.")
+            case .emptyBody: return L("Message body is empty.")
+            }
+        }
         switch code {
         case "contentExpired": return L("This message has expired.")
         case "policyChanged", "revoked": return L("Authorization changed. Check Settings.")

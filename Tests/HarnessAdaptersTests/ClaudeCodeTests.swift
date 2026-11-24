@@ -38,9 +38,7 @@ final class ClaudeCodeTests: XCTestCase {
         ])
         let adapter = ClaudeCodeHarnessAdapter(executable: root.url.appendingPathComponent("fake-claude"), dialect: dialect,
                                               runner: runner, temporaryRoot: root.url)
-        let triage = ReplySyntheticFixture.triage
-        let decision = try ReplyDecision.validated(ReplySyntheticFixture.decision, for: triage)
-        let request = try ReplyDraftRequest(requestID: "synthetic-draft", triage: triage, decision: decision)
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         let draft = try await adapter.run(.draft(request), route: route) {}
         XCTAssertNotNil(try ReplyDraft.validated(draft.content, for: request))
         XCTAssertEqual(draft.actualModel, "example-model")
@@ -68,7 +66,7 @@ final class ClaudeCodeTests: XCTestCase {
 
     func testRejectsChangedToolsUnsafeResultsAndCrossSessionEvents() throws {
         let assistantTool: [String: Any] = ["type": "assistant", "session_id": "s", "message": ["content": [["type": "tool_use"]]]]
-        let step = ReplyModelTask.triage(ReplySyntheticFixture.triage)
+        let step = ReplyModelTask.draft(try ReplyDraftRequest(message: ReplySyntheticFixture.message))
         for events in [
             [initEvent.merging(["tools": ["Read"]]) { $1 }, result],
             [initEvent.merging(["mcp_servers": [["name": "external"]]]) { $1 }, result],
@@ -81,15 +79,17 @@ final class ClaudeCodeTests: XCTestCase {
         ] {
             XCTAssertThrowsError(try dialect.replyOutput(stream(events), task: step, inputCharacters: 0, directory: FileManager.default.temporaryDirectory))
         }
-        XCTAssertFalse(dialect.acceptsVersion("2.1.297 (Claude Code)"))
+        XCTAssertTrue(dialect.acceptsVersion("2.1.297 (Claude Code)"))
+        XCTAssertFalse(dialect.acceptsVersion("2.1.295 (Claude Code)"))
+        XCTAssertFalse(dialect.acceptsVersion("3.0.0 (Claude Code)"))
     }
 
     func testRevokedPRAndWrongRouteNeverLaunchInference() async throws {
         let root = try TemporaryDirectory()
-        let runner = RecordingRunner(probe() + probe())
+        let runner = RecordingRunner(probe())
         let adapter = ClaudeCodeHarnessAdapter(executable: root.url.appendingPathComponent("fake-claude"), dialect: dialect,
                                               runner: runner, temporaryRoot: root.url)
-        var request = try ReplyDraftRequest(message: ReplySyntheticFixture.triage.message)
+        var request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         do {
             _ = try await adapter.run(.draft(request), route: .init(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
             XCTFail("wrong route")
@@ -98,13 +98,14 @@ final class ClaudeCodeTests: XCTestCase {
             _ = try await adapter.run(.draft(request), route: route) { throw MailpipeError.paused }
             XCTFail("paused")
         } catch { XCTAssertEqual(error as? MailpipeError, .paused) }
-        request.approvedPullRequest = "https://github.com/example/project/pull/1"
+        request.externalContext = .gitHubPullRequest(url: "https://github.com/example/project/pull/1", authenticated: true)
         do {
             _ = try await adapter.run(.draft(request), route: route) {}
             XCTFail("unsupported PR review")
         } catch { XCTAssertEqual(error as? MailpipeError, .unsafeCapability) }
         let calls = await runner.calls
-        XCTAssertEqual(calls.count, 4)
+        // Unsupported externalContext is rejected centrally before inspect() launches any process.
+        XCTAssertEqual(calls.count, 2)
         XCTAssertTrue(calls.allSatisfy { $0.stdin.isEmpty })
     }
 }

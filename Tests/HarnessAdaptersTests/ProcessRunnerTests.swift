@@ -105,18 +105,21 @@ final class ProcessRunnerTests: XCTestCase {
         /bin/cat
         """)
         let input = Data("synthetic mail".utf8)
-        let invocation = try dialect.replyInvocation(task: .triage(ReplySyntheticFixture.triage), schema: ReplySchemas.triage,
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
+        let invocation = try dialect.replyInvocation(task: .draft(request), schema: ReplySchemas.draft,
             stdin: input, directory: root.url, executable: file, environment: ["HOME": root.url.path])
         XCTAssertTrue(invocation.arguments.contains("skills.include_instructions=false"))
         let result = try await POSIXProcessRunner().run(invocation)
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, input)
         XCTAssertTrue(dialect.acceptsVersion("codex-cli 0.171.0-alpha.13"))
-        XCTAssertFalse(dialect.acceptsVersion("codex-cli 0.171.0-alpha.14"))
+        XCTAssertTrue(dialect.acceptsVersion("codex-cli 0.171.0-alpha.14"))
+        XCTAssertFalse(dialect.acceptsVersion("codex-cli 0.169.0"))
     }
     func testDeepSeekAdapterAgainstFakeExecutable() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
-        let response = String(decoding: try deepseekEvents(ReplySyntheticFixture.decision), as: UTF8.self)
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
+        let response = String(decoding: try deepseekEvents(ReplySyntheticFixture.draft), as: UTF8.self)
         let file = try root.script("""
         case "$*" in
           --version) echo '0.2.2-rc.1'; exit 0;;
@@ -128,9 +131,9 @@ final class ProcessRunnerTests: XCTestCase {
         MAILPIPE_SYNTHETIC_OUTPUT
         """)
         let adapter = DeepSeekHarnessAdapter(executable: file, dialect: dialect, temporaryRoot: root.url, environment: [:])
-        let output = try await adapter.run(.triage(ReplySyntheticFixture.triage),
+        let output = try await adapter.run(.draft(request),
                                            route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
-        XCTAssertEqual(try ReplyDecision.validated(output.content, for: ReplySyntheticFixture.triage).shouldReply, .yes)
+        XCTAssertFalse(try ReplyDraft.validated(output.content, for: request).body.isEmpty)
         XCTAssertEqual(output.inputTokens, 12)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.url.path), ["fake harness"])
     }

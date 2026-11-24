@@ -2,34 +2,8 @@ import XCTest
 @testable import MailpipeCore
 
 final class ReplyContractTests: XCTestCase {
-    func decision(_ reply: String = "yes") throws -> ReplyDecision {
-        let data = Data(String(decoding: ReplySyntheticFixture.decision, as: UTF8.self)
-            .replacingOccurrences(of: "\"should_reply\":\"yes\"", with: "\"should_reply\":\"\(reply)\"").utf8)
-        return try ReplyDecision.validated(data, for: ReplySyntheticFixture.triage)
-    }
-    func testServiceLevelsAndUnknownDoNotGenerate() throws {
-        XCTAssertEqual(ServiceLevel.default, .l2)
-        for reply in ["yes", "no", "unknown"] {
-            let value = try decision(reply)
-            XCTAssertEqual(ServiceLevel.l0.disposition(for: value), .none)
-            XCTAssertEqual(ServiceLevel.l1.disposition(for: value), reply == "yes" ? .needsReply : .none)
-            XCTAssertEqual(ServiceLevel.l2.disposition(for: value), reply == "yes" ? .generateDraft : .none)
-            for level in ServiceLevel.allCases {
-                if reply != "yes" || level != .l2 {
-                    XCTAssertThrowsError(try ReplyDraftRequest(requestID: "draft", triage: ReplySyntheticFixture.triage, decision: value, level: level))
-                }
-            }
-        }
-        XCTAssertThrowsError(try JSONDecoder().decode(ServiceLevel.self, from: Data("\"l3\"".utf8)))
-    }
-    func testDraftIsBoundToValidatedContent() throws {
-        let value = try decision()
-        let changed = ReplyTriageRequest(requestID: ReplySyntheticFixture.triage.requestID,
-            message: MailInput(messageRef: value.messageRef, subject: "Changed", body: "Changed"))
-        XCTAssertThrowsError(try ReplyDraftRequest(requestID: "draft", triage: changed, decision: value))
-        let unvalidated = try JSONDecoder().decode(ReplyDecision.self, from: ReplySyntheticFixture.decision)
-        XCTAssertThrowsError(try ReplyDraftRequest(requestID: "draft", triage: ReplySyntheticFixture.triage, decision: unvalidated))
-        let request = try ReplyDraftRequest(requestID: "synthetic-draft", triage: ReplySyntheticFixture.triage, decision: value)
+    func testDraftValidationRejectsForeignFieldsAndUnsafeKeys() throws {
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         XCTAssertFalse(try ReplyDraft.validated(ReplySyntheticFixture.draft, for: request).body.isEmpty)
         var row = try JSONSerialization.jsonObject(with: ReplySyntheticFixture.draft) as! [String: Any]
         for (key, bad) in [("request_id", "foreign"), ("triage_request_id", "foreign"), ("message_ref", "foreign"),
@@ -39,16 +13,32 @@ final class ReplyContractTests: XCTestCase {
             XCTAssertThrowsError(try ReplyDraft.validated(JSONSerialization.data(withJSONObject: row), for: request))
             row[key] = original
         }
-    }
-    func testTriageRejectsActionsAndInventedEvidence() throws {
-        var row = try JSONSerialization.jsonObject(with: ReplySyntheticFixture.decision) as! [String: Any]
-        for (key, bad) in [("request_id", "foreign"), ("message_ref", "foreign"), ("should_reply", "maybe"), ("action", "send")] {
-            let original = row[key]; row[key] = bad
-            XCTAssertThrowsError(try ReplyDecision.validated(JSONSerialization.data(withJSONObject: row), for: ReplySyntheticFixture.triage))
-            row[key] = original
+        XCTAssertThrowsError(try ReplyDraft.validated(Data(repeating: 32, count: 262_145), for: request)) {
+            XCTAssertEqual($0 as? MailpipeError, .outputLimit)
         }
-        row["evidence"] = [["field": "body", "text": "invented evidence"]]
-        XCTAssertThrowsError(try ReplyDecision.validated(JSONSerialization.data(withJSONObject: row), for: ReplySyntheticFixture.triage))
+        XCTAssertThrowsError(try ReplyDraft.validated(Data("```json\n{}\n```".utf8), for: request)) {
+            XCTAssertEqual($0 as? MailpipeError, .outputJSON)
+        }
+    }
+
+    func testInvalidInputBoundsAreRejected() throws {
+        let oversize = MailInput(messageRef: "m", subject: "s", body: String(repeating: "x", count: 16_385))
+        XCTAssertThrowsError(try ReplyDraftRequest(message: oversize))
+        let emptyRef = MailInput(messageRef: "", subject: "s", body: "body")
+        XCTAssertThrowsError(try ReplyDraftRequest(message: emptyRef))
+    }
+
+    func testRouteCannotUseUnknownOrDisallowedAccount() throws {
+        for route in [AccountRoute(accountID: nil, allowedHarnesses: [.deepseek]),
+                      AccountRoute(accountID: " ", allowedHarnesses: [.deepseek])] {
+            XCTAssertThrowsError(try route.authorize(.deepseek)) { XCTAssertEqual($0 as? MailpipeError, .unknownAccount) }
+        }
+        XCTAssertThrowsError(try AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek]).authorize(.codex)) {
+            XCTAssertEqual($0 as? MailpipeError, .routeNotAllowed)
+        }
+        XCTAssertThrowsError(try AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek], paused: true).authorize(.deepseek)) {
+            XCTAssertEqual($0 as? MailpipeError, .paused)
+        }
     }
 
     func testAutomaticDraftCanReturnAnExplicitBoundNoReply() throws {
@@ -87,23 +77,7 @@ final class ReplyContractTests: XCTestCase {
         draft["body"] = " "
         XCTAssertThrowsError(try ReplyDraftOutcome.validated(JSONSerialization.data(withJSONObject: draft), for: automatic))
     }
-    func testTriageReportsRejectedValidationStage() throws {
-        let request = ReplySyntheticFixture.triage
-        let valid = try XCTUnwrap(JSONSerialization.jsonObject(with: ReplySyntheticFixture.decision) as? [String: Any])
-        for (key, value, expected): (String, Any, MailpipeError) in [
-            ("request_id", "other", .outputReference), ("should_reply", true, .outputFields),
-            ("summary", [], .outputSummary), ("evidence", [["field": "body", "text": "invented"]], .outputEvidence)
-        ] {
-            var row = valid
-            row[key] = value
-            XCTAssertThrowsError(try ReplyDecision.validated(JSONSerialization.data(withJSONObject: row), for: request)) {
-                XCTAssertEqual($0 as? MailpipeError, expected)
-            }
-        }
-        XCTAssertThrowsError(try ReplyDecision.validated(Data("invalid".utf8), for: request)) {
-            XCTAssertEqual($0 as? MailpipeError, .outputJSON)
-        }
-    }
+
     func testDestinationEvidenceAndRoundTrip() throws {
         let value = try DataDestination(messageRef: "synthetic", runID: "run", taskKind: .triage, harness: .deepseek)
         XCTAssertNil(value.vendor)
@@ -118,4 +92,21 @@ final class ReplyContractTests: XCTestCase {
         row["vendor"] = "local"
         XCTAssertThrowsError(try JSONDecoder().decode(DataDestination.self, from: JSONSerialization.data(withJSONObject: row)))
     }
+
+#if canImport(Darwin)
+    func testDirectoryWatcherFiresOnFileCreation() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mailpipe-watch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fired = XCTestExpectation(description: "Watcher observed directory write")
+        fired.assertForOverFulfill = false
+        let watcher = try XCTUnwrap(DirectoryWatcher(directory: dir, label: "com.mailpipe.test.watch") {
+            fired.fulfill()
+        })
+        defer { watcher.stop() }
+        try Data("hello".utf8).write(to: dir.appendingPathComponent("item.txt"), options: .atomic)
+        let status = await XCTWaiter.fulfillment(of: [fired], timeout: 2)
+        XCTAssertEqual(status, .completed)
+    }
+#endif
 }

@@ -1,75 +1,7 @@
 import Foundation
 import MailpipeCore
 
-public enum IdentityQueryError: Error, Codable { case invalidScope, automation(Int), invalidResult }
-public struct IdentityQuery: Sendable {
-    public let accountName: String
-    public let mailboxName: String
-    public let messageID: String
-    public init(accountName: String, mailboxName: String, messageID: String) throws {
-        let values = [accountName, mailboxName, messageID]
-        guard values.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 998 && !$0.contains("\n") && !$0.contains("\r") }) else { throw IdentityQueryError.invalidScope }
-        self.accountName = accountName; self.mailboxName = mailboxName
-        self.messageID = messageID.trimmingCharacters(in: CharacterSet(charactersIn: "<> "))
-        guard !self.messageID.isEmpty else { throw IdentityQueryError.invalidScope }
-    }
-}
-
-/// Read-only evidence, never a locator authorized for a write operation.
-public struct IdentityQueryResult: Sendable {
-    public let status: String
-    public let accountID: String?
-    public let localMessageID: String?
-}
-
-@MainActor
-public enum AppleMailIdentityProbe {
-    // All external strings are Apple event arguments, never interpolated into source.
-    public static let scriptSource = """
-    on probe(accountName, mailboxName, targetID)
-        with timeout of 15 seconds
-            tell application id "com.apple.mail"
-                set accountMatches to every account whose name is accountName
-                if (count of accountMatches) is not 1 then return {"accountAmbiguous"}
-                set chosenAccount to item 1 of accountMatches
-                set mailboxMatches to every mailbox of chosenAccount whose name is mailboxName
-                if (count of mailboxMatches) is not 1 then return {"mailboxAmbiguous"}
-                set chosenMailbox to item 1 of mailboxMatches
-                set hits to (every message of chosenMailbox whose message id is targetID)
-                if (count of hits) is 0 then return {"missing"}
-                if (count of hits) is not 1 then return {"ambiguous"}
-                set hit to item 1 of hits
-                if (message id of hit) is not targetID then return {"changed"}
-                if (id of account of mailbox of hit) is not (id of chosenAccount) then return {"changed"}
-                return {"uniqueInScope", id of chosenAccount as text, id of hit as text}
-            end tell
-        end timeout
-    end probe
-    """
-    public static func run(_ query: IdentityQuery) throws -> IdentityQueryResult {
-#if !os(macOS)
-        throw IdentityQueryError.invalidResult
-#else
-        guard let script = NSAppleScript(source: scriptSource) else { throw IdentityQueryError.invalidResult }
-        var error: NSDictionary?
-        let event = NSAppleEventDescriptor(eventClass: 0x61736372, eventID: 0x70736272,
-            targetDescriptor: nil, returnID: -1, transactionID: 0)
-        event.setParam(NSAppleEventDescriptor(string: "probe"), forKeyword: 0x736E616D)
-        let arguments = NSAppleEventDescriptor.list()
-        for (index, value) in [query.accountName, query.mailboxName, query.messageID].enumerated() {
-            arguments.insert(NSAppleEventDescriptor(string: value), at: index + 1)
-        }
-        event.setParam(arguments, forKeyword: 0x2D2D2D2D)
-        let result = script.executeAppleEvent(event, error: &error)
-        if let error { throw IdentityQueryError.automation((error[NSAppleScript.errorNumber] as? Int) ?? -1) }
-        guard let status = result.atIndex(1)?.stringValue,
-              ["accountAmbiguous", "mailboxAmbiguous", "missing", "ambiguous", "changed", "uniqueInScope"].contains(status),
-              result.numberOfItems == (status == "uniqueInScope" ? 3 : 1) else { throw IdentityQueryError.invalidResult }
-        return IdentityQueryResult(status: status, accountID: result.atIndex(2)?.stringValue,
-                                   localMessageID: result.atIndex(3)?.stringValue)
-#endif
-    }
-}
+public enum IdentityQueryError: Error, Codable, Equatable, Sendable { case invalidScope, automation(Int), invalidResult }
 
 /// Production read-only identity resolution. A match includes full normalized RFC822 source,
 /// so a Message-ID collision cannot authorize unrelated content.
@@ -101,52 +33,6 @@ public enum AppleMailReplyIdentity {
         error "Mailbox hierarchy too deep" number -2700
     end pathForBox
     """
-    /// Metadata-only scope gate. It never requests message source or content.
-    public static let membershipScript = """
-    \(mailboxPathScript)
-    on inAuthorizedInbox(accountID, mailboxName, targetID, expectedSubject, mailboxPath)
-        with timeout of 15 seconds
-            tell application id "com.apple.mail"
-                set accountsFound to every account whose id is accountID
-                if (count of accountsFound) is not 1 then return {"unknown"}
-                set folders to {}
-                repeat with box in every mailbox of inbox
-                    if (id of account of box) is accountID then
-                        if ((count of mailboxPath) is 0 and (name of box) is mailboxName) or (my pathForBox(box)) is mailboxPath then set end of folders to contents of box
-                    end if
-                end repeat
-                if (count of folders) is not 1 then return {"unknown"}
-                set hits to every message of item 1 of folders whose message id is targetID
-                if (count of hits) is 0 then
-                    repeat with otherBox in every mailbox of item 1 of accountsFound
-                        set otherHits to every message of otherBox whose message id is targetID
-                        repeat with otherHit in otherHits
-                            if (subject of otherHit) is expectedSubject then return {"excluded"}
-                        end repeat
-                    end repeat
-                    return {"unknown"}
-                end if
-                if (count of hits) is not 1 then return {"excluded"}
-                set hit to item 1 of hits
-                if (subject of hit) is not expectedSubject then return {"excluded"}
-                if (junk mail status of hit) then return {"excluded"}
-                if (id of account of mailbox of hit) is not accountID then return {"excluded"}
-                return {"included"}
-            end tell
-        end timeout
-    end inAuthorizedInbox
-    """
-    public static func isInAuthorizedInbox(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil) throws -> Bool? {
-#if !os(macOS)
-        throw IdentityQueryError.invalidResult
-#else
-        guard [accountID, mailboxName, messageID, subject].allSatisfy({ !$0.isEmpty && $0.utf8.count <= 2048 }) else { throw IdentityQueryError.invalidScope }
-        let result = try call(source: membershipScript, handler: "inAuthorizedInbox", arguments: [accountID, mailboxName, messageID, subject], path: mailboxPath ?? [])
-        guard result.numberOfItems == 1, let status = result.atIndex(1)?.stringValue,
-              ["included", "excluded", "unknown"].contains(status) else { throw IdentityQueryError.invalidResult }
-        return status == "unknown" ? nil : status == "included"
-#endif
-    }
     public static let catalogScript = """
     \(mailboxPathScript)
     on listMailboxes()

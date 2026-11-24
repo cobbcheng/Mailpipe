@@ -23,10 +23,10 @@ struct MailpipeM0 {
                 let session = try OnboardingSession(store: store)
                 var draft = OnboardingDraft(); draft.step = 2; draft.executable = tool.executable.path; draft.harnessKind = tool.kind
                 draft.openCodeModel = tool.openCodeModel
-                try session.save(draft)
-                _ = try session.beginTest(); try await session.testPipeline.pump()
-                guard let result = try session.testResult(), result.state == .draftReady,
-                      try store.settings().permission == nil else { throw MailpipeError.invalidInput }
+                try await session.save(draft)
+                _ = try await session.beginTest(); try await session.testPipeline.pump()
+                guard let result = try await session.testResult(), result.state == .draftReady,
+                      try await store.settings().permission == nil else { throw MailpipeError.invalidInput }
                 print("PASS: onboarding synthetic test; calls=\(result.runs.count); draft persisted; active policy unchanged; no Mail access")
                 for run in result.runs {
                     print("\(run.destination.taskKind.rawValue): inputTokens=\(run.inputTokens.map(String.init) ?? "unknown") outputTokens=\(run.outputTokens.map(String.init) ?? "unknown") inputCharacters=\(run.inputCharacters.map(String.init) ?? "unknown") outputCharacters=\(run.outputCharacters.map(String.init) ?? "unknown") actualCost=unknown")
@@ -35,8 +35,8 @@ struct MailpipeM0 {
                 let (tool, root) = try syntheticTarget(args)
                 let store = try PipelineStore(directory: root)
                 let pipeline = ReplyPipeline(store: store, inbox: try CaptureInbox(directory: root.appendingPathComponent("inbox")), resolve: { _, _ in nil })
-                try pipeline.updateSettings { $0.executable = tool.executable.path; $0.harnessKind = tool.kind; $0.openCodeModel = tool.openCodeModel }
-                _ = try pipeline.enqueueSynthetic()
+                try await pipeline.updateSettings { $0.executable = tool.executable.path; $0.harnessKind = tool.kind; $0.openCodeModel = tool.openCodeModel }
+                _ = try await pipeline.enqueueSynthetic()
                 print("PASS: synthetic input persisted; no model or Mail call; open the App with --pipeline-directory pointing to this directory to resume")
             case "inspect":
                 guard args.count == 3, let kind = HarnessKind(rawValue: args[1]), args[2].hasPrefix("/") else {
@@ -45,8 +45,7 @@ struct MailpipeM0 {
                 let path = URL(fileURLWithPath: args[2])
                 let report = try await HarnessInstallation(kind: kind, executable: path).inspect()
                 print("\(kind.displayName): \(report.version)")
-                guard report.versionSupported else { throw MailpipeError.unsupportedVersion }
-                print("Headless flags: \(report.supportsHeadlessRun ? "available" : "missing: " + report.missingFlags.joined(separator: ", "))")
+                print("Headless flags: \(report.supportsHeadlessRun ? "available" : (report.versionSupported ? "missing: " + report.missingFlags.joined(separator: ", ") : "unsupported version"))")
                 print(report.realMailStatus)
             case nil, "--help", "-h":
                 print("mailpipe-m0 discover | inspect <dsh|claude|opencode|openclaw|hermes|codex> </absolute/path>\nonboarding-probe [dsh|claude|opencode|openclaw|hermes|codex] </absolute/tool> </new/private/directory> [provider/model] tests one synthetic draft.\npipeline-seed [dsh|claude|opencode|openclaw|hermes|codex] </absolute/tool> </new/private/directory> [provider/model] persists one fixed synthetic input.")

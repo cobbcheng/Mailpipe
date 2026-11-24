@@ -10,7 +10,10 @@ public struct HermesDialect: ReplyHarnessDialect {
     public var requiredFlags: [String] {
         ["enabled_toolsets", "skip_context_files", "skip_memory", "skip_background_review"]
     }
-    public func acceptsVersion(_ version: String) -> Bool { version == "Hermes Agent 0.23.2" }
+    public func acceptsVersion(_ version: String) -> Bool {
+        SemVer.matchesBanner(version, pattern: #"^Hermes Agent ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$"#,
+                             minimum: SemVer(major: 0, minor: 23, patch: 2), major: 0)
+    }
 
     public func prepare(directory: URL, executable: URL, environment: [String: String]) throws -> [String: String] {
         guard let home = environment["HOME"], home.hasPrefix("/") else { throw MailpipeError.authRequired }
@@ -46,7 +49,9 @@ public struct HermesDialect: ReplyHarnessDialect {
 
     public func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                                 executable: URL, environment: [String: String]) throws -> ProcessInvocation {
-        if case .draft(let request) = task, request.approvedPullRequest != nil { throw MailpipeError.unsafeCapability }
+        if case .draft(let request) = task, let context = request.externalContext, !supports(context) {
+            throw MailpipeError.unsafeCapability
+        }
         return try ProcessInvocation(executable: executable, arguments: runtimeArguments([]), stdin: stdin,
                                      workingDirectory: directory, environment: environment, timeout: 120)
     }

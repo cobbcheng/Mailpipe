@@ -8,7 +8,8 @@ public struct DeepSeekHarnessDialect: HarnessDialect {
     public var helpArguments: [String] { ["--profile", "headless", "--help"] }
     public var requiredFlags: [String] { ["--json", "--permission-mode", "--approval-policy"] }
     public func acceptsVersion(_ version: String) -> Bool {
-        version == "0.2.2-rc.1" || version == "0.2.2-rc.5"
+        SemVer.matchesBanner(version, pattern: #"^([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$"#,
+                             minimum: SemVer(major: 0, minor: 2, patch: 2, prerelease: ["rc", "1"]), major: 0, minor: 2)
     }
     public func prepare(directory: URL, executable: URL, environment: [String: String]) throws -> [String: String] {
         let home = directory.appendingPathComponent("dsh-home", isDirectory: true)
@@ -158,14 +159,21 @@ public struct DeepSeekEnvelope: Sendable {
 }
 
 extension DeepSeekHarnessDialect: ReplyHarnessDialect {
+    public func supports(_ context: DraftExternalContext) -> Bool {
+        switch context {
+        case .gitHubPullRequest: true
+        }
+    }
+
     public func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                                 executable: URL, environment: [String: String]) throws -> ProcessInvocation {
         let schemaFile = directory.appendingPathComponent("response-schema.json")
         try Data(schema.utf8).write(to: schemaFile, options: .atomic)
         var environment = environment
         environment.removeValue(forKey: "MAILPIPE_PR_REVIEW")
-        if case .draft(let request) = task, let target = request.pullRequestReviewTarget {
-            try configurePullRequest(target, confirmed: request.approvedPullRequest == target, directory: directory)
+        if case .draft(let request) = task,
+           case .gitHubPullRequest(let target, let authenticated)? = request.externalContext {
+            try configurePullRequest(target, confirmed: authenticated, directory: directory)
             environment["MAILPIPE_PR_REVIEW"] = "1"
         }
         return ProcessInvocation(executable: executable, arguments: arguments(schemaFile: schemaFile),
@@ -175,8 +183,8 @@ extension DeepSeekHarnessDialect: ReplyHarnessDialect {
     public func replyOutput(_ stdout: Data, task: ReplyModelTask, inputCharacters: Int, directory: URL) throws -> ReplyModelOutput {
         let review: Bool
         switch task {
-        case .draft(let request): review = request.pullRequestReviewTarget != nil
-        case .triage: review = false
+        case .draft(let request):
+            if case .gitHubPullRequest? = request.externalContext { review = true } else { review = false }
         }
         let envelope = try decodeEnvelope(stdout, review: review)
         return ReplyModelOutput(content: envelope.content, inputTokens: envelope.inputTokens, outputTokens: envelope.outputTokens,

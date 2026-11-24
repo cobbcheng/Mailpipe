@@ -30,14 +30,14 @@ extension ReplyPipeline {
 
     /// Looking up the original never starts a run. Generation requires the version of the displayed offer.
     public func handleComposePanelRequest(_ request: ComposePanelRequest,
-        prepareRecord: @escaping @MainActor @Sendable (String) -> Bool = { _ in true },
-        isActive: @escaping @MainActor @Sendable () -> Bool) async -> ComposePanelResponse {
+        prepareRecord: @escaping @Sendable (String) async -> Bool = { _ in true },
+        isActive: @escaping @Sendable () async -> Bool) async -> ComposePanelResponse {
         do {
-            guard !Task.isCancelled, isActive() else { return .unavailable }
-            let lookup: @MainActor @Sendable () throws -> ComposeLookup? = { [self] in
-                try composeLookup(for: request, prepareRecord: prepareRecord)
+            guard !Task.isCancelled, await isActive() else { return .unavailable }
+            let lookup: @Sendable () async throws -> ComposeLookup? = { [self] in
+                try await self.composeLookup(for: request, prepareRecord: prepareRecord)
             }
-            guard let result = try lookup() else {
+            guard let result = try await lookup() else {
                 switch request.action {
                 case .findDrafts: return .draftChoices([])
                 case .lookup, .verifiedLookup: return .noDraft
@@ -49,8 +49,8 @@ extension ReplyPipeline {
             case let .response(response): return response
             case let .context(found): context = found
             }
-            let current: @MainActor @Sendable () throws -> ComposeContext? = {
-                guard case let .context(latest) = try lookup() else { return nil }
+            let current: @Sendable () async throws -> ComposeContext? = {
+                guard case let .context(latest) = try await lookup() else { return nil }
                 return latest
             }
             switch request.action {
@@ -67,7 +67,7 @@ extension ReplyPipeline {
             case let .regenerate(version):
                 guard let item = context.item, case let .ready(suggestion) = context.response, version == suggestion.version else { return .changed }
                 return try await regenerateSuggestion(for: request, context: context, item: item) {
-                    guard !Task.isCancelled, isActive(), let latest = try current(), case .ready = latest.response,
+                    guard !Task.isCancelled, await isActive(), let latest = try await current(), case .ready = latest.response,
                           latest.version == version else { throw PipelineError.revoked }
                 }
             }
@@ -75,8 +75,8 @@ extension ReplyPipeline {
         catch { return .failed }
     }
 
-    private func composeLookup(for request: ComposePanelRequest, prepareRecord: (String) -> Bool) throws -> ComposeLookup? {
-        let settings = try store.settings()
+    private func composeLookup(for request: ComposePanelRequest, prepareRecord: @Sendable (String) async -> Bool) async throws -> ComposeLookup? {
+        let settings = try await store.settings()
         guard !settings.paused, let executable = settings.executable, executable.hasPrefix("/"),
               let permission = settings.permission else { return nil }
         if settings.harnessKind == .opencode {
@@ -84,10 +84,10 @@ extension ReplyPipeline {
         }
         if case let .findDrafts(subjectDigest) = request.action {
             guard request.identity == nil else { return nil }
-            return .response(.draftChoices(try store.composeDraftChoices(subjectDigest: subjectDigest, settings: settings, now: Date())))
+            return .response(.draftChoices(try await store.composeDraftChoices(subjectDigest: subjectDigest, settings: settings, now: Date())))
         }
         guard let identity = request.identity else { return nil }
-        let candidates = try store.composeCandidates(messageIDDigest: identity.messageIDDigest)
+        let candidates = try await store.composeCandidates(messageIDDigest: identity.messageIDDigest)
         // Resolve identity before eligibility. Discarded or revoked duplicates cannot break a tie.
         var matches: [StoredReply] = []
         for item in candidates {
@@ -101,13 +101,13 @@ extension ReplyPipeline {
         guard matches.count <= 1 else { return nil }
         let item: StoredReply?
         if let matched = matches.first?.id {
-            guard prepareRecord(matched), let record = try store.record(matched),
+            guard await prepareRecord(matched), let record = try await store.record(matched),
                   record.isAuthorizedForCompose(settings: settings, now: Date()) else { return nil }
             item = record
         } else {
             guard request.action != .verifiedLookup, candidates.isEmpty, permission.delivery == .mailKit,
                   permission.exactSubject.map({ ComposeMessageIdentity.digest(forSubject: $0) == identity.subjectDigest }) ?? true,
-                  try store.canAddComposeOriginal() else { return nil }
+                  try await store.canAddComposeOriginal() else { return nil }
             item = nil
         }
         let installation = HarnessInstallation(kind: settings.harnessKind, executable: URL(fileURLWithPath: executable),
@@ -132,9 +132,11 @@ extension ReplyPipeline {
     }
 
     private func generateFirstSuggestion(for panel: ComposePanelRequest, original: ComposePanelOriginal?, context: ComposeContext,
-        current: @escaping @MainActor @Sendable () throws -> ComposeContext?,
-        isActive: @escaping @MainActor @Sendable () -> Bool) async throws -> ComposePanelResponse {
-        guard let permission = context.settings.permission else { return .unavailable }
+        current: @escaping @Sendable () async throws -> ComposeContext?,
+        isActive: @escaping @Sendable () async -> Bool) async throws -> ComposePanelResponse {
+        guard let permission = context.settings.permission, let generationKey = panel.identity?.messageIDDigest else { return .unavailable }
+        guard activeComposeGenerations.insert(generationKey).inserted else { return .changed }
+        defer { activeComposeGenerations.remove(generationKey) }
         var item: StoredReply
         if let stored = context.item {
             guard original == nil, !stored.runs.contains(where: { $0.destination.runID == panel.id.uuidString }) else { return .changed }
@@ -154,45 +156,45 @@ extension ReplyPipeline {
             item.displayBody = original.displayBody
             item.correspondents = MailCorrespondents(sender: original.sender, recipients: original.to, cc: original.cc)
         }
-        guard !Task.isCancelled, isActive() else { return .unavailable }
+        guard !Task.isCancelled, await isActive() else { return .unavailable }
         item.error = nil
-        item.level = context.settings.level
         item.revision = context.settings.revision
         let source = item.input
         let runID = panel.id.uuidString
-        let task = try ReplyDraftRequest(message: source, replyInstructions: context.settings.replyInstructions, allowsPullRequestReview: false)
+        let task = try ReplyDraftRequest(message: source, replyInstructions: context.settings.replyInstructions)
         try await generateDraft(for: item, request: task, installation: context.installation, runID: runID, confirmStart: {
-            // Check and reserve on the same actor turn, including after scope revalidation.
-            guard !Task.isCancelled, isActive(), let latest = try current(), latest.version == context.version,
+            // Check and reserve before saving, including after scope revalidation.
+            guard !Task.isCancelled, await isActive(), let latest = try await current(), latest.version == context.version,
                   case .canGenerate = latest.response else { throw PipelineError.revoked }
         }) {
-            guard !Task.isCancelled, isActive(), let latest = try current(),
+            guard !Task.isCancelled, await isActive(), let latest = try await current(),
                   latest.settings.revision == context.settings.revision, latest.installation.id == context.installation.id,
                   let record = latest.item, record.input == source, record.state == .drafting, record.draftData == nil,
                   record.editedBody == nil, record.editedSubject == nil, record.runs.last?.destination.runID == runID
             else { throw PipelineError.revoked }
         }
-        guard !Task.isCancelled, isActive(), let latest = try current(), latest.item?.id == item.id else { return .changed }
+        guard !Task.isCancelled, await isActive(), let latest = try await current(), latest.item?.id == item.id else { return .changed }
         if case .ready = latest.response { return latest.response }
         return latest.item?.error == PipelineError.revoked.rawValue ? .changed : .failed
     }
 
     private func regenerateSuggestion(for panel: ComposePanelRequest, context: ComposeContext, item original: StoredReply,
-                                      authorize: @escaping @MainActor @Sendable () throws -> Void) async throws -> ComposePanelResponse {
+                                      authorize: @escaping @Sendable () async throws -> Void) async throws -> ComposePanelResponse {
+        guard activeComposeRegenerations.insert(original.id).inserted else { return .changed }
+        defer { activeComposeRegenerations.remove(original.id) }
         var item = original
         let runID = panel.id.uuidString
         guard !item.isRegeneratingInCompose, !item.runs.contains(where: { $0.finishedAt == nil }),
               item.composeRegenerationRuns?.contains(where: { $0.destination.runID == runID }) != true else { return .changed }
         guard !item.regenerationLimitReached else { return .regenerationLimitReached }
-        let task = try ReplyDraftRequest(message: item.input, replyInstructions: context.settings.replyInstructions,
-                                         allowsPullRequestReview: false)
+        let task = try ReplyDraftRequest(message: item.input, replyInstructions: context.settings.replyInstructions)
         let kind = context.installation.kind
         let destination = try DataDestination(messageRef: item.id, runID: runID, taskKind: .draft, harness: kind)
         var receipt = PipelineRun(destination: destination, startedAt: Date())
         var runs = item.composeRegenerationRuns ?? []
         runs.append(receipt)
         item.composeRegenerationRuns = runs
-        try store.save(item)
+        try await store.save(item)
         let response: ComposePanelResponse
         do {
             let route = item.mailKitBody == true
@@ -201,11 +203,11 @@ extension ReplyPipeline {
             if item.mailKitBody != true {
                 // Scope-based captures require fresh proof that the original is still in the authorized inbox.
                 _ = try await resolveComposeOriginal(item, settings: context.settings)
-                try authorize()
+                try await authorize()
             }
             let output = try await model(context.installation).run(.draft(task), route: route) { try await authorize() }
             try receipt.record(output, installation: context.installation)
-            try authorize()
+            try await authorize()
             let result = try ReplyDraft.validated(output.content, for: task)
             response = .ready(ComposePanelSuggestion(body: result.body, version: context.version,
                                                       agentName: context.agentName))
@@ -216,11 +218,11 @@ extension ReplyPipeline {
         }
         receipt.finishedAt = Date()
         // The user may have edited or discarded the workbench draft while the agent ran.
-        guard var current = try store.record(item.id), var currentRuns = current.composeRegenerationRuns,
+        guard var current = try await store.record(item.id), var currentRuns = current.composeRegenerationRuns,
               let index = currentRuns.firstIndex(where: { $0.destination.runID == runID }) else { return .changed }
         currentRuns[index] = receipt
         current.composeRegenerationRuns = currentRuns
-        try store.save(current)
+        try await store.save(current)
         return response
     }
 }

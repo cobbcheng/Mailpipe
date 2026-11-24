@@ -350,12 +350,14 @@ private struct ReplyPromptSettings: View {
                         .disabled(prompt.wrappedValue.isEmpty)
                     Spacer()
                     Button(L("Save prompt")) {
-                        do {
-                            try model.saveReplyInstructions(trimmed)
-                            edit = nil
-                            feedback = L("Reply prompt saved.")
-                        } catch {
-                            feedback = L("Could not save the reply prompt. Try again.")
+                        Task {
+                            do {
+                                try await model.saveReplyInstructions(trimmed)
+                                edit = nil
+                                feedback = L("Reply prompt saved.")
+                            } catch {
+                                feedback = L("Could not save the reply prompt. Try again.")
+                            }
                         }
                     }
                     .keyboardShortcut("s", modifiers: .command)

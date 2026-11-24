@@ -12,7 +12,8 @@ public struct ClaudeCodeDialect: ReplyHarnessDialect {
          "--output-format", "--system-prompt"]
     }
     public func acceptsVersion(_ version: String) -> Bool {
-        ["2.1.296 (Claude Code)", "2.1.330 (Claude Code)"].contains(version)
+        SemVer.matchesBanner(version, pattern: #"^([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?) \(Claude Code\)$"#,
+                             minimum: SemVer(major: 2, minor: 1, patch: 296), major: 2)
     }
 
     public func prepare(directory: URL, executable: URL, environment: [String: String]) throws -> [String: String] {
@@ -24,7 +25,9 @@ public struct ClaudeCodeDialect: ReplyHarnessDialect {
 
     public func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                                 executable: URL, environment: [String: String]) throws -> ProcessInvocation {
-        if case .draft(let request) = task, request.approvedPullRequest != nil { throw MailpipeError.unsafeCapability }
+        if case .draft(let request) = task, let context = request.externalContext, !supports(context) {
+            throw MailpipeError.unsafeCapability
+        }
         guard let policyFile = Bundle.module.url(forResource: "reply-policy", withExtension: "md", subdirectory: "Resources")
             else { throw MailpipeError.unsafeCapability }
         let policy = try String(contentsOf: policyFile, encoding: .utf8)

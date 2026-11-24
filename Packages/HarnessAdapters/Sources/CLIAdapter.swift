@@ -1,5 +1,57 @@
 import Foundation
 import MailpipeCore
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+
+/// Caches successful CLI capability probes keyed by executable identity (resolved path, inode,
+/// size, and modification timestamp) so repeated drafts avoid spawning --version and --help.
+actor InspectionCache {
+    static let shared = InspectionCache()
+
+    struct Key: Hashable, Sendable {
+        let kind: HarnessKind
+        let resolvedPath: String
+        let inode: UInt64
+        let size: Int64
+        let mtimeSec: Int
+        let mtimeNsec: Int
+
+        static func fingerprint(kind: HarnessKind, executable: URL) -> Key? {
+            let resolved = executable.resolvingSymlinksInPath().path
+            var info = stat()
+            guard stat(resolved, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
+#if canImport(Darwin)
+            let sec = info.st_mtimespec.tv_sec
+            let nsec = info.st_mtimespec.tv_nsec
+#else
+            let sec = info.st_mtim.tv_sec
+            let nsec = info.st_mtim.tv_nsec
+#endif
+            return Key(kind: kind, resolvedPath: resolved, inode: UInt64(info.st_ino),
+                       size: Int64(info.st_size), mtimeSec: sec, mtimeNsec: nsec)
+        }
+    }
+
+    private var reports: [Key: CapabilityReport] = [:]
+
+    func get(_ key: Key) -> CapabilityReport? {
+        reports[key]
+    }
+
+    func set(_ report: CapabilityReport, for key: Key) {
+        if reports.count >= 64 { reports.removeAll(keepingCapacity: true) }
+        reports[key] = report
+    }
+
+    func reset() {
+        reports.removeAll()
+    }
+}
 
 public struct CLIAdapter<Dialect: HarnessDialect>: Sendable {
     public let executable: URL
@@ -7,12 +59,19 @@ public struct CLIAdapter<Dialect: HarnessDialect>: Sendable {
     private let runner: any ProcessRunning
     private let temporaryRoot: URL
     private let environment: [String: String]
+    private let cache: InspectionCache?
 
     public init(executable: URL, dialect: Dialect, runner: any ProcessRunning = POSIXProcessRunner(),
                 temporaryRoot: URL = FileManager.default.temporaryDirectory,
                 environment: [String: String] = ProbeEnvironment.minimal()) {
+        self.init(executable: executable, dialect: dialect, runner: runner, temporaryRoot: temporaryRoot,
+                  environment: environment, cache: .shared)
+    }
+
+    init(executable: URL, dialect: Dialect, runner: any ProcessRunning,
+         temporaryRoot: URL, environment: [String: String], cache: InspectionCache?) {
         self.executable = executable; self.dialect = dialect; self.runner = runner
-        self.temporaryRoot = temporaryRoot; self.environment = environment
+        self.temporaryRoot = temporaryRoot; self.environment = environment; self.cache = cache
     }
 
     private func withWorkspace<T: Sendable>(_ operation: (URL) async throws -> T) async throws -> T {
@@ -23,8 +82,12 @@ public struct CLIAdapter<Dialect: HarnessDialect>: Sendable {
         return try await operation(directory)
     }
 
-    public func inspect() async throws -> CapabilityReport {
-        try await withWorkspace { directory in
+    public func inspect(bypassCache: Bool = false) async throws -> CapabilityReport {
+        let cacheKey = !bypassCache ? InspectionCache.Key.fingerprint(kind: dialect.kind, executable: executable) : nil
+        if let cacheKey, let cache, let cached = await cache.get(cacheKey) {
+            return cached
+        }
+        let report: CapabilityReport = try await withWorkspace { directory in
             let environment = try dialect.prepare(directory: directory, executable: executable, environment: self.environment)
             let version = try await runner.run(dialect.probeInvocation(executable: executable, arguments: ["--version"],
                 directory: directory, environment: environment, outputLimit: 16_384))
@@ -49,14 +112,18 @@ public struct CLIAdapter<Dialect: HarnessDialect>: Sendable {
             return CapabilityReport(installation: installation, version: banner, versionSupported: true,
                                     missingFlags: dialect.requiredFlags.filter { !tokens.contains($0) })
         }
+        if let cacheKey, let cache, report.supportsHeadlessRun {
+            await cache.set(report, for: cacheKey)
+        }
+        return report
     }
 
 }
 
 public enum ReplyModelTask: Sendable {
-    case triage(ReplyTriageRequest)
     case draft(ReplyDraftRequest)
 }
+
 public struct ReplyModelOutput: Sendable {
     public let content: Data
     public let inputTokens: Int?
@@ -72,12 +139,14 @@ public struct ReplyModelOutput: Sendable {
         self.inputCharacters = inputCharacters; self.outputCharacters = outputCharacters
     }
 }
+
 public protocol ReplyModelRunning: Sendable {
     func run(_ task: ReplyModelTask, route: AccountRoute,
              authorize: @escaping @Sendable () async throws -> Void) async throws -> ReplyModelOutput
 }
 
 public protocol ReplyHarnessDialect: HarnessDialect {
+    func supports(_ context: DraftExternalContext) -> Bool
     func runFailure(_ result: ProcessOutput) -> MailpipeError
     func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                          executable: URL, environment: [String: String]) throws -> ProcessInvocation
@@ -85,6 +154,7 @@ public protocol ReplyHarnessDialect: HarnessDialect {
 }
 
 public extension ReplyHarnessDialect {
+    func supports(_ context: DraftExternalContext) -> Bool { false }
     func runFailure(_ result: ProcessOutput) -> MailpipeError {
         classifyFailure(result.stderr + result.stdout)
     }
@@ -97,9 +167,11 @@ extension CLIAdapter: ReplyModelRunning where Dialect: ReplyHarnessDialect {
         try route.authorize(dialect.kind)
         let payload: Data, schema: String
         switch task {
-        case .triage(let request): try request.validate(); payload = try JSONEncoder().encode(request); schema = ReplySchemas.triage
         case .draft(let request):
             try request.validate()
+            if let context = request.externalContext, !dialect.supports(context) {
+                throw MailpipeError.unsafeCapability
+            }
             payload = try JSONEncoder().encode(request)
             schema = request.allowsNoReply ? ReplySchemas.automaticDraft : ReplySchemas.draft
         }

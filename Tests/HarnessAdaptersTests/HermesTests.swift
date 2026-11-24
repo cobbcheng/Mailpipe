@@ -18,17 +18,19 @@ final class HermesTests: XCTestCase {
         XCTAssertEqual(environment["HERMES_SAFE_MODE"], "1")
         XCTAssertEqual(environment["HERMES_SINGLE_QUERY_SESSION"], "1")
         XCTAssertNotEqual(environment["HOME"], root.url.path)
-        var request = try ReplyDraftRequest(message: ReplySyntheticFixture.triage.message)
+        var request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         let stdin = Data("synthetic".utf8)
         let call = try dialect.replyInvocation(task: .draft(request), schema: "{}", stdin: stdin, directory: root.url,
                                                executable: cli, environment: environment)
         XCTAssertEqual(call.executable, cli)
         XCTAssertEqual(call.stdin, stdin)
         XCTAssertEqual(call.arguments.prefix(2), ["--run-module", "cProfile"])
-        request.approvedPullRequest = "https://github.com/example/project/pull/1"
+        request.externalContext = .gitHubPullRequest(url: "https://github.com/example/project/pull/1", authenticated: true)
         XCTAssertThrowsError(try dialect.replyInvocation(task: .draft(request), schema: "{}", stdin: stdin, directory: root.url,
                                                          executable: cli, environment: environment))
-        XCTAssertFalse(dialect.acceptsVersion("Hermes Agent 0.23.3"))
+        XCTAssertTrue(dialect.acceptsVersion("Hermes Agent 0.23.3"))
+        XCTAssertFalse(dialect.acceptsVersion("Hermes Agent 0.23.1"))
+        XCTAssertFalse(dialect.acceptsVersion("Hermes Agent 1.0.0"))
     }
 
     func testRuntimeRejectsUnapprovedRequestsAndMapsProviderFailuresWithoutNetwork() async throws {
@@ -43,7 +45,7 @@ final class HermesTests: XCTestCase {
         ]
         for (scenario, expected, calls) in cases {
             let root = try TemporaryDirectory()
-            let task = ReplyModelTask.triage(ReplySyntheticFixture.triage)
+            let task = ReplyModelTask.draft(try ReplyDraftRequest(message: ReplySyntheticFixture.message))
             let python = URL(fileURLWithPath: "/usr/bin/python3")
             let call = try dialect.replyInvocation(task: task, schema: "{}", stdin: Data("synthetic".utf8),
                 directory: root.url, executable: python, environment: [:])

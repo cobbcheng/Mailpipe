@@ -9,13 +9,16 @@ import CSQLite
 #endif
 
 final class OpenCodeTests: XCTestCase {
-    private let task = ReplyModelTask.triage(ReplySyntheticFixture.triage)
     private let model = "fixture/test-chat"
     private let steps = [
         #"{"type":"step_start","sessionID":"session","part":{"type":"step-start","messageID":"message","sessionID":"session"}}"#,
         #"{"type":"text","sessionID":"session","part":{"type":"text","messageID":"message","sessionID":"session","text":"reply"}}"#,
         #"{"type":"step_finish","sessionID":"session","part":{"type":"step-finish","messageID":"message","sessionID":"session","reason":"stop","tokens":{"input":12,"output":4,"reasoning":6,"cache":{"read":2,"write":1}}}}"#
     ]
+
+    private func syntheticTask() throws -> ReplyModelTask {
+        .draft(try ReplyDraftRequest(message: ReplySyntheticFixture.message))
+    }
 
     private func installReceipt(in directory: URL) {
         var db: OpaquePointer?
@@ -31,6 +34,7 @@ final class OpenCodeTests: XCTestCase {
     func testReceiptMatchesAssistantAndPinnedModelAndAddsTokenBuckets() throws {
         let root = try TemporaryDirectory()
         installReceipt(in: root.url)
+        let task = try syntheticTask()
         let stream = Data(steps.joined(separator: "\n").utf8)
         let output = try OpenCodeDialect(model: model).replyOutput(stream, task: task, inputCharacters: 82, directory: root.url)
         XCTAssertEqual(output.actualModel, model)
@@ -47,6 +51,7 @@ final class OpenCodeTests: XCTestCase {
 
     func testRejectsIncompleteRepeatedToolAndForeignSteps() throws {
         let root = try TemporaryDirectory(), dialect = OpenCodeDialect()
+        let task = try syntheticTask()
         installReceipt(in: root.url)
         for lines in [Array(steps.dropLast()), [steps[0], steps[0], steps[1], steps[2]],
                       [steps[0], steps[1].replacingOccurrences(of: #""type":"text""#, with: #""type":"tool_use""#), steps[2]],
@@ -62,8 +67,11 @@ final class OpenCodeTests: XCTestCase {
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         let cli = root.url.appendingPathComponent("opencode")
         let dialect = OpenCodeDialect(model: model)
+        let task = try syntheticTask()
         XCTAssertTrue(dialect.acceptsVersion("opencode v2.3.0"))
-        XCTAssertFalse(dialect.acceptsVersion("opencode v2.3.1"))
+        XCTAssertTrue(dialect.acceptsVersion("opencode v2.3.1"))
+        XCTAssertFalse(dialect.acceptsVersion("opencode v2.2.9"))
+        XCTAssertFalse(dialect.acceptsVersion("opencode v3.0.0"))
         let stdin = Data("synthetic message".utf8)
         let call = try dialect.replyInvocation(task: task, schema: "{}", stdin: stdin, directory: work,
                                                executable: cli, environment: ["HOME": root.url.path])
@@ -77,7 +85,7 @@ final class OpenCodeTests: XCTestCase {
         XCTAssertThrowsError(try OpenCodeDialect().replyInvocation(task: .draft(ordinary), schema: "{}", stdin: stdin,
                                                                    directory: work, executable: cli, environment: [:]))
         var pr = ordinary
-        pr.approvedPullRequest = "https://github.com/example/project/pull/1"
+        pr.externalContext = .gitHubPullRequest(url: "https://github.com/example/project/pull/1", authenticated: true)
         XCTAssertThrowsError(try dialect.replyInvocation(task: .draft(pr), schema: "{}", stdin: stdin, directory: work,
                                                         executable: cli, environment: [:]))
         for bad in ["", "unknown", "/empty", "provider/", "provider/model#variant", "provider/m\nodel"] {

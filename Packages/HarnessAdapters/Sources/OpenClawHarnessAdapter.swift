@@ -10,7 +10,10 @@ public struct OpenClawDialect: ReplyHarnessDialect {
         ["--isolated", "--config-override", "--state-dir", "--cwd", "--message-file", "--model",
          "--thinking", "--code-mode", "--json", "--timeout"]
     }
-    public func acceptsVersion(_ version: String) -> Bool { version == "OpenClaw 2026.11.5 (e13cf15)" }
+    public func acceptsVersion(_ version: String) -> Bool {
+        SemVer.matchesBanner(version, pattern: #"^OpenClaw ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)(?: \([0-9a-fA-F]+\))?$"#,
+                             minimum: SemVer(major: 2026, minor: 11, patch: 5), major: 2026)
+    }
 
     public func prepare(directory: URL, executable: URL, environment: [String: String]) throws -> [String: String] {
         let manager = FileManager.default
@@ -35,7 +38,9 @@ public struct OpenClawDialect: ReplyHarnessDialect {
 
     public func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                                 executable: URL, environment: [String: String]) throws -> ProcessInvocation {
-        if case .draft(let request) = task, request.approvedPullRequest != nil { throw MailpipeError.unsafeCapability }
+        if case .draft(let request) = task, let context = request.externalContext, !supports(context) {
+            throw MailpipeError.unsafeCapability
+        }
         guard let config = Bundle.module.url(forResource: "openclaw-restricted", withExtension: "json", subdirectory: "Resources"),
               let policy = Bundle.module.url(forResource: "reply-policy", withExtension: "md", subdirectory: "Resources")
         else { throw MailpipeError.unsafeCapability }

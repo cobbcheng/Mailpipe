@@ -7,11 +7,12 @@ final class ReplyModelTests: XCTestCase {
     func testCodexRequiresCompletedTurnAndRejectsToolEvents() throws {
         let dialect = CodexCLIDialect()
         let root = try TemporaryDirectory()
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         let start = [#"{"type":"thread.started","thread_id":"fixture"}"#, #"{"type":"turn.started"}"#]
         let message = #"{"type":"item.completed","item":{"type":"agent_message","text":"{}"}}"#
         let end = #"{"type":"turn.completed","usage":{"input_tokens":8,"output_tokens":2}}"#
         func decode(_ events: [String]) throws -> ReplyModelOutput {
-            try dialect.replyOutput(Data(events.joined(separator: "\n").utf8), task: .triage(ReplySyntheticFixture.triage),
+            try dialect.replyOutput(Data(events.joined(separator: "\n").utf8), task: .draft(request),
                                     inputCharacters: 3, directory: root.url)
         }
         let output = try decode(start + [message, end])
@@ -22,14 +23,17 @@ final class ReplyModelTests: XCTestCase {
         XCTAssertThrowsError(try decode(start + [#"{"type":"item.started","item":{"type":"command_execution"}}"#, message, end])) {
             XCTAssertEqual($0 as? MailpipeError, .unsafeCapability)
         }
-        XCTAssertFalse(dialect.acceptsVersion("codex-cli 0.169.2"))
+        XCTAssertTrue(dialect.acceptsVersion("codex-cli 0.169.1"))
+        XCTAssertTrue(dialect.acceptsVersion("codex-cli 0.171.0-alpha.14"))
+        XCTAssertFalse(dialect.acceptsVersion("codex-cli 0.169.0"))
+        XCTAssertFalse(dialect.acceptsVersion("codex-cli 1.0.0"))
     }
 
     func testRestrictedAdaptersDeliverEnglishHostInstructions() throws {
         let root = try TemporaryDirectory()
         let fake = root.url.appendingPathComponent("fake")
         let env = ["HOME": root.url.path]
-        let task = ReplyModelTask.draft(try ReplyDraftRequest(message: ReplySyntheticFixture.triage.message))
+        let task = ReplyModelTask.draft(try ReplyDraftRequest(message: ReplySyntheticFixture.message))
 
         let claude = try ClaudeCodeDialect().replyInvocation(task: task, schema: ReplySchemas.draft,
             stdin: Data(), directory: root.url, executable: fake, environment: env)
@@ -65,7 +69,7 @@ final class ReplyModelTests: XCTestCase {
         let draft = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ReplySchemas.draft.utf8)) as? NSDictionary)
         let instructions = "Use two sentences.\nDescribe https://github.com/example/sample/pull/42 as \"the proposal\"."
         for automatic in [false, true] {
-            let message = automatic ? MailInput(messageRef: "receipt", subject: "Payment received", body: "Your payment was received.") : ReplySyntheticFixture.triage.message
+            let message = automatic ? MailInput(messageRef: "receipt", subject: "Payment received", body: "Your payment was received.") : ReplySyntheticFixture.message
             let request = try ReplyDraftRequest(message: message, allowsNoReply: automatic,
                                                 replyInstructions: automatic ? instructions : nil)
             var result: [String: Any] = ["schema_version": 1, "request_id": request.requestID,
@@ -108,39 +112,43 @@ final class ReplyModelTests: XCTestCase {
             }
         }
     }
-    func testRegenerationWithALinkedPullRequestKeepsTheReaderDisabled() throws {
+
+    func testRegenerationWithoutExternalContextKeepsThePRReaderDisabled() throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
         let message = MailInput(messageRef: "example", subject: "Review", body: "https://github.com/example/sample/pull/42")
-        let draft = try ReplyDraftRequest(message: message, allowsPullRequestReview: false)
+        let draft = try ReplyDraftRequest(message: message)
         let invocation = try dialect.replyInvocation(task: .draft(draft), schema: ReplySchemas.draft, stdin: Data(),
             directory: root.url, executable: root.url.appendingPathComponent("fake"), environment: ["MAILPIPE_PR_REVIEW": "1"])
         XCTAssertNil(invocation.environment["MAILPIPE_PR_REVIEW"])
         let output = try dialect.replyOutput(deepseekEvents(Data("{}".utf8)), task: .draft(draft),
                                              inputCharacters: 0, directory: root.url)
         XCTAssertNil(output.readPullRequestDiff)
-        XCTAssertEqual(try ReplyDraftRequest(message: message).pullRequestReviewTarget, message.body)
+        XCTAssertEqual(GitHubPullRequestLink.first(in: message.body), message.body)
     }
 
     func testTypedReplyChecksLiveAuthorizationBeforeLaunchingModel() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         let runner = RecordingRunner(inspectionOutputs(dialect))
         let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("fake"), dialect: dialect,
             runner: runner, temporaryRoot: root.url)
         do {
-            _ = try await adapter.run(.triage(ReplySyntheticFixture.triage), route: AccountRoute(accountID: "test", allowedHarnesses: [.deepseek])) {
+            _ = try await adapter.run(.draft(request), route: AccountRoute(accountID: "test", allowedHarnesses: [.deepseek])) {
                 throw MailpipeError.paused
             }
             XCTFail("paused")
         } catch { XCTAssertEqual(error as? MailpipeError, .paused) }
         let calls = await runner.calls; XCTAssertEqual(calls.count, 2)
     }
+
     func testTypedReplyRetainsZeroToolEnvelopeAndStdinBoundary() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
-        let runner = RecordingRunner(inspectionOutputs(dialect) + [ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.decision))])
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
+        let runner = RecordingRunner(inspectionOutputs(dialect) + [ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.draft))])
         let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("fake"), dialect: dialect,
             runner: runner, temporaryRoot: root.url)
-        let output = try await adapter.run(.triage(ReplySyntheticFixture.triage), route: AccountRoute(accountID: "test", allowedHarnesses: [.deepseek])) {}
-        XCTAssertEqual(try ReplyDecision.validated(output.content, for: ReplySyntheticFixture.triage).shouldReply, .yes)
+        let output = try await adapter.run(.draft(request), route: AccountRoute(accountID: "test", allowedHarnesses: [.deepseek])) {}
+        XCTAssertFalse(try ReplyDraft.validated(output.content, for: request).body.isEmpty)
         let calls = await runner.calls
         XCTAssertEqual(calls.count, 3)
         let call = try XCTUnwrap(calls.last)

@@ -47,7 +47,7 @@
 | CLI 探测和调用 | `Packages/HarnessAdapters/Sources/CLIAdapter.swift` |
 | CLI 参数与包装解析 | 同目录 `DeepSeekHarnessAdapter.swift`、`CodexCLIAdapter.swift` |
 | 进程生命周期 | 同目录 `POSIXProcessRunner.swift` |
-| Bridge 边界 | `Packages/MailBridge/Sources/MailBridge.swift` |
+| Bridge 边界 | `Packages/MailBridge/Sources/MailReadBridge.swift`、`MailComposer.swift`、`IdentityQuery.swift` |
 | 无模型命令行检查 | `Tools/MailpipeM0/MailpipeM0.swift` |
 | 回归 | `Tests/`、`scripts/test.sh` |
 | 工程配置 | `scripts/generate-project.py`、`Package.swift` |
