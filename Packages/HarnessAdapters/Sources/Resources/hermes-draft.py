@@ -10,7 +10,14 @@ from pathlib import Path
 
 MODEL = "deepseek-flash"
 ENDPOINT = "https://api.deepseek.com"
-VERSION = "0.23.2"
+MIN_VERSION = (0, 23, 2)
+
+
+def _parse_version(raw):
+    core = raw.strip().split("-", 1)[0].split(".")
+    if len(core) != 3 or not all(part.isdigit() for part in core):
+        return None
+    return tuple(int(part) for part in core)
 
 
 def stop(code):
@@ -23,7 +30,8 @@ def stop(code):
 def run():
     from hermes_cli.version_info import get_version_info
     __version__ = get_version_info().display_version
-    if __version__ != VERSION:
+    parsed = _parse_version(__version__)
+    if parsed is None or parsed[0] != MIN_VERSION[0] or parsed < MIN_VERSION:
         raise ValueError("Unsupported Hermes version")
     if sys.argv[1:] == ["--version"]:
         return "Hermes Agent " + __version__

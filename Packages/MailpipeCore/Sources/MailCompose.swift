@@ -1,6 +1,6 @@
 import Foundation
 
-public enum MailComposeError: String, Error, Sendable, LocalizedError {
+public enum MailComposeError: String, Error, Codable, Sendable, LocalizedError {
     case unavailable, invalidRecipient, changedSinceConfirmation, alreadyAttempted, outcomeUnknown
     public var errorDescription: String? { rawValue }
 }

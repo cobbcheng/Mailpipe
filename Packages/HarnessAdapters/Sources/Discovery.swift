@@ -10,20 +10,20 @@ public struct HarnessInstallation: Identifiable, Sendable, Equatable {
         self.kind = kind; self.executable = executable; self.openCodeModel = openCodeModel
     }
 
-    public func inspect() async throws -> CapabilityReport {
+    public func inspect(bypassCache: Bool = true) async throws -> CapabilityReport {
         switch kind {
         case .deepseek:
-            try await DeepSeekHarnessAdapter(executable: executable, dialect: DeepSeekHarnessDialect()).inspect()
+            try await DeepSeekHarnessAdapter(executable: executable, dialect: DeepSeekHarnessDialect()).inspect(bypassCache: bypassCache)
         case .claude:
-            try await ClaudeCodeHarnessAdapter(executable: executable, dialect: ClaudeCodeDialect()).inspect()
+            try await ClaudeCodeHarnessAdapter(executable: executable, dialect: ClaudeCodeDialect()).inspect(bypassCache: bypassCache)
         case .opencode:
-            try await OpenCodeHarnessAdapter(executable: executable, dialect: OpenCodeDialect()).inspect()
+            try await OpenCodeHarnessAdapter(executable: executable, dialect: OpenCodeDialect()).inspect(bypassCache: bypassCache)
         case .openclaw:
-            try await OpenClawHarnessAdapter(executable: executable, dialect: OpenClawDialect()).inspect()
+            try await OpenClawHarnessAdapter(executable: executable, dialect: OpenClawDialect()).inspect(bypassCache: bypassCache)
         case .hermes:
-            try await HermesHarnessAdapter(executable: executable, dialect: HermesDialect()).inspect()
+            try await HermesHarnessAdapter(executable: executable, dialect: HermesDialect()).inspect(bypassCache: bypassCache)
         case .codex:
-            try await CodexCLIAdapter(executable: executable, dialect: CodexCLIDialect()).inspect()
+            try await CodexCLIAdapter(executable: executable, dialect: CodexCLIDialect()).inspect(bypassCache: bypassCache)
         }
     }
 }

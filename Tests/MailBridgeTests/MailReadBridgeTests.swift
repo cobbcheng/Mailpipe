@@ -30,50 +30,56 @@ private actor HeldReadResult: ProcessRunning {
 }
 
 final class MailReadBridgeTests: XCTestCase {
-    @MainActor func testRevokingWhileQueuedPreventsSourceAndMembershipProcessStarts() async throws {
+    @MainActor func testRevokingWhileQueuedPreventsSourceProcessStarts() async throws {
         let runner = HeldReadResult()
         let bridge = MailReadBridge(executable: URL(fileURLWithPath: "/unused-test-helper"), runner: runner)
         let inProgress = Task { try await bridge.inboxes() }
         let status = await XCTWaiter.fulfillment(of: [runner.started], timeout: 3)
         XCTAssertEqual(status, .completed)
-        @MainActor final class TestGrant { var authorized = true }
-        let grant = TestGrant()
-        let check: @MainActor @Sendable () throws -> Void = {
-            guard grant.authorized else { throw MailpipeError.routeNotAllowed }
+        actor TestGrant {
+            var authorized = true
+            func revoke() { authorized = false }
+            func verify() throws { guard authorized else { throw MailpipeError.routeNotAllowed } }
         }
+        let grant = TestGrant()
+        let check: @Sendable () async throws -> Void = { try await grant.verify() }
         let source = Task { try await bridge.resolve(accountID: "sample", mailboxName: "INBOX",
             messageID: "sample@example.com", subject: "Synthetic", preflight: check) }
-        let membership = Task { try await bridge.isInAuthorizedInbox(accountID: "sample", mailboxName: "INBOX",
-            messageID: "sample@example.com", subject: "Synthetic", preflight: check) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        while await bridge.queuedReadCount != 2 {
+        while await bridge.queuedReadCount != 1 {
             guard ContinuousClock.now < deadline else {
                 await runner.finishFirstRead()
-                XCTFail("Both reads must be waiting when authorization is revoked")
+                XCTFail("Read must be waiting when authorization is revoked")
                 return
             }
             await Task.yield()
         }
-        grant.authorized = false
+        await grant.revoke()
         await runner.finishFirstRead()
         _ = try await inProgress.value
         do { _ = try await source.value; XCTFail("Revoked source read was accepted") }
-        catch MailpipeError.routeNotAllowed {}
-        do { _ = try await membership.value; XCTFail("Revoked membership read was accepted") }
         catch MailpipeError.routeNotAllowed {}
         let starts = await runner.starts
         XCTAssertEqual(starts, 1)
     }
 
-    func testHelperPreservesUnknownMembershipAndTypedFailures() async throws {
+    func testHelperPreservesComposeAndTypedFailures() async throws {
         let fake = URL(fileURLWithPath: "/unused-test-helper")
         func bridge(_ result: MailReadResponse) throws -> MailReadBridge {
             MailReadBridge(executable: fake, runner: FixedReadResult(output: ProcessOutput(
                 stdout: try PropertyListEncoder().encode(result))))
         }
-        let unknown = try await bridge(.membership(nil)).isInAuthorizedInbox(
-            accountID: "sample", mailboxName: "INBOX", messageID: "sample@example.com", subject: "Synthetic", preflight: {})
-        XCTAssertNil(unknown)
+        let address = try await bridge(.senderAddress("me@example.com")).senderAddress(accountID: "a", preferredRecipients: [])
+        XCTAssertEqual(address, "me@example.com")
+        let req = try MailComposeRequest(recordID: "1", accountID: "a", accountName: "Test",
+            sender: "me@example.com", recipients: ["reply@example.com"], subject: "Re: Hi", body: "Hello",
+            originalSubject: "Hi", messageID: "id", localID: "1", sourceDigest: "digest", settingsRevision: UUID())
+        let receipt = try await bridge(.composeReceipt(MailComposeReceipt(outgoingID: "77"))).openCompose(req)
+        XCTAssertEqual(receipt.outgoingID, "77")
+        do {
+            _ = try await bridge(.composeError(.outcomeUnknown)).openCompose(req)
+            XCTFail("Unknown compose outcome was accepted")
+        } catch MailComposeError.outcomeUnknown {}
         do {
             _ = try await bridge(.error(.automation(-1743))).inboxes()
             XCTFail("Denied automation was accepted")

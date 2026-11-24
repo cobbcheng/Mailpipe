@@ -16,7 +16,7 @@ final class ComposeSuggestionTests: XCTestCase {
             ComposePanelRequest(sessionID: session, identity: identity, action: action)
         }
 
-        @MainActor func choices(subject: String = "Example") async throws -> [ComposeDraftChoice] {
+        func choices(subject: String = "Example") async throws -> [ComposeDraftChoice] {
             let request = ComposePanelRequest(sessionID: session, identity: nil,
                 action: .findDrafts(subjectDigest: ComposeMessageIdentity.digest(forSubject: subject)))
             let result = await pipeline.handleComposePanelRequest(request) { true }
@@ -24,7 +24,7 @@ final class ComposeSuggestionTests: XCTestCase {
             return choices
         }
 
-        @MainActor func lookup() async throws -> ComposePanelSuggestion {
+        func lookup() async throws -> ComposePanelSuggestion {
             var result = await pipeline.handleComposePanelRequest(request(.lookup)) { true }
             if result == .verifyOriginal {
                 result = await pipeline.handleComposePanelRequest(request(.verifiedLookup)) { true }
@@ -34,7 +34,7 @@ final class ComposeSuggestionTests: XCTestCase {
         }
     }
 
-    private func fixture(body: String = "Original private body") throws -> Fixture {
+    private func fixture(body: String = "Original private body") async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
         let store = try PipelineStore(directory: root.appendingPathComponent("db"))
@@ -44,25 +44,25 @@ final class ComposeSuggestionTests: XCTestCase {
             XCTFail("Compose must use the captured original"); return nil
         }, model: { _ in fake })
         let permission = CapturePermission(delivery: .mailKit)
-        try pipeline.updateSettings { $0.permission = permission; $0.executable = "/fake/dsh" }
+        try await pipeline.updateSettings { $0.permission = permission; $0.executable = "/fake/dsh" }
         let raw = Data("From: sender@example.com\r\nTo: receiver@example.com\r\n\r\n\(body)".utf8)
-        let id = try store.importCapture(InboundCapture(permissionID: permission.id, subject: "Example",
+        let id = try await store.importCapture(InboundCapture(permissionID: permission.id, subject: "Example",
                                                        messageID: "question@example.com", raw: raw))
-        var item = try XCTUnwrap(store.record(id))
+        var item = try unwrap(try await store.record(id))
         let task = try ReplyDraftRequest(message: item.input)
         item.draftData = try JSONSerialization.data(withJSONObject: ["schema_version": 1, "request_id": task.requestID,
             "triage_request_id": task.triageRequestID, "message_ref": id, "subject": "Re: Example", "body": "Original suggestion"])
         item.state = .draftReady
         item.editedBody = "Workbench edit"
-        try store.save(item)
-        try store.saveReplyInstructions("Use a custom sign-off.")
+        try await store.save(item)
+        try await store.saveReplyInstructions("Use a custom sign-off.")
         let identity = try XCTUnwrap(ComposeMessageIdentity(messageID: "<question@example.com>", subject: "Example",
             sender: "sender@example.com", to: ["receiver@example.com"], cc: [], displayBody: body))
         return Fixture(pipeline: pipeline, model: fake, item: item, identity: identity)
     }
 
     func testLookupNeedsUniqueOriginalAndCurrentPermissionBeforeExposingEdits() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         let suggestion = try await f.lookup()
         XCTAssertEqual(suggestion.body, "Workbench edit")
         for other in [
@@ -75,16 +75,16 @@ final class ComposeSuggestionTests: XCTestCase {
             let result = await f.pipeline.handleComposePanelRequest(req) { true }
             XCTAssertEqual(result, .noDraft)
         }
-        try f.pipeline.updateSettings { $0.paused = true }
+        try await f.pipeline.updateSettings { $0.paused = true }
         let paused = await f.pipeline.handleComposePanelRequest(f.request(.lookup)) { true }
         XCTAssertEqual(paused, .noDraft)
-        try f.pipeline.updateSettings { $0.paused = false }
+        try await f.pipeline.updateSettings { $0.paused = false }
         var duplicate = StoredReply(id: "duplicate", permissionID: f.item.permissionID, capturedAt: Date(),
             messageID: f.item.messageID, input: f.item.input, state: .cancelled)
         duplicate.correspondents = f.item.correspondents
         duplicate.displayBody = f.item.displayBody
         duplicate.discardedAt = Date()
-        try f.pipeline.store.save(duplicate)
+        try await f.pipeline.store.save(duplicate)
         let ambiguous = await f.pipeline.handleComposePanelRequest(f.request(.lookup)) { true }
         XCTAssertEqual(ambiguous, .noDraft)
         let calls = await f.model.calls
@@ -92,17 +92,17 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testRestoredWindowListsReadyDraftsAndOpensOnlyTheSelectedOriginal() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         let store = f.pipeline.store
         let raw = Data("From: another@example.com\r\nTo: receiver@example.com\r\n\r\nAnother private original".utf8)
-        let id = try store.importCapture(InboundCapture(permissionID: f.item.permissionID, subject: "Example",
+        let id = try await store.importCapture(InboundCapture(permissionID: f.item.permissionID, subject: "Example",
             messageID: "second@example.com", raw: raw))
-        var second = try XCTUnwrap(store.record(id))
+        var second = try unwrap(try await store.record(id))
         let task = try ReplyDraftRequest(message: second.input)
         second.draftData = try JSONSerialization.data(withJSONObject: ["schema_version": 1, "request_id": task.requestID,
             "triage_request_id": task.triageRequestID, "message_ref": id, "subject": "Re: Example", "body": "Second suggestion"])
         second.state = .draftReady
-        try store.save(second)
+        try await store.save(second)
 
         let choices = try await f.choices()
         XCTAssertEqual(choices.map(\.sender), ["another@example.com", "sender@example.com"])
@@ -119,7 +119,7 @@ final class ComposeSuggestionTests: XCTestCase {
         let response = await f.pipeline.handleComposePanelRequest(selected) { true }
         guard case let .ready(draft) = response else { return XCTFail("Expected chosen draft") }
         XCTAssertEqual(draft.body, second.displayedBody)
-        try store.saveEdits(id, subject: "Re: Example", body: "Updated suggestion")
+        try await store.saveEdits(id, subject: "Re: Example", body: "Updated suggestion")
         let edited = await f.pipeline.handleComposePanelRequest(selected) { true }
         guard case let .ready(latest) = edited else { return XCTFail("Expected latest edit") }
         XCTAssertNotEqual(latest.version, draft.version)
@@ -127,7 +127,7 @@ final class ComposeSuggestionTests: XCTestCase {
         let stale = ComposePanelRequest(sessionID: f.session, identity: choice.identity, action: .regenerate(version: draft.version))
         let regenerated = await f.pipeline.handleComposePanelRequest(stale) { true }
         XCTAssertEqual(regenerated, .changed)
-        try store.discard(id)
+        try await store.discard(id)
         let discarded = await f.pipeline.handleComposePanelRequest(selected) { true }
         XCTAssertEqual(discarded, .noDraft)
         let remaining = try await f.choices()
@@ -137,7 +137,7 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testRestoredDraftChoiceRequiresCurrentAuthorizationAndReadyState() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         let available = try await f.choices()
         let choice = try XCTUnwrap(available.first)
         let request = ComposePanelRequest(sessionID: f.session, identity: choice.identity, action: .verifiedLookup)
@@ -145,16 +145,16 @@ final class ComposeSuggestionTests: XCTestCase {
         changed.state = .noReply
         changed.editedBody = nil
         changed.draftData = nil
-        try f.pipeline.store.save(changed)
+        try await f.pipeline.store.save(changed)
         let noLongerReady = await f.pipeline.handleComposePanelRequest(request) { true }
         XCTAssertEqual(noLongerReady, .noDraft)
         let noChoices = try await f.choices()
         XCTAssertTrue(noChoices.isEmpty)
-        try f.pipeline.store.save(f.item)
-        try f.pipeline.updateSettings { $0.paused = true }
+        try await f.pipeline.store.save(f.item)
+        try await f.pipeline.updateSettings { $0.paused = true }
         let paused = try await f.choices()
         XCTAssertTrue(paused.isEmpty)
-        try f.pipeline.updateSettings { $0.paused = false; $0.permission = nil }
+        try await f.pipeline.updateSettings { $0.paused = false; $0.permission = nil }
         let revoked = try await f.choices()
         XCTAssertTrue(revoked.isEmpty)
         let stale = await f.pipeline.handleComposePanelRequest(request) { true }
@@ -164,7 +164,7 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testOnlyReadyLookupRequestsOriginalVerificationAndRejectsDifferentBody() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         func lookup(_ action: ComposePanelAction, display: String? = nil) async throws -> ComposePanelResponse {
             let identity = try XCTUnwrap(ComposeMessageIdentity(messageID: "question@example.com", subject: "Example",
                 sender: "sender@example.com", to: ["receiver@example.com"], cc: [], displayBody: display))
@@ -183,7 +183,7 @@ final class ComposeSuggestionTests: XCTestCase {
             messageID: f.item.messageID, input: f.item.input, state: .noReply)
         duplicate.correspondents = f.item.correspondents
         duplicate.displayBody = "A distinct message reusing the same headers"
-        try f.pipeline.store.save(duplicate)
+        try await f.pipeline.store.save(duplicate)
         let ambiguous = try await lookup(.verifiedLookup)
         XCTAssertEqual(ambiguous, .noDraft)
         let canDisambiguate = try await lookup(.lookup)
@@ -195,12 +195,12 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testFirstDraftFromStoredNoReplyIsPublishedOnceAndCanBeReopened() async throws {
-        let f = try fixture(body: "Please review https://github.com/example/example/pull/7")
+        let f = try await fixture(body: "Please review https://github.com/example/example/pull/7")
         var item = f.item
         item.state = .noReply
         item.draftData = nil
         item.editedBody = nil
-        try f.pipeline.store.save(item)
+        try await f.pipeline.store.save(item)
         let metadata = try XCTUnwrap(ComposeMessageIdentity(messageID: "question@example.com", subject: item.input.subject,
             sender: "sender@example.com", to: ["receiver@example.com"], cc: []))
         let lookup = await f.pipeline.handleComposePanelRequest(.init(sessionID: f.session, identity: metadata, action: .lookup)) { true }
@@ -213,7 +213,7 @@ final class ComposeSuggestionTests: XCTestCase {
         XCTAssertEqual(callsBefore, 0)
         let action = ComposePanelAction.generate(version: offer.version, original: nil)
         let request = f.request(action)
-        await f.model.setAfterRun { @MainActor in
+        await f.model.setAfterRun {
             let pending = await f.pipeline.handleComposePanelRequest(f.request(.lookup)) { true }
             XCTAssertEqual(pending, .preparing)
             let overlap = await f.pipeline.handleComposePanelRequest(f.request(action)) { true }
@@ -226,8 +226,8 @@ final class ComposeSuggestionTests: XCTestCase {
         XCTAssertEqual(requests.first?.message, item.input)
         XCTAssertEqual(requests.first?.replyInstructions, "Use a custom sign-off.")
         XCTAssertEqual(requests.first?.allowsNoReply, false)
-        XCTAssertNil(requests.first?.pullRequestReviewTarget)
-        let stored = try XCTUnwrap(f.pipeline.store.record(item.id))
+        XCTAssertNil(requests.first?.externalContext)
+        let stored = try unwrap(try await f.pipeline.store.record(item.id))
         XCTAssertEqual(stored.state, .draftReady)
         XCTAssertEqual(stored.displayedBody, first.body)
         XCTAssertEqual(stored.runs.last?.destination.runID, request.id.uuidString)
@@ -240,7 +240,7 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testUncapturedOriginalRequiresConfirmedPayloadAndCurrentScope() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         let subject = "An older question", body = "Could you reply?", display = "Could you reply? (quoted history)"
         func identity(_ subject: String, withBody: Bool) throws -> ComposeMessageIdentity {
             try XCTUnwrap(ComposeMessageIdentity(messageID: "<old@example.com>", subject: subject, sender: "a@example.com",
@@ -252,14 +252,15 @@ final class ComposeSuggestionTests: XCTestCase {
         func request(_ action: ComposePanelAction) -> ComposePanelRequest {
             ComposePanelRequest(sessionID: session, identity: action == .lookup ? metadata : id, action: action)
         }
-        try f.pipeline.updateSettings { $0.permission = CapturePermission(exactSubject: "Other", delivery: .mailKit) }
+        try await f.pipeline.updateSettings { $0.permission = CapturePermission(exactSubject: "Other", delivery: .mailKit) }
         let outside = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
         XCTAssertEqual(outside, .noDraft)
-        try f.pipeline.updateSettings { $0.permission = CapturePermission(exactSubject: subject, delivery: .mailKit) }
+        try await f.pipeline.updateSettings { $0.permission = CapturePermission(exactSubject: subject, delivery: .mailKit) }
         let lookup = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
         guard case .canGenerate(let offer) = lookup else { return XCTFail("Expected offer") }
         XCTAssertTrue(offer.requiresOriginal)
-        XCTAssertEqual(try f.pipeline.store.records().count, 1)
+        let countBefore = try await f.pipeline.store.records().count
+        XCTAssertEqual(countBefore, 1)
         let missing = await f.pipeline.handleComposePanelRequest(request(.generate(version: offer.version, original: nil))) { true }
         XCTAssertEqual(missing, .changed)
         let substituted = try XCTUnwrap(ComposePanelOriginal(messageID: original.messageID, subject: subject, sender: original.sender,
@@ -273,13 +274,13 @@ final class ComposeSuggestionTests: XCTestCase {
         let before = await f.model.calls
         XCTAssertEqual(before, 0)
         let firstRequest = request(action), doubleClick = request(action)
-        let firstClick = Task { @MainActor in await f.pipeline.handleComposePanelRequest(firstRequest) { true } }
-        let nextClick = Task { @MainActor in await f.pipeline.handleComposePanelRequest(doubleClick) { true } }
+        let firstClick = Task { await f.pipeline.handleComposePanelRequest(firstRequest) { true } }
+        let nextClick = Task { await f.pipeline.handleComposePanelRequest(doubleClick) { true } }
         let outcomes = [await firstClick.value, await nextClick.value]
         XCTAssertEqual(outcomes.filter { $0 == .changed }.count, 1)
         let result = try XCTUnwrap(outcomes.first { if case .ready = $0 { return true }; return false })
         guard case .ready(let draft) = result else { return XCTFail("Expected new draft") }
-        let records = try f.pipeline.store.records()
+        let records = try await f.pipeline.store.records()
         let stored = try XCTUnwrap(records.first(where: { $0.messageID == "old@example.com" }))
         XCTAssertEqual(records.count, 2)
         XCTAssertEqual(stored.displayedBody, draft.body)
@@ -297,7 +298,7 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testIneligibleOriginalCannotBeRecreatedAndRevocationPreventsPublishing() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         var item = f.item
         item.state = .noReply
         item.draftData = nil
@@ -307,34 +308,34 @@ final class ComposeSuggestionTests: XCTestCase {
         let session = UUID()
         func request(_ action: ComposePanelAction) -> ComposePanelRequest { .init(sessionID: session, identity: identity, action: action) }
         item.discardedAt = Date()
-        try f.pipeline.store.save(item)
+        try await f.pipeline.store.save(item)
         let discarded = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
         XCTAssertEqual(discarded, .noDraft)
         item.discardedAt = nil; item.state = .cancelled
-        try f.pipeline.store.save(item)
+        try await f.pipeline.store.save(item)
         let cancelled = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
         XCTAssertEqual(cancelled, .noDraft)
         item.state = .queued
-        try f.pipeline.store.save(item)
+        try await f.pipeline.store.save(item)
         let queued = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
         XCTAssertEqual(queued, .preparing)
         item.state = .needsReply
-        try f.pipeline.store.save(item)
+        try await f.pipeline.store.save(item)
         let lookup = await f.pipeline.handleComposePanelRequest(request(.lookup)) { true }
         guard case .canGenerate(let offer) = lookup else { return XCTFail("Expected offer") }
-        await f.model.setAfterRun { @MainActor in
-            try f.pipeline.updateSettings { $0.permission = nil }
+        await f.model.setAfterRun {
+            try await f.pipeline.updateSettings { $0.permission = nil }
         }
         let revoked = await f.pipeline.handleComposePanelRequest(request(.generate(version: offer.version, original: nil))) { true }
         XCTAssertEqual(revoked, .changed)
-        let stored = try XCTUnwrap(f.pipeline.store.record(item.id))
+        let stored = try unwrap(try await f.pipeline.store.record(item.id))
         XCTAssertNil(stored.draftData)
         XCTAssertNotNil(stored.runs.last?.error)
         XCTAssertNotNil(stored.runs.last?.finishedAt)
     }
 
     func testRegeneratesOnceFromOriginalMailAndSavedInstructions() async throws {
-        let f = try fixture(body: "Please review https://github.com/example/example/pull/7")
+        let f = try await fixture(body: "Please review https://github.com/example/example/pull/7")
         let original = try await f.lookup()
         let req = f.request(.regenerate(version: original.version))
         let result = await f.pipeline.handleComposePanelRequest(req) { true }
@@ -348,10 +349,9 @@ final class ComposeSuggestionTests: XCTestCase {
         let task = try XCTUnwrap(requests.first)
         XCTAssertEqual(task.message, f.item.input)
         XCTAssertFalse(task.allowsNoReply)
-        XCTAssertNil(task.pullRequestReviewTarget)
-        XCTAssertNil(task.approvedPullRequest)
+        XCTAssertNil(task.externalContext)
         XCTAssertEqual(task.replyInstructions, "Use a custom sign-off.")
-        let persisted = try XCTUnwrap(f.pipeline.store.record(f.item.id))
+        let persisted = try unwrap(try await f.pipeline.store.record(f.item.id))
         XCTAssertEqual(persisted.draftData, f.item.draftData)
         XCTAssertEqual(persisted.editedBody, "Workbench edit")
         XCTAssertEqual(persisted.draftVersion, f.item.draftVersion)
@@ -362,22 +362,23 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testRegenerationLimitIsSharedWithWorkbenchAndExcludesOldShortenReceipts() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         var item = f.item
         item.regenerationCount = 2
         let old = try DataDestination(messageRef: item.id, runID: "build-43", taskKind: .draft, harness: .deepseek)
         item.composeShortenRuns = [PipelineRun(destination: old, startedAt: Date(), finishedAt: Date())]
-        try f.pipeline.store.save(item)
+        try await f.pipeline.store.save(item)
         let original = try await f.lookup()
         let action = ComposePanelAction.regenerate(version: original.version)
         let allowed = await f.pipeline.handleComposePanelRequest(f.request(action)) { true }
         guard case .ready = allowed else { return XCTFail("Third attempt should be available") }
         let limited = await f.pipeline.handleComposePanelRequest(f.request(action)) { true }
         XCTAssertEqual(limited, .regenerationLimitReached)
-        XCTAssertThrowsError(try f.pipeline.regenerate(item.id))
-        let current = try XCTUnwrap(f.pipeline.store.record(item.id))
+        do { try await f.pipeline.regenerate(item.id); XCTFail("limit reached") } catch {}
+        let current = try unwrap(try await f.pipeline.store.record(item.id))
+        let currentSettings = try await f.pipeline.store.settings()
         XCTAssertEqual(current.composeShortenRuns?.first?.destination.runID, old.runID)
-        XCTAssertFalse(current.canRequestRegeneration(settings: try f.pipeline.store.settings()))
+        XCTAssertFalse(current.canRequestRegeneration(settings: currentSettings))
         XCTAssertEqual(current.regenerationCount, 2)
         XCTAssertEqual(current.composeRegenerationRuns?.count, 1)
         let reviewed = try await f.lookup()
@@ -387,7 +388,7 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testConcurrentEditOrDiscardMakesConfirmedVersionStale() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         let displayed = try await f.lookup()
         let request = f.request(.regenerate(version: displayed.version))
         let store = f.pipeline.store, id = f.item.id
@@ -396,7 +397,7 @@ final class ComposeSuggestionTests: XCTestCase {
         }
         let result = await f.pipeline.handleComposePanelRequest(request) { true }
         XCTAssertEqual(result, .changed)
-        let current = try XCTUnwrap(store.record(id))
+        let current = try unwrap(try await store.record(id))
         XCTAssertEqual(current.displayedBody, "Latest workbench text")
         XCTAssertEqual(current.state, .draftReady)
         XCTAssertNil(current.error)
@@ -404,7 +405,7 @@ final class ComposeSuggestionTests: XCTestCase {
         let stale = await f.pipeline.handleComposePanelRequest(f.request(request.action)) { true }
         XCTAssertEqual(stale, .changed)
         let fresh = try await f.lookup()
-        try store.discard(id)
+        try await store.discard(id)
         let discarded = await f.pipeline.handleComposePanelRequest(f.request(.regenerate(version: fresh.version))) { true }
         XCTAssertEqual(discarded, .changed)
         let calls = await f.model.calls
@@ -412,14 +413,14 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testRegenerationRechecksTheAuthorizedInboxForScopeBasedCaptures() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         let scope = try AccountScope(accountID: "test", accountName: "Example", mailboxName: "INBOX")
         let permission = CapturePermission()
-        try f.pipeline.updateSettings { $0.permission = permission; $0.scope = scope }
+        try await f.pipeline.updateSettings { $0.permission = permission; $0.scope = scope }
         let raw = Data("From: sender@example.com\r\nTo: receiver@example.com\r\n\r\nLegacy source".utf8)
-        let id = try f.pipeline.store.importCapture(InboundCapture(permissionID: permission.id, subject: "Legacy",
+        let id = try await f.pipeline.store.importCapture(InboundCapture(permissionID: permission.id, subject: "Legacy",
                                             messageID: "legacy@example.com", raw: raw))
-        var item = try XCTUnwrap(f.pipeline.store.record(id))
+        var item = try unwrap(try await f.pipeline.store.record(id))
         item.accountID = scope.accountID
         item.scopeID = scope.id
         item.localID = "legacy-local"
@@ -427,7 +428,7 @@ final class ComposeSuggestionTests: XCTestCase {
         item.draftData = try JSONSerialization.data(withJSONObject: ["schema_version": 1, "request_id": task.requestID,
             "triage_request_id": task.triageRequestID, "message_ref": id, "subject": "Re: Legacy", "body": "Draft"])
         item.state = .draftReady
-        try f.pipeline.store.save(item)
+        try await f.pipeline.store.save(item)
         let identity = try XCTUnwrap(ComposeMessageIdentity(messageID: "legacy@example.com", subject: "Legacy",
             sender: "sender@example.com", to: ["receiver@example.com"], cc: []))
         for source in [nil, raw] {
@@ -449,26 +450,26 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testOverlapAndRevocationDuringAConfirmedRun() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         let suggestion = try await f.lookup()
         let action = ComposePanelAction.regenerate(version: suggestion.version)
-        await f.model.setAfterRun { @MainActor in
+        await f.model.setAfterRun {
             let overlapping = await f.pipeline.handleComposePanelRequest(f.request(action)) { true }
             XCTAssertEqual(overlapping, .changed)
-            XCTAssertThrowsError(try f.pipeline.regenerate(f.item.id))
-            try f.pipeline.updateSettings { $0.permission = nil }
+            do { try await f.pipeline.regenerate(f.item.id); XCTFail("must block overlap") } catch {}
+            try await f.pipeline.updateSettings { $0.permission = nil }
         }
         let revoked = await f.pipeline.handleComposePanelRequest(f.request(action)) { true }
         XCTAssertEqual(revoked, .changed)
-        let item = try XCTUnwrap(f.pipeline.store.record(f.item.id))
+        let item = try unwrap(try await f.pipeline.store.record(f.item.id))
         XCTAssertEqual(item.editedBody, "Workbench edit")
         XCTAssertEqual(item.composeRegenerationRuns?.last?.inputTokens, 10)
         let calls = await f.model.calls
         XCTAssertEqual(calls, 1)
     }
 
-    func testRestartClosesUnknownReceiptWithoutReplaying() throws {
-        let f = try fixture()
+    func testRestartClosesUnknownReceiptWithoutReplaying() async throws {
+        let f = try await fixture()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let runID = UUID().uuidString
@@ -477,10 +478,10 @@ final class ComposeSuggestionTests: XCTestCase {
             var item = f.item
             let dest = try DataDestination(messageRef: item.id, runID: runID, taskKind: .draft, harness: .deepseek)
             item.composeRegenerationRuns = [PipelineRun(destination: dest, startedAt: Date())]
-            try store.save(item)
+            try await store.save(item)
         }
         let recovered = try PipelineStore(directory: root)
-        let item = try XCTUnwrap(recovered.record(f.item.id))
+        let item = try unwrap(try await recovered.record(f.item.id))
         XCTAssertEqual(item.editedBody, "Workbench edit")
         XCTAssertEqual(item.state, .draftReady)
         XCTAssertFalse(item.isRegeneratingInCompose)
@@ -489,7 +490,7 @@ final class ComposeSuggestionTests: XCTestCase {
     }
 
     func testFailureOrClosedPanelLeavesPreparedDraftUsable() async throws {
-        let f = try fixture()
+        let f = try await fixture()
         let original = try await f.lookup()
         let request = f.request(.regenerate(version: original.version))
         let inactive = await f.pipeline.handleComposePanelRequest(request) { false }
@@ -499,7 +500,8 @@ final class ComposeSuggestionTests: XCTestCase {
         XCTAssertEqual(failed, .failed)
         let current = try await f.lookup()
         XCTAssertEqual(current, original)
-        XCTAssertEqual(try f.pipeline.store.record(f.item.id)?.composeRegenerationRuns?.last?.error, "timedOut")
+        let lastError = try await f.pipeline.store.record(f.item.id)?.composeRegenerationRuns?.last?.error
+        XCTAssertEqual(lastError, "timedOut")
         let calls = await f.model.calls
         XCTAssertEqual(calls, 1)
     }

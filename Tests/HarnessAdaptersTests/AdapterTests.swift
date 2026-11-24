@@ -49,12 +49,13 @@ final class AdapterTests: XCTestCase {
     }
     func testDeepSeekRunUsesStdinAndCleansWorkspace() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
-        let runner = RecordingRunner(inspectionOutputs(dialect) + [ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.decision))])
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
+        let runner = RecordingRunner(inspectionOutputs(dialect) + [ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.draft))])
         let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("dsh"), dialect: dialect,
                                         runner: runner, temporaryRoot: root.url, environment: [:])
-        let output = try await adapter.run(.triage(ReplySyntheticFixture.triage),
+        let output = try await adapter.run(.draft(request),
                                            route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
-        XCTAssertEqual(try ReplyDecision.validated(output.content, for: ReplySyntheticFixture.triage).shouldReply, .yes)
+        XCTAssertFalse(try ReplyDraft.validated(output.content, for: request).body.isEmpty)
         XCTAssertEqual(output.inputTokens, 12); XCTAssertEqual(output.outputTokens, 20)
         let calls = await runner.calls
         XCTAssertEqual(calls.count, 3)
@@ -71,11 +72,12 @@ final class AdapterTests: XCTestCase {
     }
     func testMissingFlagBlocksRunAndDoesNotRetry() async throws {
         let root = try TemporaryDirectory()
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         let runner = RecordingRunner([ProcessOutput(stdout: Data("0.2.2-rc.5".utf8)),
                                       ProcessOutput(stdout: Data("--tools-extra --print --output-format".utf8))])
         let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("dsh"), dialect: DeepSeekHarnessDialect(), runner: runner, temporaryRoot: root.url)
         do {
-            _ = try await adapter.run(.triage(ReplySyntheticFixture.triage),
+            _ = try await adapter.run(.draft(request),
                                       route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
             XCTFail("must reject")
         } catch { XCTAssertEqual(error as? MailpipeError, .unsupportedVersion) }
@@ -84,10 +86,11 @@ final class AdapterTests: XCTestCase {
     }
     func testFailedProcessDoesNotReturnOutputAndWorkspaceIsRemoved() async throws {
         let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
         let runner = RecordingRunner(inspectionOutputs(dialect) + [ProcessOutput(stdout: Data(), stderr: Data("authentication required: private text".utf8), exitCode: 1)])
         let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("dsh"), dialect: dialect, runner: runner, temporaryRoot: root.url)
         do {
-            _ = try await adapter.run(.triage(ReplySyntheticFixture.triage),
+            _ = try await adapter.run(.draft(request),
                                       route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
             XCTFail("must fail")
         } catch { XCTAssertEqual(error as? MailpipeError, .authRequired) }
@@ -107,21 +110,58 @@ final class AdapterTests: XCTestCase {
         let calls = await runner.calls
         XCTAssertEqual(calls.map(\.arguments), [["--version"]])
     }
-    func testDeepSeekVersionChangeStopsBeforeHelpOrModel() async throws {
+    func testDeepSeekVersionCompatibilityAndUnsupportedMajorStopsBeforeHelpOrModel() async throws {
         let root = try TemporaryDirectory()
-        let runner = RecordingRunner([ProcessOutput(stdout: Data("0.2.2-rc.6".utf8))])
-        let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("dsh"), dialect: DeepSeekHarnessDialect(), runner: runner, temporaryRoot: root.url)
+        let dialect = DeepSeekHarnessDialect()
+        XCTAssertTrue(dialect.acceptsVersion("0.2.2-rc.1"))
+        XCTAssertTrue(dialect.acceptsVersion("0.2.2-rc.6"))
+        XCTAssertTrue(dialect.acceptsVersion("0.2.2"))
+        XCTAssertTrue(dialect.acceptsVersion("0.2.9"))
+        XCTAssertFalse(dialect.acceptsVersion("0.2.1"))
+        XCTAssertFalse(dialect.acceptsVersion("0.3.0"))
+        XCTAssertFalse(dialect.acceptsVersion("1.0.0"))
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
+        let runner = RecordingRunner([ProcessOutput(stdout: Data("1.0.0".utf8))])
+        let adapter = DeepSeekHarnessAdapter(executable: root.url.appendingPathComponent("dsh"), dialect: dialect, runner: runner, temporaryRoot: root.url)
         do {
-            _ = try await adapter.run(.triage(ReplySyntheticFixture.triage),
+            _ = try await adapter.run(.draft(request),
                                       route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
-            XCTFail("new profile needs validation")
+            XCTFail("major version bump needs validation")
         } catch { XCTAssertEqual(error as? MailpipeError, .unsupportedVersion) }
         let calls = await runner.calls
         XCTAssertEqual(calls.count, 1)
     }
+    func testInspectionCacheReusesProbeUntilExecutableChangesOnDisk() async throws {
+        let root = try TemporaryDirectory(), dialect = DeepSeekHarnessDialect()
+        let binary = try root.script("exit 0", name: "dsh")
+        let cache = InspectionCache()
+        let request = try ReplyDraftRequest(message: ReplySyntheticFixture.message)
+        let runner = RecordingRunner(inspectionOutputs(dialect) + [
+            ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.draft)),
+            ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.draft))
+        ])
+        let adapter = DeepSeekHarnessAdapter(executable: binary, dialect: dialect, runner: runner,
+                                             temporaryRoot: root.url, environment: [:], cache: cache)
+        _ = try await adapter.run(.draft(request), route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
+        _ = try await adapter.run(.draft(request), route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
+        let callsBeforeUpdate = await runner.calls
+        // First run: --version + --help + draft (3). Second run: cached inspect + draft (1) = 4 total.
+        XCTAssertEqual(callsBeforeUpdate.count, 4)
+
+        // Mutating the executable invalidates the cache.
+        try Data("#!/bin/sh\n# updated binary\nexit 0\n".utf8).write(to: binary, options: .atomic)
+        let nextRunner = RecordingRunner(inspectionOutputs(dialect) + [
+            ProcessOutput(stdout: try deepseekEvents(ReplySyntheticFixture.draft))
+        ])
+        let updatedAdapter = DeepSeekHarnessAdapter(executable: binary, dialect: dialect, runner: nextRunner,
+                                                    temporaryRoot: root.url, environment: [:], cache: cache)
+        _ = try await updatedAdapter.run(.draft(request), route: AccountRoute(accountID: "synthetic", allowedHarnesses: [.deepseek])) {}
+        let callsAfterUpdate = await nextRunner.calls
+        XCTAssertEqual(callsAfterUpdate.count, 3)
+    }
     func testDeepSeekRejectsMissingAuditToolsFailedFinalAndForeignSession() throws {
         let dialect = DeepSeekHarnessDialect()
-        let events = try deepseekEvents(ReplySyntheticFixture.decision).split(separator: 10).map { try JSONSerialization.jsonObject(with: Data($0)) as! [String: Any] }
+        let events = try deepseekEvents(ReplySyntheticFixture.draft).split(separator: 10).map { try JSONSerialization.jsonObject(with: Data($0)) as! [String: Any] }
         func rejected(_ rows: [[String: Any]]) throws {
             let data = try rows.reduce(into: Data()) { $0.append(try JSONSerialization.data(withJSONObject: $1)); $0.append(10) }
             XCTAssertThrowsError(try dialect.decodeEnvelope(data))

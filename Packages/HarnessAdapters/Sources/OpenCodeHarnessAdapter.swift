@@ -15,20 +15,24 @@ public struct OpenCodeDialect: ReplyHarnessDialect {
     public var kind: HarnessKind { .opencode }
     public var helpArguments: [String] { ["run", "--help"] }
     public var requiredFlags: [String] { ["--standalone", "--format", "--agent", "--title", "--log-level", "--model"] }
-    public func acceptsVersion(_ version: String) -> Bool { version == "opencode v2.3.0" }
+    public func acceptsVersion(_ version: String) -> Bool {
+        SemVer.matchesBanner(version, pattern: #"^opencode v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$"#,
+                             minimum: SemVer(major: 2, minor: 3, patch: 0), major: 2)
+    }
 
     public func replyInvocation(task: ReplyModelTask, schema: String, stdin: Data, directory: URL,
                                 executable: URL, environment: [String: String]) throws -> ProcessInvocation {
-        if case .draft(let request) = task, request.approvedPullRequest != nil { throw MailpipeError.unsafeCapability }
+        if case .draft(let request) = task, let context = request.externalContext, !supports(context) {
+            throw MailpipeError.unsafeCapability
+        }
         if let model {
             guard Self.validModelReference(model) else { throw MailpipeError.invalidInput }
         } else {
             let message: MailInput
             switch task {
             case .draft(let request): message = request.message
-            case .triage(let request): message = request.message
             }
-            let fixture = ReplySyntheticFixture.triage.message
+            let fixture = ReplySyntheticFixture.message
             guard message.subject == fixture.subject, message.body == fixture.body else { throw MailpipeError.routeNotAllowed }
         }
         let restricted = try OpenCodeProfile.prepare(directory: directory, executable: executable, environment: environment)

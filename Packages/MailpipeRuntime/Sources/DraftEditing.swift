@@ -32,4 +32,11 @@ public struct DraftEditBuffer: Equatable, Sendable {
             return false
         }
     }
+    public mutating func markSaved(_ writtenBody: String) {
+        savedBody = writtenBody
+        state = body == savedBody ? .saved : .saving
+    }
+    public mutating func markFailed() {
+        if body != savedBody { state = .failed }
+    }
 }

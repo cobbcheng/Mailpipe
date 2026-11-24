@@ -14,22 +14,30 @@ private struct MailReadQuery: Codable, Sendable {
     let mailboxPath: [String]?
 }
 
+private struct SenderAddressQuery: Codable, Sendable {
+    let accountID: String
+    let preferredRecipients: [String]
+}
+
 private enum MailReadRequest: Codable, Sendable {
     case resolve(MailReadQuery)
-    case membership(MailReadQuery)
     case inboxes
+    case senderAddress(SenderAddressQuery)
+    case openCompose(MailComposeRequest)
 }
 
 enum MailReadResponse: Codable, Sendable {
     case match(AppleMailReplyIdentity.Match?)
-    case membership(Bool?)
     case inboxes([AppleMailReplyIdentity.MailboxChoice])
+    case senderAddress(String)
+    case composeReceipt(MailComposeReceipt)
     case error(IdentityQueryError)
+    case composeError(MailComposeError)
     case messageTooLarge
 }
 
-/// Each read runs on the main thread of a short-lived copy of the signed host.
-/// The host retains ownership of authorization, record updates and Mail writes.
+/// Each Apple Events call runs on the main thread of a short-lived copy of the signed host,
+/// keeping the interactive UI main thread responsive and serializing Mail access.
 public actor MailReadBridge {
     public static let shared = MailReadBridge(executable: Bundle.main.executableURL)
     private static let flag = "--mailpipe-read-helper"
@@ -50,25 +58,43 @@ public actor MailReadBridge {
 
     public func resolve(accountID: String, mailboxName: String, messageID: String, subject: String,
                         mailboxPath: [String]? = nil, firstMatch: Bool = false,
-                        preflight: @escaping @MainActor @Sendable () throws -> Void) async throws -> AppleMailReplyIdentity.Match? {
+                        preflight: @escaping @Sendable () async throws -> Void) async throws -> AppleMailReplyIdentity.Match? {
         let query = MailReadQuery(accountID: accountID, mailboxName: mailboxName, messageID: messageID,
                                   subject: subject, firstMatch: firstMatch, mailboxPath: mailboxPath)
         guard case let .match(match) = try await call(.resolve(query), preflight: preflight) else { throw IdentityQueryError.invalidResult }
         return match
     }
 
-    public func isInAuthorizedInbox(accountID: String, mailboxName: String, messageID: String, subject: String,
-                                    mailboxPath: [String]? = nil,
-                                    preflight: @escaping @MainActor @Sendable () throws -> Void) async throws -> Bool? {
-        let query = MailReadQuery(accountID: accountID, mailboxName: mailboxName, messageID: messageID,
-                                  subject: subject, mailboxPath: mailboxPath)
-        guard case let .membership(included) = try await call(.membership(query), preflight: preflight) else { throw IdentityQueryError.invalidResult }
-        return included
-    }
-
     public func inboxes() async throws -> [AppleMailReplyIdentity.MailboxChoice] {
         guard case let .inboxes(choices) = try await call(.inboxes) else { throw IdentityQueryError.invalidResult }
         return choices
+    }
+
+    public func senderAddress(accountID: String, preferredRecipients: [String]) async throws -> String {
+        let query = SenderAddressQuery(accountID: accountID, preferredRecipients: preferredRecipients)
+        do {
+            guard case let .senderAddress(address) = try await call(.senderAddress(query)) else {
+                throw MailComposeError.unavailable
+            }
+            return address
+        } catch let error as MailComposeError {
+            throw error
+        } catch {
+            throw MailComposeError.unavailable
+        }
+    }
+
+    public func openCompose(_ request: MailComposeRequest) async throws -> MailComposeReceipt {
+        do {
+            guard case let .composeReceipt(receipt) = try await call(.openCompose(request)) else {
+                throw MailComposeError.outcomeUnknown
+            }
+            return receipt
+        } catch let error as MailComposeError {
+            throw error
+        } catch {
+            throw MailComposeError.outcomeUnknown
+        }
     }
 
     private func acquire() async throws {
@@ -95,7 +121,7 @@ public actor MailReadBridge {
     }
 
     private func call(_ request: MailReadRequest,
-                      preflight: (@MainActor @Sendable () throws -> Void)? = nil) async throws -> MailReadResponse {
+                      preflight: (@Sendable () async throws -> Void)? = nil) async throws -> MailReadResponse {
         try await acquire()
         defer { release() }
         try Task.checkCancellation()
@@ -124,6 +150,7 @@ public actor MailReadBridge {
         }
         switch response {
         case let .error(error): throw error
+        case let .composeError(error): throw error
         case .messageTooLarge: throw MailBodyRejection.messageTooLarge
         default: return response
         }
@@ -170,13 +197,15 @@ public actor MailReadBridge {
             case let .resolve(query):
                 return .match(try AppleMailReplyIdentity.resolve(accountID: query.accountID, mailboxName: query.mailboxName,
                     messageID: query.messageID, subject: query.subject, mailboxPath: query.mailboxPath, firstMatch: query.firstMatch == true))
-            case let .membership(query):
-                return .membership(try AppleMailReplyIdentity.isInAuthorizedInbox(accountID: query.accountID, mailboxName: query.mailboxName,
-                    messageID: query.messageID, subject: query.subject, mailboxPath: query.mailboxPath))
             case .inboxes:
                 return .inboxes(try AppleMailReplyIdentity.inboxes())
+            case let .senderAddress(query):
+                return .senderAddress(try AppleMailComposer.senderAddress(accountID: query.accountID, preferredRecipients: query.preferredRecipients))
+            case let .openCompose(composeRequest):
+                return .composeReceipt(try AppleMailComposer.open(composeRequest))
             }
         } catch let error as IdentityQueryError { return .error(error) }
+        catch let error as MailComposeError { return .composeError(error) }
         catch MailBodyRejection.messageTooLarge { return .messageTooLarge }
         catch { return .error(.invalidResult) }
     }
