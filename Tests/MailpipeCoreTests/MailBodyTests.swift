@@ -49,7 +49,7 @@ final class MailBodyTests: XCTestCase {
         XCTAssertEqual(try PlainMailBody.displayText(single), "First\n\nSecond")
     }
 
-    func testMailKitMixedWithoutBoundaryRecoversSingleInlineHTMLPart() throws {
+    func testMailKitMixedAndRelatedWithoutBoundaryRecoverBodyAndKeepAttachmentsOpaque() throws {
         let child = "Content-Type: text/html; charset=utf-8\r\n\r\n<p>Readable.</p>"
         let payload = "--part\r\n" + child + "\r\n--part--\r\n"
         func raw(_ type: String, _ payload: String) -> Data {
@@ -60,21 +60,50 @@ final class MailBodyTests: XCTestCase {
         XCTAssertEqual(try PlainMailBody.displayText(projected, fromMailKit: true), "Readable.")
         XCTAssertThrowsError(try PlainMailBody.decode(projected))
         for excluded in [
-            raw("multipart/mixed; boundary=other", payload), raw("multipart/related", payload),
-            raw("multipart/mixed", "Preamble\r\n" + payload), raw("multipart/mixed", payload + "Epilogue"),
-            raw("multipart/mixed", payload + "--part--"), raw("multipart/mixed", payload.replacingOccurrences(of: "--part--", with: "--other--")),
-            raw("multipart/mixed", payload.replacingOccurrences(of: "<p>", with: "--other\r\n<p>")),
+            raw("multipart/mixed; boundary=other", payload),
+            raw("multipart/mixed", "Preamble\r\n" + payload),
+            raw("multipart/mixed", payload + "Epilogue"),
+            raw("multipart/mixed", payload + "--part--"),
+            raw("multipart/mixed", payload.replacingOccurrences(of: "--part--", with: "--other--")),
             raw("multipart/mixed", payload.replacingOccurrences(of: "Content-Type:", with: "Content-Disposition: attachment\r\nContent-Type:")),
-            raw("multipart/mixed", payload.replacingOccurrences(of: "text/html;", with: "text/html; name=archive.html;"))
         ] {
             XCTAssertThrowsError(try PlainMailBody.decode(excluded, fromMailKit: true))
         }
 
+        // Multipart/mixed with body + attachment (e.g. statement PDF) keeps attachment bytes opaque.
         let withAttachment = payload.replacingOccurrences(of: "--part--", with:
             "--part\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=log.txt\r\n\r\nPRIVATE\r\n--part--")
-        XCTAssertThrowsError(try PlainMailBody.decode(raw("multipart/mixed", withAttachment), fromMailKit: true))
-        let declared = try PlainMailBody.extract(raw("multipart/mixed; boundary=part", withAttachment), fromMailKit: true)
-        XCTAssertEqual(declared.text, "Readable.\n[attachments: log.txt (text/plain)]")
+        let recoveredMixed = try PlainMailBody.extract(raw("multipart/mixed", withAttachment), fromMailKit: true)
+        XCTAssertEqual(recoveredMixed.text, "Readable.\n[attachments: log.txt (text/plain)]")
+        XCTAssertFalse(recoveredMixed.text.contains("PRIVATE"))
+
+        // Nested multipart/alternative + PDF attachment with leading blank line and omitted outer boundary.
+        let nestedStatement = [
+            "", "--outer",
+            "Content-Type: multipart/alternative; boundary=inner", "",
+            "--inner", "Content-Type: text/plain; charset=utf-8", "", "Daily statement attached.",
+            "--inner", "Content-Type: text/html; charset=utf-8", "", "<p>Daily statement attached.</p>",
+            "--inner--",
+            "--outer", "Content-Type: application/pdf; name=\"statement.pdf\"",
+            "Content-Disposition: attachment; filename=\"statement.pdf\"",
+            "Content-Transfer-Encoding: base64", "", "JVBERi0xLjQK",
+            "--outer--", ""
+        ].joined(separator: "\r\n")
+        let statement = try PlainMailBody.extract(raw("multipart/mixed", nestedStatement), fromMailKit: true)
+        XCTAssertEqual(statement.text, "Daily statement attached.\n[attachments: statement.pdf (application/pdf)]")
+        XCTAssertFalse(statement.text.contains("JVBER"))
+        XCTAssertThrowsError(try PlainMailBody.decode(raw("multipart/mixed", nestedStatement)))
+
+        // Multipart/related with HTML + inline image and omitted outer boundary.
+        let relatedPayload = [
+            "--rel", "Content-Type: text/html; charset=utf-8", "", "<p>See logo.</p>",
+            "--rel", "Content-Type: image/png; name=logo.png", "Content-Transfer-Encoding: base64", "", "iVBORw0KGgo=",
+            "--rel--", ""
+        ].joined(separator: "\r\n")
+        let related = try PlainMailBody.extract(raw("multipart/related", relatedPayload), fromMailKit: true)
+        XCTAssertEqual(related.text, "See logo.\n[attachments: logo.png (image/png)]")
+        XCTAssertFalse(related.text.contains("iVBORw0KGgo"))
+        XCTAssertThrowsError(try PlainMailBody.decode(raw("multipart/related", relatedPayload)))
     }
 
     func testMailKitAlternativeStillAcceptsForwardedTextSeparator() throws {

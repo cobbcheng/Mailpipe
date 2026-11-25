@@ -460,18 +460,12 @@ private struct MIMEEntity {
     let forDisplay: Bool
     let fromMailKit: Bool
 
-    func parse(_ data: Data, depth: Int, defaultType: String, counter: inout Int, requireInlineText: Bool = false) throws -> EntityResult {
+    func parse(_ data: Data, depth: Int, defaultType: String, counter: inout Int) throws -> EntityResult {
         counter += 1
         if counter > MailBodyLimits.maxParts || depth > MailBodyLimits.maxDepth { throw MailBodyRejection.malformedMIME }
         let split = try splitHeaders(data)
         let headers = try MIMEHeaders(split.header, defaultType: defaultType)
         let type = headers.mediaType
-        if requireInlineText {
-            guard headers.fields["content-type"] != nil, ["text/plain", "text/html"].contains(type),
-                  headers.disposition == nil || headers.disposition == "inline", headers.filename == nil else {
-                throw MailBodyRejection.malformedMIME
-            }
-        }
         // Attachment disposition applies to containers and embedded messages too.
         // Do not decode or recurse into their contents.
         if headers.disposition == "attachment" {
@@ -575,19 +569,17 @@ private struct MIMEEntity {
 
     func parts(_ payload: Data, headers: MIMEHeaders, depth: Int, counter: inout Int, defaultChild: String) throws -> [EntityResult] {
         let declared = headers.parameters["boundary"]
-        let projectedOuter = fromMailKit && depth == 0 && declared == nil
-        let singleText = projectedOuter && headers.mediaType == "multipart/mixed"
-        let canRecover = singleText || (projectedOuter && headers.mediaType == "multipart/alternative")
-        guard let boundary = declared ?? (canRecover ? MIMESplit.enclosingBoundary(payload) : nil),
+        let inferred = fromMailKit && depth == 0 && declared == nil
+            && ["multipart/alternative", "multipart/mixed", "multipart/related"].contains(headers.mediaType)
+        guard let boundary = declared ?? (inferred ? MIMESplit.enclosingBoundary(payload) : nil),
               !boundary.isEmpty, boundary.utf8.count <= 70 else {
             throw MailBodyRejection.malformedMIME
         }
-        let ranges = try MIMESplit.partRanges(payload, boundary: boundary, singleTextPart: singleText)
+        let ranges = try MIMESplit.partRanges(payload, boundary: boundary, strictTrailing: inferred)
         var children: [EntityResult] = []
         for range in ranges {
             do {
-                children.append(try parse(Data(payload[range]), depth: depth + 1, defaultType: defaultChild,
-                                          counter: &counter, requireInlineText: singleText))
+                children.append(try parse(Data(payload[range]), depth: depth + 1, defaultType: defaultChild, counter: &counter))
             } catch MailBodyRejection.unsupportedCharset {
                 children.append(EntityResult(charsetFailed: true))
             }
@@ -743,15 +735,17 @@ private func splitHeaders(_ data: Data) throws -> (header: Data, body: Data) {
 private enum MIMESplit {
     // MailKit can omit the outer parameter while preserving both delimiter lines.
     static func enclosingBoundary(_ data: Data) -> String? {
-        let first = data.prefix(75).prefix { $0 != 10 && $0 != 13 }
+        guard let start = data.firstIndex(where: { $0 != 10 && $0 != 13 }) else { return nil }
+        var first = data[start...].prefix(75).prefix { $0 != 10 && $0 != 13 }
+        while let last = first.last, last == 32 || last == 9 { first = first.dropLast() }
         guard first.starts(with: [45, 45]), (3...72).contains(first.count),
               first.dropFirst(2).allSatisfy({ (33...126).contains($0) }) else { return nil }
-        let end = data.lastIndex { $0 != 10 && $0 != 13 }
+        let end = data.lastIndex { $0 != 10 && $0 != 13 && $0 != 32 && $0 != 9 }
         guard let end, data[...end].suffix(first.count + 3).elementsEqual([10] + first + [45, 45]) else { return nil }
         return String(bytes: first.dropFirst(2), encoding: .ascii)
     }
 
-    static func partRanges(_ data: Data, boundary: String, singleTextPart: Bool = false) throws -> [Range<Int>] {
+    static func partRanges(_ data: Data, boundary: String, strictTrailing: Bool = false) throws -> [Range<Int>] {
         let bytes = [UInt8](data)
         var starts = [0]
         for index in bytes.indices where bytes[index] == 10 { starts.append(index + 1) }
@@ -776,16 +770,12 @@ private enum MIMESplit {
         for line in 0..<starts.count {
             let value = content(line)
             switch kind(value) {
-            case 1:
-                if singleTextPart, !opens.isEmpty { throw MailBodyRejection.malformedMIME }
-                opens.append(line)
+            case 1: opens.append(line)
             case 2: closing = line
-            default:
-                // Another delimiter could enclose an attachment in an inferred mixed message.
-                if singleTextPart, value.starts(with: [45, 45]) { throw MailBodyRejection.malformedMIME }
+            default: break
             }
             if closing != nil {
-                if singleTextPart, ((line + 1)..<starts.count).contains(where: { !content($0).isEmpty }) {
+                if strictTrailing, ((line + 1)..<starts.count).contains(where: { !content($0).isEmpty }) {
                     throw MailBodyRejection.malformedMIME
                 }
                 break
