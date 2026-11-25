@@ -1,0 +1,4 @@
+module MailpipeMailParserFFI {
+    header "mailpipe_mail_parser.h"
+    export *
+}

@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+./scripts/build-mail-parser.sh
 MAILPIPE_GUARD_DIR="$(mktemp -d)"
 trap 'rm -rf "$MAILPIPE_GUARD_DIR"' EXIT
 export MAILPIPE_UNEXPECTED_CALLS="$MAILPIPE_GUARD_DIR/unexpected-calls"

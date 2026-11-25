@@ -39,8 +39,17 @@ public enum InboundMailFilter {
             return true
         }
         let bulk = fields["precedence"] == "bulk" || fields["precedence"] == "list"
-        let broadcast = bulk || hasUnsubscribeLinks(fields["list-unsubscribe"]) ||
-            mailbox(sender, localPartMatching: #"news|newsletters?"#)
+        let unsubscribe = hasUnsubscribeLinks(fields["list-unsubscribe"])
+        let broadcastHeader = bulk || unsubscribe
+        let noReplySender = isNoReplyAddress(sender) && (fields["reply-to"] == nil || isNoReplyAddress(fields["reply-to"]))
+        if noReplySender, broadcastHeader, !matches(title, actionableNotice) {
+            return true
+        }
+        let broadcast = broadcastHeader || mailbox(sender, localPartMatching: #"news|newsletters?"#)
+        if (noReplySender || broadcast), onboardingTitles.contains(where: { matches(title, $0) }),
+           !matches(title, actionableNotice) {
+            return true
+        }
         return broadcast && campaignTitles.contains { matches(title, $0) }
     }
 
@@ -56,6 +65,14 @@ public enum InboundMailFilter {
         #"^(?:(?:您的)?(?:登录|邮箱|身份验证)?验证码\s*(?:为|是|:)\s*|(?:your )?(?:verification|sign-in|login) code(?: is |:\s*))[0-9]{4,8}[.。]?$"#
     private static let replyRequest =
         #"工单|工單|客[户戶](?:提[问問]|[询詢][问問]|回复|回覆|留言)|[请請](?:您)?(?:回复|回覆|审批|審批|[确確][认認])|\b(?:ticket|customer (?:question|reply|message)|please|(?:could|can|would|will) you|(?:need|awaiting) your|(?:reply|response|feedback|approval|confirmation|action) (?:required|requested|needed))\b"#
+    private static let actionableNotice =
+        #"账单|賬單|发票|發票|逾期|欠费|欠費|(?:扣款|支付|付款)(?:失败|失敗)|安全警[报報]|异常(?:登录|登入)|異常(?:登录|登入)|账[号戶]异常|帳號異常|已停用|已[锁鎖]定|申[诉訴]|\b(?:invoice|overdue|payment failed|billing|account suspended|suspended|locked|security alert|unauthorized|dispute|chargeback)\b"#
+
+    private static let onboardingTitles = [
+        #"^(?:开始使用|開始使用|欢迎使用|歡迎使用|欢迎加入|歡迎加入)\s*[\p{L}\p{N}].+$"#,
+        #"^(?:get|getting) started with [\p{L}\p{N}].+$"#,
+        #"^welcome to [\p{L}\p{N}].+$"#
+    ]
 
     private static let campaignTitles = [
         #"^(?:会员专享|限时优惠|限时抢购)\s*[,!:]\s*全场\s*(?:[一二三四五六七八九]{1,2}|[1-9](?:\.[0-9])?)\s*折[!.。]?$"#,
@@ -70,7 +87,28 @@ public enum InboundMailFilter {
 
     private static func hasUnsubscribeLinks(_ header: String?) -> Bool {
         guard let header else { return false }
-        return header.components(separatedBy: ",").allSatisfy { item in
+        var items: [String] = []
+        var current = ""
+        var insideAngle = false
+        for ch in header {
+            if ch == "<" {
+                guard !insideAngle else { return false }
+                insideAngle = true
+                current.append(ch)
+            } else if ch == ">" {
+                guard insideAngle else { return false }
+                insideAngle = false
+                current.append(ch)
+            } else if ch == ",", !insideAngle {
+                items.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        guard !insideAngle else { return false }
+        items.append(current)
+        return !items.isEmpty && items.allSatisfy { item in
             let link = item.trimmingCharacters(in: .whitespaces)
             guard link.first == "<", link.last == ">" else { return false }
             let target = link.dropFirst().dropLast()
@@ -84,9 +122,13 @@ public enum InboundMailFilter {
         }
     }
 
+    private static func isNoReplyAddress(_ value: String?) -> Bool {
+        mailbox(value, localPartMatching: #"(?:[a-z0-9]+[-_.])*(?:no[-_.]?reply|do[-_.]?not[-_.]?reply)(?:[-_.][a-z0-9]+)*"#)
+    }
+
     /// MailKit provides the outer sender mailbox separately. Display-name text is never evidence.
     private static func isMachineAddress(_ value: String?) -> Bool {
-        mailbox(value, localPartMatching: #"no[-_.]?reply|do[-_.]?not[-_.]?reply|notifications?"#)
+        isNoReplyAddress(value) || mailbox(value, localPartMatching: #"notifications?"#)
     }
 
     private static func mailbox(_ value: String?, localPartMatching pattern: String) -> Bool {

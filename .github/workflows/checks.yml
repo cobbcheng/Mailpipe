@@ -20,6 +20,8 @@ jobs:
           persist-credentials: false
       - name: Import synthetic release identities into isolated keychains
         run: bash scripts/ci/test-rewrap-p12.sh "$(brew --prefix openssl@3)/bin/openssl"
+      - name: Build universal Rust mail-parser static library
+        run: ./scripts/build-mail-parser.sh --universal
       - run: ./scripts/test.sh
       - name: Build both architectures without signing or installing
         run: |

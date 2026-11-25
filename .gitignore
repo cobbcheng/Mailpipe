@@ -9,6 +9,8 @@ DerivedData/
 build/
 dist/
 *.xcresult/
+Packages/MailpipeMailParser/target/
+Packages/MailpipeMailParser/MailpipeMailParserFFI.xcframework/
 
 # Private runtime data and local configuration
 .runtime/

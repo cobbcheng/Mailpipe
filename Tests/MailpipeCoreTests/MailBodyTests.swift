@@ -327,6 +327,28 @@ final class MailBodyTests: XCTestCase {
         XCTAssertEqual(try PlainMailBody.decode(plain(html)), html)
     }
 
+    func testCombiningMarksAfterNewlinesAndHiddenLinksDoNotHangOrLeak() throws {
+        let html = """
+            <html><body>\
+            <div style="display:\tnone"><a href="https://tracker.example.com/pixel">hidden</a></div>\
+            <div><p>Intro</p></div>\r\n\r\n\r\n&#847;&nbsp;&#847;<p>Please review <a href="https://example.com/doc">the doc</a>.</p>\
+            </body></html>
+            """
+        let rawHTML = Data(("Content-Type: text/html; charset=utf-8\r\n\r\n" + html).utf8)
+        let decodedHTML = try PlainMailBody.decode(rawHTML)
+        let displayedHTML = try PlainMailBody.displayText(rawHTML)
+        for text in [decodedHTML, displayedHTML] {
+            XCTAssertTrue(text.contains("Intro"))
+            XCTAssertTrue(text.contains("Please review the doc (https://example.com/doc)."))
+            XCTAssertFalse(text.contains("tracker.example.com"))
+            XCTAssertFalse(text.contains("\n\n\n"))
+        }
+
+        let combiningPlain = "First\r\n\r\n\r\n\u{034F}Second\n\n\n\u{0301}Third"
+        XCTAssertEqual(try PlainMailBody.decode(plain(combiningPlain)), "First\n\n\u{034F}Second\n\n\u{0301}Third")
+        XCTAssertEqual(try PlainMailBody.displayText(plain(combiningPlain)), "First\n\n\n\u{034F}Second\n\n\n\u{0301}Third")
+    }
+
     private func plain(_ body: String) -> Data {
         Data(("Content-Type: text/plain; charset=utf-8\r\n\r\n" + body).utf8)
     }
