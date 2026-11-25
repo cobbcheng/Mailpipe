@@ -41,6 +41,8 @@ xcrun notarytool store-credentials mailpipe-ci --keychain "$kc" \
 unset notary_password
 rm "$tmp/input.p12" "$tmp/import.p12"
 
+bash scripts/build-mail-parser.sh --universal
+
 derived="$RUNNER_TEMP/mailpipe-release-xcode"
 xcodebuild -project Mailpipe.xcodeproj -scheme Mailpipe -configuration Release -destination 'generic/platform=macOS' \
   -derivedDataPath "$derived" -archivePath "$tmp/release.xcarchive" -onlyUsePackageVersionsFromResolvedFile \
