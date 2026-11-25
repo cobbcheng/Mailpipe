@@ -29,7 +29,7 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
         defer { completionHandler(decision) }
         // Fixed stage names only: no subject, ID, address, body, path or raw error text.
         logger.info("callback_entered")
-        guard message.state == .received else { logger.info("state_not_received"); return }
+        guard message.state == .received else { logger.notice("state_not_received"); return }
         guard let group = Bundle.main.object(forInfoDictionaryKey: "MailpipeAppGroup") as? String,
               !group.hasPrefix(".") else { logger.error("group_configuration_invalid"); return }
         guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {
@@ -39,11 +39,25 @@ nonisolated final class MessageActionHandler: NSObject, MEMessageActionHandler {
         // Production capture is local-only; the host enforces authorization before dispatch.
         do {
             let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
-            if try inbox.receiveMailKitMessage(subject: message.subject, sender: message.fromAddress.addressString,
-                                               recipients: message.toAddresses.prefix(100).compactMap(\.addressString),
-                                               cc: message.ccAddresses.prefix(100).compactMap(\.addressString),
-                                               headers: message.headers ?? [:], rawData: message.rawData) == .requestBody {
+            var bodyObserved = false
+            let outcome = try inbox.receiveMailKitMessage(
+                subject: message.subject, sender: message.fromAddress.addressString,
+                recipients: message.toAddresses.prefix(100).compactMap(\.addressString),
+                cc: message.ccAddresses.prefix(100).compactMap(\.addressString),
+                headers: message.headers ?? [:],
+                rawData: {
+                    let raw = message.rawData
+                    bodyObserved = raw != nil
+                    return raw
+                }()
+            )
+            if outcome == .requestBody {
                 decision = .invokeAgainWithBody
+                logger.notice("decision_request_body")
+            } else if bodyObserved {
+                logger.notice("decision_finished_with_body")
+            } else {
+                logger.notice("decision_finished_without_body")
             }
         } catch {
             logger.error("capture_failed")
