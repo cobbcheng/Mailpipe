@@ -129,4 +129,34 @@ final class InboundMailFilterTests: XCTestCase {
             "X-Original-List-Unsubscribe": ["<mailto:unsubscribe@example.com>"]
         ]))
     }
+
+    func testPrefixedNoReplyBroadcastsAndProductOnboardingSkipSafely() {
+        let prefixed = "service-noreply@example.com"
+        let commaUnsubscribe = ["List-Unsubscribe": ["<https://example.com/opt-out?a=1,2>, <mailto:unsubscribe@example.com>"]]
+
+        XCTAssertTrue(skips("开始使用 Sample Pro 方案中的助手应用", from: prefixed, headers: commaUnsubscribe))
+        XCTAssertTrue(skips("开始使用 Sample Pro 方案中的助手应用", from: prefixed))
+        XCTAssertTrue(skips("Get started with Sample Cloud", from: "noreply-cloud@example.com"))
+        XCTAssertTrue(skips("Welcome to Sample Studio", from: "hello@example.com", headers: listHeaders))
+        XCTAssertTrue(skips("解锁更多云端空间", from: prefixed, headers: commaUnsubscribe))
+        XCTAssertTrue(skips("Unlock new workspace features", from: "billing.no_reply@example.com", headers: [
+            "Precedence": ["bulk"],
+            "Reply-To": [prefixed]
+        ]))
+
+        // Human senders, replyable addresses, notifications, and actionable alerts continue.
+        XCTAssertFalse(skips("开始使用 Sample Pro 方案中的助手应用", from: "colleague@example.com"))
+        XCTAssertFalse(skips("Welcome to the team", from: "manager@example.com"))
+        XCTAssertFalse(skips("开始使用新方案前请确认账户信息", from: prefixed, headers: listHeaders))
+        XCTAssertFalse(skips("开始使用新方案了吗？", from: prefixed, headers: listHeaders))
+        XCTAssertFalse(skips("解锁更多云端空间", from: prefixed, headers: [
+            "List-Unsubscribe": ["<mailto:unsubscribe@example.com>"],
+            "Reply-To": ["support@example.com"]
+        ]))
+        XCTAssertFalse(skips("New comment on roadmap", from: "notifications@example.com", headers: listHeaders))
+        XCTAssertFalse(skips("解锁更多云端空间", from: "service-noreply+team@example.com", headers: listHeaders))
+        for alert in ["Invoice overdue", "Customer invoice", "Payment failed", "账单已逾期", "安全警报：异常登录"] {
+            XCTAssertFalse(skips(alert, from: prefixed, headers: listHeaders), alert)
+        }
+    }
 }

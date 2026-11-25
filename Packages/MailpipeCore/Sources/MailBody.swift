@@ -350,10 +350,44 @@ private enum BodyBound {
     }
 
     static func normalize(_ text: String) -> String {
-        var value = text.replacingOccurrences(of: "\u{feff}", with: "")
-        value = value.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-        while value.contains("\n\n\n") { value = value.replacingOccurrences(of: "\n\n\n", with: "\n\n") }
-        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        normalizeLineEndings(text, stripBOM: true, collapseBlankLines: true)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func normalizeLineEndings(_ text: String, stripBOM: Bool = false, collapseBlankLines: Bool = false) -> String {
+        // Single-pass scalar normalization avoids CoreFoundation canonical folding, where a
+        // combining mark (such as U+034F in HTML preheaders) after "\n" breaks non-literal search.
+        var result = String.UnicodeScalarView()
+        result.reserveCapacity(text.unicodeScalars.count)
+        var pendingCR = false
+        var consecutiveNewlines = 0
+        func emitNewline() {
+            consecutiveNewlines += 1
+            if !collapseBlankLines || consecutiveNewlines <= 2 {
+                result.append("\n")
+            }
+        }
+        for scalar in text.unicodeScalars {
+            if stripBOM && scalar == "\u{feff}" { continue }
+            if pendingCR {
+                pendingCR = false
+                if scalar == "\n" {
+                    emitNewline()
+                    continue
+                }
+                emitNewline()
+            }
+            if scalar == "\r" {
+                pendingCR = true
+            } else if scalar == "\n" {
+                emitNewline()
+            } else {
+                consecutiveNewlines = 0
+                result.append(scalar)
+            }
+        }
+        if pendingCR { emitNewline() }
+        return String(result)
     }
 }
 
@@ -525,7 +559,7 @@ private struct MIMEEntity {
         } else {
             converted = try Armor.unwrap(decoded.text)
         }
-        let text = forDisplay ? converted.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n") : BodyBound.normalize(converted)
+        let text = forDisplay ? BodyBound.normalizeLineEndings(converted) : BodyBound.normalize(converted)
         if text.contains("\0") { throw MailBodyRejection.malformedMIME }
         var result = EntityResult(mediaType: headers.mediaType, truncated: decoded.truncated)
         if headers.mediaType == "text/html" {
@@ -1163,6 +1197,7 @@ private struct HTMLFrame {
     var quote = false
     var pre = false
     var signature = false
+    var anchor: (href: String, utf8Offset: Int)?
 }
 
 private struct HTMLScanner {
@@ -1170,7 +1205,6 @@ private struct HTMLScanner {
     var index: String.Index
     var output = ""
     var stack: [HTMLFrame] = []
-    var anchors: [(href: String, count: Int)] = []
     var lists: [(ordered: Bool, item: Int)] = []
 
     init(_ html: String) {
@@ -1237,8 +1271,8 @@ private struct HTMLScanner {
             }
             return
         }
-        if name == "a" {
-            anchors.append((tag.attributes["href"] ?? "", output.count))
+        if name == "a", !skipping {
+            frame.anchor = (tag.attributes["href"] ?? "", output.utf8.count)
         }
         if name == "ol" { lists.append((true, 0)) }
         if name == "ul" { lists.append((false, 0)) }
@@ -1259,16 +1293,18 @@ private struct HTMLScanner {
     }
 
     mutating func close(_ name: String) {
-        if name == "a", let anchor = anchors.popLast() {
-            let added = String(output.dropFirst(anchor.count))
-            let rendered = renderLink(added, href: decodeEntities(anchor.href))
-            output = String(output.prefix(anchor.count)) + rendered
-        }
         if name == "ol" || name == "ul", !lists.isEmpty { lists.removeLast() }
         guard let found = stack.lastIndex(where: { $0.name == name }) else { return }
         let removed = stack[found...]
         stack.removeSubrange(found...)
         for frame in removed.reversed() {
+            if let anchor = frame.anchor {
+                let offset = min(anchor.utf8Offset, output.utf8.count)
+                let start = output.utf8.index(output.utf8.startIndex, offsetBy: offset)
+                let added = String(output[start...])
+                let rendered = renderLink(added, href: decodeEntities(anchor.href))
+                output.replaceSubrange(start..., with: rendered)
+            }
             if frame.quote { emit("\n\u{E001}") }
             if frame.pre { emit("\u{E003}") }
             if isBlock(frame.name) { emit("\n") }
@@ -1371,7 +1407,7 @@ private func classTokens(_ tag: HTMLTag) -> Set<String> {
 }
 
 private func hidden(_ tag: HTMLTag) -> Bool {
-    guard let style = tag.attributes["style"]?.lowercased().replacingOccurrences(of: " ", with: "") else { return false }
+    guard let style = tag.attributes["style"]?.lowercased().filter({ !$0.isWhitespace }) else { return false }
     return style.contains("display:none") || style.contains("visibility:hidden")
 }
 
@@ -1402,7 +1438,8 @@ private func decodeEntities(_ text: String) -> String {
     var result = ""
     var index = text.startIndex
     while index < text.endIndex {
-        if text[index] == "&", let end = text[index...].firstIndex(of: ";"), text.distance(from: index, to: end) <= 12 {
+        let limit = text.index(index, offsetBy: 13, limitedBy: text.endIndex) ?? text.endIndex
+        if text[index] == "&", let end = text[index..<limit].firstIndex(of: ";") {
             let token = String(text[text.index(after: index)..<end])
             if let scalar = entity(token) {
                 result.unicodeScalars.append(scalar)
