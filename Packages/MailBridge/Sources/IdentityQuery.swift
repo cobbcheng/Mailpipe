@@ -1,5 +1,8 @@
 import Foundation
 import MailpipeCore
+#if os(macOS)
+import AppKit
+#endif
 
 public enum IdentityQueryError: Error, Codable, Equatable, Sendable { case invalidScope, automation(Int), invalidResult }
 
@@ -106,6 +109,113 @@ public enum AppleMailReplyIdentity {
         end timeout
     end resolveReply
     """
+    public static let junkOrTrashScript = """
+    on collectBoxes(topBox)
+        tell application id "com.apple.mail"
+            set boxes to {}
+            try
+                set boxes to every mailbox of topBox
+            on error errorMessage number errorNumber
+                if errorNumber is -1743 or errorNumber is -1712 then error errorMessage number errorNumber
+            end try
+            if (count of boxes) is 0 then return {topBox}
+            return boxes
+        end tell
+    end collectBoxes
+
+    on classifyJunkOrTrash(targetIDs, expectedSubjects)
+        set results to {}
+        with timeout of 15 seconds
+            tell application id "com.apple.mail"
+                set inboxBoxes to my collectBoxes(inbox)
+                set junkBoxes to my collectBoxes(junk mailbox)
+                set trashBoxes to my collectBoxes(trash mailbox)
+                set excludedBoxes to junkBoxes & trashBoxes
+                set totalCount to count of targetIDs
+                repeat with idx from 1 to totalCount
+                    set targetID to item idx of targetIDs
+                    set expectedSubject to item idx of expectedSubjects
+                    set hasActiveInbox to false
+                    set hasJunkOrDeletedInbox to false
+                    repeat with box in inboxBoxes
+                        set currentBox to contents of box
+                        set hits to {}
+                        try
+                            set hits to every message of currentBox whose message id is targetID
+                        on error errorMessage number errorNumber
+                            if errorNumber is -1743 or errorNumber is -1712 then error errorMessage number errorNumber
+                        end try
+                        repeat with hit in hits
+                            set currentHit to contents of hit
+                            if (subject of currentHit) is expectedSubject then
+                                if (junk mail status of currentHit) or (deleted status of currentHit) then
+                                    set hasJunkOrDeletedInbox to true
+                                else
+                                    set hasActiveInbox to true
+                                    exit repeat
+                                end if
+                            end if
+                        end repeat
+                        if hasActiveInbox then exit repeat
+                    end repeat
+                    if hasActiveInbox then
+                        set end of results to "active"
+                    else if hasJunkOrDeletedInbox then
+                        set end of results to "junkOrTrash"
+                    else
+                        set foundExcluded to false
+                        repeat with box in excludedBoxes
+                            set currentBox to contents of box
+                            set hits to {}
+                            try
+                                set hits to every message of currentBox whose message id is targetID
+                            on error errorMessage number errorNumber
+                                if errorNumber is -1743 or errorNumber is -1712 then error errorMessage number errorNumber
+                            end try
+                            repeat with hit in hits
+                                set currentHit to contents of hit
+                                if (subject of currentHit) is expectedSubject then
+                                    set foundExcluded to true
+                                    exit repeat
+                                end if
+                            end repeat
+                            if foundExcluded then exit repeat
+                        end repeat
+                        if foundExcluded then
+                            set end of results to "junkOrTrash"
+                        else
+                            set end of results to "unknown"
+                        end if
+                    end if
+                end repeat
+            end tell
+        end timeout
+        return results
+    end classifyJunkOrTrash
+    """
+    public static func classifyJunkOrTrash(_ queries: [MailMessageLookup]) throws -> [MailMailboxDisposition] {
+#if !os(macOS)
+        throw IdentityQueryError.invalidResult
+#else
+        if queries.isEmpty { return [] }
+        guard queries.count <= 200,
+              queries.allSatisfy({ !$0.messageID.isEmpty && $0.messageID.utf8.count <= 998 && $0.subject.utf8.count <= 2_048 }) else {
+            throw IdentityQueryError.invalidScope
+        }
+        // Never launch Apple Mail just to check mailbox status.
+        guard !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.mail").isEmpty else {
+            return Array(repeating: .unknown, count: queries.count)
+        }
+        let ids = NSAppleEventDescriptor.list()
+        let subjects = NSAppleEventDescriptor.list()
+        for (index, query) in queries.enumerated() {
+            ids.insert(NSAppleEventDescriptor(string: query.messageID), at: index + 1)
+            subjects.insert(NSAppleEventDescriptor(string: query.subject), at: index + 1)
+        }
+        let result = try callDescriptors(source: junkOrTrashScript, handler: "classifyJunkOrTrash", arguments: [ids, subjects])
+        return try decodeDispositions(result, expectedCount: queries.count)
+#endif
+    }
     public static func resolve(accountID: String, mailboxName: String, messageID: String, subject: String, mailboxPath: [String]? = nil, firstMatch: Bool = false) throws -> Match? {
 #if !os(macOS)
         throw IdentityQueryError.invalidResult
@@ -119,6 +229,19 @@ public enum AppleMailReplyIdentity {
 #endif
     }
 #if os(macOS)
+    static func decodeDispositions(_ result: NSAppleEventDescriptor, expectedCount: Int) throws -> [MailMailboxDisposition] {
+        guard result.numberOfItems == expectedCount else { throw IdentityQueryError.invalidResult }
+        var output: [MailMailboxDisposition] = []
+        output.reserveCapacity(expectedCount)
+        for index in 0..<expectedCount {
+            guard let raw = result.atIndex(index + 1)?.stringValue,
+                  let disposition = MailMailboxDisposition(rawValue: raw) else {
+                throw IdentityQueryError.invalidResult
+            }
+            output.append(disposition)
+        }
+        return output
+    }
     static func decodeMatch(_ result: NSAppleEventDescriptor, accountID: String) throws -> Match? {
         if result.atIndex(1)?.stringValue == MailBodyRejection.messageTooLarge.rawValue {
             guard result.numberOfItems == 1 else { throw IdentityQueryError.invalidResult }
@@ -132,16 +255,20 @@ public enum AppleMailReplyIdentity {
         return Match(accountID: account, localID: local, source: source)
     }
     private static func call(source: String, handler: String, arguments: [String], path: [String]? = nil) throws -> NSAppleEventDescriptor {
+        var descriptors = arguments.map { NSAppleEventDescriptor(string: $0) }
+        if let path {
+            let parts = NSAppleEventDescriptor.list()
+            for (index, value) in path.enumerated() { parts.insert(NSAppleEventDescriptor(string: value), at: index + 1) }
+            descriptors.append(parts)
+        }
+        return try callDescriptors(source: source, handler: handler, arguments: descriptors)
+    }
+    private static func callDescriptors(source: String, handler: String, arguments: [NSAppleEventDescriptor]) throws -> NSAppleEventDescriptor {
         guard let script = NSAppleScript(source: source) else { throw IdentityQueryError.invalidResult }
         let event = NSAppleEventDescriptor(eventClass: 0x61736372, eventID: 0x70736272, targetDescriptor: nil, returnID: -1, transactionID: 0)
         event.setParam(NSAppleEventDescriptor(string: handler), forKeyword: 0x736E616D)
         let list = NSAppleEventDescriptor.list()
-        for (index, value) in arguments.enumerated() { list.insert(NSAppleEventDescriptor(string: value), at: index + 1) }
-        if let path {
-            let parts = NSAppleEventDescriptor.list()
-            for (index, value) in path.enumerated() { parts.insert(NSAppleEventDescriptor(string: value), at: index + 1) }
-            list.insert(parts, at: arguments.count + 1)
-        }
+        for (index, value) in arguments.enumerated() { list.insert(value, at: index + 1) }
         event.setParam(list, forKeyword: 0x2D2D2D2D)
         var error: NSDictionary?
         let result = script.executeAppleEvent(event, error: &error)

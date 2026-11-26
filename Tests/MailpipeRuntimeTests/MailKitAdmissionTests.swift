@@ -4,13 +4,17 @@ import MailpipeCore
 
 @MainActor
 final class MailKitAdmissionTests: XCTestCase {
-    private func pipeline(model: FakeReplyModel = FakeReplyModel()) async throws -> ReplyPipeline {
+    private func pipeline(model: FakeReplyModel = FakeReplyModel(),
+                          classifyMailboxes: @escaping MailMailboxClassifier = { Array(repeating: .unknown, count: $0.count) },
+                          mailboxAuditInterval: TimeInterval = 60) async throws -> ReplyPipeline {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
         let store = try PipelineStore(directory: root.appendingPathComponent("state"))
         let inbox = try CaptureInbox(directory: root.appendingPathComponent("inbox"))
         let pipeline = ReplyPipeline(store: store, inbox: inbox,
             resolve: { _, _ in XCTFail("Unexpected Mail read"); return nil },
+            classifyMailboxes: classifyMailboxes,
+            mailboxAuditInterval: mailboxAuditInterval,
             model: { _ in model })
         try await pipeline.updateSettings {
             $0.permission = CapturePermission(delivery: .mailKit)
@@ -353,5 +357,162 @@ final class MailKitAdmissionTests: XCTestCase {
         XCTAssertEqual(capture.issue, "missingMessageID")
         XCTAssertNil(capture.raw)
         XCTAssertTrue(try claims(inbox).isEmpty)
+    }
+
+    func testJunkOrTrashMailIsFilteredBeforeDraftingAndSurvivesLateBodyCallback() async throws {
+        actor MailboxOracle {
+            var dispositions: [String: MailMailboxDisposition] = [:]
+            var batches: [[MailMessageLookup]] = []
+            func set(_ id: String, _ value: MailMailboxDisposition) { dispositions[id] = value }
+            func classify(_ queries: [MailMessageLookup]) -> [MailMailboxDisposition] {
+                batches.append(queries)
+                return queries.map { dispositions[$0.messageID] ?? .unknown }
+            }
+        }
+        let oracle = MailboxOracle()
+        await oracle.set("spam-body@example.com", .junkOrTrash)
+        await oracle.set("spam-waiting@example.com", .junkOrTrash)
+        await oracle.set("good-inbox@example.com", .active)
+        await oracle.set("custom-folder@example.com", .unknown)
+
+        let model = FakeReplyModel()
+        let pipeline = try await pipeline(model: model, classifyMailboxes: { await oracle.classify($0) })
+
+        let spamRaw = Data("Content-Type: text/plain\r\n\r\nCurated listing offer".utf8)
+        let goodRaw = Data("Content-Type: text/plain\r\n\r\nCan we meet Tuesday?".utf8)
+
+        // 1. Junk email arriving with body is filtered before calling the agent.
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Listing offer", sender: "promo@example.com",
+            headers: ["Message-ID": ["<spam-body@example.com>"]], rawData: spamRaw), .finished)
+        // 2. Junk email stuck in awaitingBody is filtered immediately.
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Waiting spam", sender: "promo@example.com",
+            headers: ["Message-ID": ["<spam-waiting@example.com>"]], rawData: nil), .requestBody)
+        // 3. Active inbox and custom-folder (unknown) messages still draft normally.
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Tuesday sync", sender: "peer@example.com",
+            headers: ["Message-ID": ["<good-inbox@example.com>"]], rawData: goodRaw), .finished)
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Project folder note", sender: "peer@example.com",
+            headers: ["Message-ID": ["<custom-folder@example.com>"]], rawData: goodRaw), .finished)
+
+        try await pipeline.pump()
+
+        let records = try await pipeline.store.records()
+        let spamWithBody = try unwrap(records.first { $0.messageID == "spam-body@example.com" })
+        XCTAssertEqual(spamWithBody.excludedFromAuthorizedInbox, true)
+        XCTAssertEqual(spamWithBody.state, .cancelled)
+        XCTAssertEqual(spamWithBody.error, "junkOrTrash")
+        XCTAssertFalse(spamWithBody.canDisplayInWorkbench)
+        XCTAssertTrue(spamWithBody.runs.isEmpty)
+
+        let spamWaiting = try unwrap(records.first { $0.messageID == "spam-waiting@example.com" })
+        XCTAssertEqual(spamWaiting.excludedFromAuthorizedInbox, true)
+        XCTAssertEqual(spamWaiting.state, .cancelled)
+        XCTAssertEqual(spamWaiting.error, "junkOrTrash")
+        XCTAssertFalse(spamWaiting.canDisplayInWorkbench)
+
+        let good = try unwrap(records.first { $0.messageID == "good-inbox@example.com" })
+        XCTAssertEqual(good.state, .draftReady)
+        XCTAssertTrue(good.canDisplayInWorkbench)
+
+        let customFolder = try unwrap(records.first { $0.messageID == "custom-folder@example.com" })
+        XCTAssertEqual(customFolder.state, .draftReady)
+        XCTAssertTrue(customFolder.canDisplayInWorkbench)
+
+        let callsAfterFirstPump = await model.calls
+        XCTAssertEqual(callsAfterFirstPump, 2)
+
+        // Late body callback for the already-excluded awaitingBody spam must not resurrect or draft it.
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Waiting spam", sender: "promo@example.com",
+            headers: ["Message-ID": ["<spam-waiting@example.com>"]], rawData: spamRaw), .finished)
+        try await pipeline.pump()
+
+        let afterLateBody = try await pipeline.store.records().filter { $0.messageID == "spam-waiting@example.com" }
+        XCTAssertEqual(afterLateBody.count, 1)
+        XCTAssertEqual(afterLateBody.first?.excludedFromAuthorizedInbox, true)
+        XCTAssertEqual(afterLateBody.first?.state, .cancelled)
+        let callsAfterLateBody = await model.calls
+        XCTAssertEqual(callsAfterLateBody, 2)
+    }
+
+    func testDraftMovedToJunkOrTrashLaterIsHiddenAndAuditRespectsThrottleAndPause() async throws {
+        actor MailboxOracle {
+            var dispositions: [String: MailMailboxDisposition] = [:]
+            var calls = 0
+            func set(_ id: String, _ value: MailMailboxDisposition) { dispositions[id] = value }
+            func classify(_ queries: [MailMessageLookup]) -> [MailMailboxDisposition] {
+                calls += 1
+                return queries.map { dispositions[$0.messageID] ?? .unknown }
+            }
+        }
+        let oracle = MailboxOracle()
+        await oracle.set("later-trashed@example.com", .active)
+        let model = FakeReplyModel()
+        let pipeline = try await pipeline(model: model, classifyMailboxes: { await oracle.classify($0) },
+                                          mailboxAuditInterval: 60)
+        let t0 = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let raw = Data("Content-Type: text/plain\r\n\r\nChecking in on the order.".utf8)
+        XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Order check", sender: "person@example.com",
+            headers: ["Message-ID": ["<later-trashed@example.com>"]], rawData: raw), .finished)
+        try await pipeline.pump(now: t0)
+
+        let initial = try unwrap(try await pipeline.store.records().first)
+        XCTAssertEqual(initial.state, .draftReady)
+        XCTAssertTrue(initial.canDisplayInWorkbench)
+        let callsAtT0 = await oracle.calls
+        XCTAssertEqual(callsAtT0, 1)
+
+        // User moves the email to Trash in Apple Mail.
+        await oracle.set("later-trashed@example.com", .junkOrTrash)
+
+        // Within 60s throttle with no new captures: no redundant Mail audit.
+        try await pipeline.pump(now: t0.addingTimeInterval(15))
+        let callsAtT15 = await oracle.calls
+        XCTAssertEqual(callsAtT15, 1)
+
+        // Paused state never queries Apple Mail even past the interval.
+        try await pipeline.updateSettings { $0.paused = true }
+        try await pipeline.pump(now: t0.addingTimeInterval(120))
+        let callsWhilePaused = await oracle.calls
+        XCTAssertEqual(callsWhilePaused, 1)
+        try await pipeline.updateSettings { $0.paused = false }
+
+        // Activation check with shorter interval (5s) catches the moved message immediately.
+        try await pipeline.pump(mailboxAuditMinInterval: 5, now: t0.addingTimeInterval(20))
+        let callsAtT20 = await oracle.calls
+        XCTAssertEqual(callsAtT20, 2)
+
+        let updated = try unwrap(try await pipeline.store.record(initial.id))
+        let settings = try await pipeline.store.settings()
+        XCTAssertEqual(updated.excludedFromAuthorizedInbox, true)
+        XCTAssertFalse(updated.canDisplayInWorkbench)
+        XCTAssertFalse(updated.isReadyForReplyReminder(settings: settings, now: t0.addingTimeInterval(20)))
+        XCTAssertNotNil(updated.draftData)
+    }
+
+    func testAutomationDenialStopsFurtherMailboxAuditsAndFailsOpen() async throws {
+        actor FailingOracle {
+            var calls = 0
+            func classify(_ queries: [MailMessageLookup]) throws -> [MailMailboxDisposition] {
+                calls += 1
+                throw MailMailboxAuditError.automationDenied
+            }
+        }
+        let oracle = FailingOracle()
+        let model = FakeReplyModel()
+        let pipeline = try await pipeline(model: model, classifyMailboxes: { try await oracle.classify($0) })
+        let raw = Data("Content-Type: text/plain\r\n\r\nPlease confirm availability.".utf8)
+
+        for idx in 0..<2 {
+            XCTAssertEqual(try pipeline.inbox.receiveMailKitMessage(subject: "Availability \(idx)", sender: "person@example.com",
+                headers: ["Message-ID": ["<avail-\(idx)@example.com>"]], rawData: raw), .finished)
+            try await pipeline.pump()
+        }
+        // Only attempted once; after automationDenied it stopped asking and let drafting succeed.
+        let auditCalls = await oracle.calls
+        XCTAssertEqual(auditCalls, 1)
+        let modelCalls = await model.calls
+        XCTAssertEqual(modelCalls, 2)
+        let records = try await pipeline.store.records()
+        XCTAssertEqual(records.count, 2)
+        XCTAssertTrue(records.allSatisfy { $0.state == .draftReady && $0.canDisplayInWorkbench })
     }
 }

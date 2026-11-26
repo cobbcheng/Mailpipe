@@ -84,6 +84,20 @@ final class MailReadBridgeTests: XCTestCase {
             _ = try await bridge(.error(.automation(-1743))).inboxes()
             XCTFail("Denied automation was accepted")
         } catch IdentityQueryError.automation(-1743) {}
+        let lookups = [
+            MailMessageLookup(messageID: "a@example.com", subject: "One"),
+            MailMessageLookup(messageID: "b@example.com", subject: "Two")
+        ]
+        let dispositions = try await bridge(.dispositions([.active, .junkOrTrash])).classifyJunkOrTrash(lookups, preflight: {})
+        XCTAssertEqual(dispositions, [.active, .junkOrTrash])
+        do {
+            _ = try await bridge(.dispositions([.active])).classifyJunkOrTrash(lookups, preflight: {})
+            XCTFail("Mismatched disposition count was accepted")
+        } catch IdentityQueryError.invalidResult {}
+        do {
+            _ = try await bridge(.error(.automation(-1743))).classifyJunkOrTrash(lookups, preflight: {})
+            XCTFail("Denied automation was accepted for mailbox classification")
+        } catch IdentityQueryError.automation(-1743) {}
         do {
             _ = try await bridge(.messageTooLarge).resolve(accountID: "sample", mailboxName: "INBOX",
                 messageID: "sample@example.com", subject: "Synthetic", preflight: {})

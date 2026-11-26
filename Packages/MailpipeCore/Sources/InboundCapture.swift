@@ -16,6 +16,25 @@ public func mailSourceDigest(_ raw: Data) -> String? {
 }
 
 public enum PipelineError: String, Error, Sendable { case storage, alreadyOpen, unsupportedMIME, invalidCapture, quota, revoked, interrupted }
+
+public struct MailMessageLookup: Codable, Hashable, Sendable {
+    public let messageID: String
+    public let subject: String
+    public init(messageID: String, subject: String) {
+        self.messageID = messageID
+        self.subject = subject
+    }
+}
+
+public enum MailMailboxDisposition: String, Codable, Equatable, Sendable {
+    case active
+    case junkOrTrash
+    case unknown
+}
+
+public enum MailMailboxAuditError: Error, Equatable, Sendable {
+    case automationDenied
+}
 public func contentDigest(_ data: Data) -> String {
 #if canImport(CryptoKit)
     SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

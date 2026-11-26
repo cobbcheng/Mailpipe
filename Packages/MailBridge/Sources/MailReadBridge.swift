@@ -22,6 +22,7 @@ private struct SenderAddressQuery: Codable, Sendable {
 private enum MailReadRequest: Codable, Sendable {
     case resolve(MailReadQuery)
     case inboxes
+    case classifyJunkOrTrash([MailMessageLookup])
     case senderAddress(SenderAddressQuery)
     case openCompose(MailComposeRequest)
 }
@@ -29,6 +30,7 @@ private enum MailReadRequest: Codable, Sendable {
 enum MailReadResponse: Codable, Sendable {
     case match(AppleMailReplyIdentity.Match?)
     case inboxes([AppleMailReplyIdentity.MailboxChoice])
+    case dispositions([MailMailboxDisposition])
     case senderAddress(String)
     case composeReceipt(MailComposeReceipt)
     case error(IdentityQueryError)
@@ -68,6 +70,14 @@ public actor MailReadBridge {
     public func inboxes() async throws -> [AppleMailReplyIdentity.MailboxChoice] {
         guard case let .inboxes(choices) = try await call(.inboxes) else { throw IdentityQueryError.invalidResult }
         return choices
+    }
+
+    public func classifyJunkOrTrash(_ queries: [MailMessageLookup],
+                                    preflight: @escaping @Sendable () async throws -> Void) async throws -> [MailMailboxDisposition] {
+        if queries.isEmpty { return [] }
+        guard case let .dispositions(dispositions) = try await call(.classifyJunkOrTrash(queries), preflight: preflight),
+              dispositions.count == queries.count else { throw IdentityQueryError.invalidResult }
+        return dispositions
     }
 
     public func senderAddress(accountID: String, preferredRecipients: [String]) async throws -> String {
@@ -199,6 +209,8 @@ public actor MailReadBridge {
                     messageID: query.messageID, subject: query.subject, mailboxPath: query.mailboxPath, firstMatch: query.firstMatch == true))
             case .inboxes:
                 return .inboxes(try AppleMailReplyIdentity.inboxes())
+            case let .classifyJunkOrTrash(queries):
+                return .dispositions(try AppleMailReplyIdentity.classifyJunkOrTrash(queries))
             case let .senderAddress(query):
                 return .senderAddress(try AppleMailComposer.senderAddress(accountID: query.accountID, preferredRecipients: query.preferredRecipients))
             case let .openCompose(composeRequest):

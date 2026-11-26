@@ -13,6 +13,8 @@ public struct VerifiedMail: Sendable {
 
 public typealias MailIdentityResolver = @Sendable (StoredReply, AccountScope) async throws -> VerifiedMail?
 
+public typealias MailMailboxClassifier = @Sendable ([MailMessageLookup]) async throws -> [MailMailboxDisposition]
+
 public typealias ReplyModelFactory = @Sendable (HarnessInstallation) throws -> any ReplyModelRunning
 
 public func makeReplyModel(for installation: HarnessInstallation) throws -> any ReplyModelRunning {
@@ -31,6 +33,10 @@ public actor ReplyPipeline {
     public nonisolated let inbox: CaptureInbox
     private let composeInboxes: @Sendable () async throws -> [AccountScope]
     private let resolve: MailIdentityResolver
+    private let classifyMailboxes: MailMailboxClassifier
+    private let mailboxAuditInterval: TimeInterval
+    private var lastMailboxAuditAt: Date?
+    private var mailboxAuditDenied = false
     let model: ReplyModelFactory
     public private(set) var pumping = false
     var activeComposeGenerations: Set<String> = []
@@ -38,8 +44,12 @@ public actor ReplyPipeline {
 
     public init(store: PipelineStore, inbox: CaptureInbox, resolve: @escaping MailIdentityResolver,
                 composeInboxes: @escaping @Sendable () async throws -> [AccountScope] = { [] },
+                classifyMailboxes: @escaping MailMailboxClassifier = { Array(repeating: .unknown, count: $0.count) },
+                mailboxAuditInterval: TimeInterval = 60,
                 model: @escaping ReplyModelFactory = makeReplyModel) {
         self.composeInboxes = composeInboxes
+        self.classifyMailboxes = classifyMailboxes
+        self.mailboxAuditInterval = mailboxAuditInterval
         self.store = store; self.inbox = inbox; self.resolve = resolve; self.model = model
     }
 
@@ -192,10 +202,10 @@ public actor ReplyPipeline {
         guard !pumping else { return }
         pumping = true
         defer { pumping = false }
-        try await importCaptures()
+        _ = try await importCaptures()
     }
 
-    private func importCaptures() async throws {
+    private func importCaptures() async throws -> Bool {
         try Task.checkCancellation()
         try inbox.pruneClaims()
         if let issue = try inbox.issue() { try await store.note(issue) }
@@ -204,6 +214,7 @@ public actor ReplyPipeline {
             let b = (try? FileManager.default.attributesOfItem(atPath: $1.path)[.modificationDate] as? Date) ?? .distantPast
             return a < b
         }
+        var imported = false
         for file in files {
             try Task.checkCancellation()
             let capture: InboundCapture
@@ -217,9 +228,10 @@ public actor ReplyPipeline {
                 continue
             }
             let currentSettings = try await store.settings()
-            if currentSettings.permission?.delivery == .mailKit && currentSettings.paused { return }
+            if currentSettings.permission?.delivery == .mailKit && currentSettings.paused { return imported }
             do {
                 _ = try await store.importCapture(capture)
+                imported = true
             }
             catch PipelineError.quota { try await store.note("quota"); break }
             catch PipelineError.revoked {
@@ -229,6 +241,7 @@ public actor ReplyPipeline {
             // A database or decoding failure is not invalid input: retain the spool for recovery.
             try FileManager.default.removeItem(at: file)
         }
+        return imported
     }
 
     public func recheckIdentity(_ id: String) async throws {
@@ -271,16 +284,86 @@ public actor ReplyPipeline {
     }
 
     /// Process bounded batches; each pump is serial. No automatic retry of failed/unknown calls.
-    public func pump() async throws {
+    public func pump(mailboxAuditMinInterval: TimeInterval? = nil, now: Date = Date()) async throws {
         guard !pumping else { return }
         pumping = true; defer { pumping = false }
-        try await importCaptures()
+        let imported = try await importCaptures()
+        let initialRecords = try await store.records()
+        let hasQueued = initialRecords.contains {
+            $0.discardedAt == nil && $0.excludedFromAuthorizedInbox != true &&
+            !$0.syntheticAuthorized && $0.manualExecutable == nil &&
+            [.awaitingAccount, .queued, .draftQueued].contains($0.state)
+        }
+        let minInterval = (imported || hasQueued) ? 0 : (mailboxAuditMinInterval ?? mailboxAuditInterval)
+        try await auditJunkOrTrash(minInterval: minInterval, now: now)
         for item in try await store.records().prefix(1_000) {
             try Task.checkCancellation()
             let settings = try await store.settings()
             guard !settings.paused else { return }
             if item.excludedFromAuthorizedInbox == true { continue }
             if [.awaitingAccount, .queued, .draftQueued].contains(item.state) { try await process(item.id) }
+        }
+    }
+
+    private func auditJunkOrTrash(minInterval: TimeInterval, now: Date) async throws {
+        try Task.checkCancellation()
+        guard !mailboxAuditDenied else { return }
+        let settings = try await store.settings()
+        guard !settings.paused, settings.permission != nil else { return }
+        if minInterval > 0, let last = lastMailboxAuditAt, now.timeIntervalSince(last) < minInterval {
+            return
+        }
+        let records = try await store.records()
+        let candidates = records.filter { item in
+            item.discardedAt == nil &&
+            item.excludedFromAuthorizedInbox != true &&
+            !item.syntheticAuthorized &&
+            item.manualExecutable == nil &&
+            item.state != .triaging && item.state != .drafting &&
+            !item.isRegeneratingInCompose &&
+            !item.runs.contains(where: { $0.finishedAt == nil }) &&
+            item.messageID?.isEmpty == false &&
+            (item.canDisplayInWorkbench || [.awaitingBody, .awaitingAccount, .queued, .draftQueued].contains(item.state))
+        }
+        guard !candidates.isEmpty else {
+            lastMailboxAuditAt = now
+            return
+        }
+        let batch = Array(candidates.suffix(100))
+        let lookups = batch.map { MailMessageLookup(messageID: $0.messageID!, subject: $0.input.subject) }
+        let dispositions: [MailMailboxDisposition]
+        do {
+            dispositions = try await classifyMailboxes(lookups)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch MailMailboxAuditError.automationDenied {
+            // Stop asking for this session after user denial; fail open so drafting continues.
+            mailboxAuditDenied = true
+            lastMailboxAuditAt = now
+            return
+        } catch {
+            lastMailboxAuditAt = now
+            return
+        }
+        guard dispositions.count == batch.count else {
+            lastMailboxAuditAt = now
+            return
+        }
+        guard try await mailReadStillAuthorized(settings) else { return }
+        lastMailboxAuditAt = now
+        for (candidate, disposition) in zip(batch, dispositions) where disposition == .junkOrTrash {
+            guard var current = try await store.record(candidate.id),
+                  current.discardedAt == nil,
+                  current.excludedFromAuthorizedInbox != true,
+                  current.state != .triaging, current.state != .drafting,
+                  !current.isRegeneratingInCompose,
+                  !current.runs.contains(where: { $0.finishedAt == nil }) else { continue }
+            current.excludedFromAuthorizedInbox = true
+            if [.awaitingBody, .awaitingAccount, .queued, .draftQueued].contains(current.state) {
+                current.state = .cancelled
+                current.error = "junkOrTrash"
+            }
+            try await store.save(current)
         }
     }
 
