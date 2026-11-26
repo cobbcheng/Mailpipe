@@ -725,6 +725,12 @@ public actor PipelineStore {
         } else {
             matching = []
         }
+        if let excluded = matching.first(where: {
+            $0.mailKitBody == true && $0.permissionID == capture.permissionID &&
+            $0.input.subject == capture.subject && $0.excludedFromAuthorizedInbox == true
+        }) {
+            return try commitIngest(capture.id, recordID: excluded.id, saving: nil)
+        }
         let pending = matching.first { $0.mailKitBody == true && $0.permissionID == capture.permissionID &&
             $0.discardedAt == nil && $0.runs.isEmpty && [.awaitingBody, .needsReview].contains($0.state) }
         let completed = matching.first { !$0.input.body.isEmpty }

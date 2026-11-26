@@ -37,10 +37,47 @@ final class IdentityQueryTests: XCTestCase {
     }
 
     @MainActor func testFixedReadOnlyScriptCompilesWithoutExecuting() {
-        for source in [AppleMailReplyIdentity.catalogScript, AppleMailReplyIdentity.scriptSource] {
+        for source in [AppleMailReplyIdentity.catalogScript, AppleMailReplyIdentity.scriptSource, AppleMailReplyIdentity.junkOrTrashScript] {
             let script = NSAppleScript(source: source)!
             var error: NSDictionary?
             XCTAssertTrue(script.compileAndReturnError(&error), "\(String(describing: error))")
+        }
+    }
+
+    @MainActor func testJunkOrTrashScriptChecksJunkTrashAndPropagatesAutomationErrors() throws {
+        let script = AppleMailReplyIdentity.junkOrTrashScript
+        XCTAssertTrue(script.contains("junk mailbox"))
+        XCTAssertTrue(script.contains("trash mailbox"))
+        XCTAssertTrue(script.contains("junk mail status"))
+        XCTAssertTrue(script.contains("deleted status"))
+        XCTAssertTrue(script.contains("-1743"))
+        XCTAssertTrue(script.contains("-1712"))
+
+        XCTAssertEqual(try AppleMailReplyIdentity.classifyJunkOrTrash([]), [])
+        XCTAssertThrowsError(try AppleMailReplyIdentity.classifyJunkOrTrash([
+            MailMessageLookup(messageID: "", subject: "Synthetic")
+        ])) { error in
+            XCTAssertEqual(error as? IdentityQueryError, .invalidScope)
+        }
+        XCTAssertThrowsError(try AppleMailReplyIdentity.classifyJunkOrTrash(
+            (0..<201).map { MailMessageLookup(messageID: "id-\($0)@example.com", subject: "Synthetic") }
+        )) { error in
+            XCTAssertEqual(error as? IdentityQueryError, .invalidScope)
+        }
+
+        let valid = NSAppleEventDescriptor.list()
+        for (index, value) in ["active", "junkOrTrash", "unknown"].enumerated() {
+            valid.insert(NSAppleEventDescriptor(string: value), at: index + 1)
+        }
+        XCTAssertEqual(try AppleMailReplyIdentity.decodeDispositions(valid, expectedCount: 3),
+                       [.active, .junkOrTrash, .unknown])
+        XCTAssertThrowsError(try AppleMailReplyIdentity.decodeDispositions(valid, expectedCount: 2)) { error in
+            XCTAssertEqual(error as? IdentityQueryError, .invalidResult)
+        }
+        let malformed = NSAppleEventDescriptor.list()
+        malformed.insert(NSAppleEventDescriptor(string: "unexpected"), at: 1)
+        XCTAssertThrowsError(try AppleMailReplyIdentity.decodeDispositions(malformed, expectedCount: 1)) { error in
+            XCTAssertEqual(error as? IdentityQueryError, .invalidResult)
         }
     }
 #endif

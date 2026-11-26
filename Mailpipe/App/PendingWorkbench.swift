@@ -27,6 +27,7 @@ final class PendingModel: ObservableObject {
     private var pipeline: ReplyPipeline?
     private var pumpTask: Task<Void, Never>?
     private var pumpPending = false
+    private var pendingActivationAudit = false
     private var isPumping = false
     private var fallbackTimer: Task<Void, Never>?
     private var inboxWatcher: DirectoryWatcher?
@@ -226,6 +227,27 @@ final class PendingModel: ObservableObject {
                 try await MailReadBridge.shared.inboxes().map {
                     try AccountScope(accountID: $0.accountID, accountName: $0.accountName,
                                      mailboxName: $0.path.last!, mailboxPath: $0.path)
+                }
+            }, classifyMailboxes: { queries in
+                guard diagnosticIndex == nil, !queries.isEmpty else {
+                    return Array(repeating: .unknown, count: queries.count)
+                }
+                let expected = try await store.settings()
+                guard !expected.paused, expected.permission != nil else {
+                    return Array(repeating: .unknown, count: queries.count)
+                }
+                let mailRunning = await MainActor.run {
+                    !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.mail").isEmpty
+                }
+                guard mailRunning else {
+                    return Array(repeating: .unknown, count: queries.count)
+                }
+                do {
+                    return try await MailReadBridge.shared.classifyJunkOrTrash(queries) {
+                        guard try await store.hasCurrentMailReadAuthorization(expected) else { throw PipelineError.revoked }
+                    }
+                } catch IdentityQueryError.automation(-1743) {
+                    throw MailMailboxAuditError.automationDenied
                 }
             })
             pipeline = createdPipeline
@@ -487,6 +509,12 @@ final class PendingModel: ObservableObject {
         }
     }
 
+    func handleAppBecameActive() {
+        guard onboarding.completed, !settings.paused else { return }
+        pendingActivationAudit = true
+        schedulePump()
+    }
+
     private func schedulePump() {
         guard pipeline != nil else { return }
         if isPumping {
@@ -499,11 +527,13 @@ final class PendingModel: ObservableObject {
             defer { isPumping = false }
             repeat {
                 pumpPending = false
-                do { try await pipeline.pump() }
+                let auditInterval: TimeInterval? = pendingActivationAudit ? 5 : nil
+                pendingActivationAudit = false
+                do { try await pipeline.pump(mailboxAuditMinInterval: auditInterval) }
                 catch is CancellationError { return }
                 catch { self.issue = Self.code(error) }
                 await self.refresh()
-            } while pumpPending && !Task.isCancelled
+            } while (pumpPending || pendingActivationAudit) && !Task.isCancelled
         }
     }
 
@@ -678,6 +708,9 @@ struct PendingWorkbench: View {
             .background(Color(nsColor: .textBackgroundColor))
         }
         .navigationTitle("Mailpipe")
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.handleAppBecameActive()
+        }
     }
 }
 
